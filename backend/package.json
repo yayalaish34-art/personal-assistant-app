@@ -1,0 +1,16 @@
+{
+  "name": "personal-assistant-backend",
+  "version": "1.0.0",
+  "description": "Express backend for the personal assistant app (journal + calendar)",
+  "main": "src/index.js",
+  "type": "module",
+  "scripts": {
+    "start": "node src/index.js",
+    "dev": "node --watch src/index.js"
+  },
+  "dependencies": {
+    "cors": "^2.8.5",
+    "express": "^4.19.2",
+    "morgan": "^1.10.0"
+  }
+}

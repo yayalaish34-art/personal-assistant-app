@@ -7,8 +7,12 @@ import {
   ActivityIndicator,
   TextInput,
   TextInputProps,
+  StyleProp,
+  ViewStyle,
+  TextStyle,
 } from 'react-native';
 import { LinearGradient } from 'expo-linear-gradient';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import {
   colors,
   radius,
@@ -18,7 +22,15 @@ import {
   TAB_BAR_CLEARANCE,
 } from '../theme';
 
-export function Screen({ children }: { children: ReactNode }) {
+export function Screen({
+  children,
+  clearTabBar = true,
+}: {
+  children: ReactNode;
+  // Modals (no tab bar) pass false to skip the extra bottom clearance.
+  clearTabBar?: boolean;
+}) {
+  const insets = useSafeAreaInsets();
   return (
     <LinearGradient
       colors={GRADIENT_BACKGROUND.colors as unknown as [string, string, ...string[]]}
@@ -27,21 +39,31 @@ export function Screen({ children }: { children: ReactNode }) {
       end={GRADIENT_BACKGROUND.end}
       style={styles.screen}
     >
-      <View style={styles.screenInner}>{children}</View>
+      <View
+        style={[
+          styles.screenInner,
+          {
+            paddingTop: Math.max(insets.top, spacing.md) + spacing.xs,
+            paddingBottom: clearTabBar ? TAB_BAR_CLEARANCE : spacing.lg,
+          },
+        ]}
+      >
+        {children}
+      </View>
     </LinearGradient>
   );
 }
 
-export function Card({ children }: { children: ReactNode }) {
-  return <View style={styles.card}>{children}</View>;
+export function Card({ children, style }: { children: ReactNode; style?: StyleProp<ViewStyle> }) {
+  return <View style={[styles.card, style]}>{children}</View>;
 }
 
-export function Title({ children }: { children: ReactNode }) {
-  return <Text style={styles.title}>{children}</Text>;
+export function Title({ children, style }: { children: ReactNode; style?: StyleProp<TextStyle> }) {
+  return <Text style={[styles.title, style]}>{children}</Text>;
 }
 
-export function Muted({ children }: { children: ReactNode }) {
-  return <Text style={styles.muted}>{children}</Text>;
+export function Muted({ children, style }: { children: ReactNode; style?: StyleProp<TextStyle> }) {
+  return <Text style={[styles.muted, style]}>{children}</Text>;
 }
 
 export function Button({
@@ -61,8 +83,6 @@ export function Button({
     <Text style={[styles.buttonText, variant === 'ghost' && { color: colors.text }]}>{label}</Text>
   );
 
-  // Primary buttons get the purple→pink gradient; danger a warm gradient;
-  // ghost is a translucent glass pill with a light border.
   if (variant === 'ghost') {
     return (
       <Pressable
@@ -80,9 +100,7 @@ export function Button({
   }
 
   const gradientColors =
-    variant === 'danger'
-      ? (['#F2A7C6', '#E8607A'] as const)
-      : ACCENT_GRADIENT.colors;
+    variant === 'danger' ? (['#F08A8D', '#E5484D'] as const) : ACCENT_GRADIENT.colors;
 
   return (
     <Pressable
@@ -114,45 +132,56 @@ export function Field(props: TextInputProps & { label?: string }) {
 
 const styles = StyleSheet.create({
   screen: { flex: 1 },
-  screenInner: { flex: 1, padding: spacing.md, paddingBottom: TAB_BAR_CLEARANCE },
+  screenInner: { flex: 1, paddingHorizontal: spacing.md + 4 },
   card: {
     backgroundColor: colors.surface,
-    borderRadius: radius.lg,
-    padding: spacing.md,
+    borderRadius: radius.lg - 4,
+    padding: spacing.md + 4,
     marginBottom: spacing.md,
-    borderWidth: 1,
-    borderColor: colors.border,
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 6 },
+    shadowColor: '#3F2E64',
+    shadowOffset: { width: 0, height: 8 },
     shadowOpacity: 0.06,
-    shadowRadius: 18,
-    elevation: 4,
+    shadowRadius: 20,
+    elevation: 3,
   },
-  title: { color: colors.text, fontSize: 22, fontWeight: '700', marginBottom: spacing.sm },
-  muted: { color: colors.textMuted, fontSize: 14 },
-  buttonWrap: { borderRadius: 50, marginBottom: 0 },
+  title: { color: colors.text, fontSize: 18, fontWeight: '600', marginBottom: spacing.sm },
+  muted: { color: colors.textMuted, fontSize: 14, fontWeight: '400' },
+  buttonWrap: { borderRadius: 50 },
   button: {
     borderRadius: 50,
-    paddingVertical: 14,
+    paddingVertical: 16,
     paddingHorizontal: spacing.md,
     alignItems: 'center',
     justifyContent: 'center',
-    minHeight: 50,
+    minHeight: 54,
   },
   ghost: {
-    backgroundColor: 'rgba(255, 255, 255, 0.4)',
-    borderWidth: 1,
-    borderColor: colors.border,
+    backgroundColor: colors.surface,
+    shadowColor: '#3F2E64',
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.05,
+    shadowRadius: 10,
+    elevation: 2,
   },
-  buttonText: { color: colors.primaryText, fontWeight: '600', fontSize: 16 },
-  label: { color: colors.text, marginBottom: spacing.xs, fontSize: 13, fontWeight: '600' },
-  input: {
-    backgroundColor: colors.surfaceAlt,
+  buttonText: { color: colors.primaryText, fontWeight: '600', fontSize: 15 },
+  label: {
     color: colors.text,
-    borderRadius: radius.md,
-    padding: spacing.md - 2,
-    fontSize: 16,
-    borderWidth: 1,
-    borderColor: colors.border,
+    marginBottom: spacing.sm,
+    fontSize: 15,
+    fontWeight: '500',
+  },
+  input: {
+    backgroundColor: colors.surface,
+    color: colors.text,
+    borderRadius: radius.sm + 2,
+    paddingHorizontal: spacing.md,
+    paddingVertical: 14,
+    fontSize: 15,
+    fontWeight: '400',
+    shadowColor: '#3F2E64',
+    shadowOffset: { width: 0, height: 3 },
+    shadowOpacity: 0.04,
+    shadowRadius: 8,
+    elevation: 1,
   },
 });

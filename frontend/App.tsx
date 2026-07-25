@@ -10,7 +10,7 @@ const navTheme = {
   colors: {
     ...DefaultTheme.colors,
     background: colors.bg,
-    card: '#DCCFDC',
+    card: '#FFFFFF',
     text: colors.text,
     border: colors.border,
     primary: colors.primary,

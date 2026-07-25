@@ -1,23 +1,21 @@
 // Central design tokens so screens stay visually consistent.
-// Light "glassmorphism" system: a soft gradient background, translucent white
-// cards, and gradient accents. Token keys are unchanged from the old dark theme
-// so every screen picks up the new look without touching its own code.
+// "Productive" task-app design: lilac→peach→cream gradient background,
+// solid white rounded cards, periwinkle-purple accent, lime highlights.
 export const colors = {
-  // Fallback flat background (a mid stop of the gradient) for anything that
-  // renders before/behind the LinearGradient.
-  bg: '#D5D6DE',
-  // Translucent "frosted glass" surfaces.
-  surface: 'rgba(255, 255, 255, 0.45)',
-  surfaceAlt: 'rgba(255, 255, 255, 0.6)',
-  // Accent (solid fallback of the button gradient).
-  primary: '#D29DE0',
-  primaryText: '#ffffff',
-  // Dark ink on light glass.
-  text: '#1C1C1E',
-  textMuted: 'rgba(60, 60, 67, 0.6)',
-  border: 'rgba(255, 255, 255, 0.6)',
-  danger: '#E8607A',
-  success: '#5FBF8F',
+  // Flat fallback for anything rendered before/behind the gradient.
+  bg: '#F8F0E8',
+  // Solid white cards on the gradient.
+  surface: '#FFFFFF',
+  surfaceAlt: '#F2ECFA',
+  // Periwinkle purple (the "+" button / Create Task button in the mockup).
+  primary: '#8875F6',
+  primaryText: '#FFFFFF',
+  text: '#191721',
+  textMuted: '#8E8B96',
+  border: 'rgba(25, 23, 33, 0.06)',
+  danger: '#E5484D',
+  success: '#3EA06B',
+  lime: '#D5E97E',
 };
 
 export const spacing = {
@@ -34,19 +32,28 @@ export const radius = {
   lg: 28,
 };
 
-// The app-wide background gradient. Every screen wraps itself in this.
+// The app-wide background gradient, matched to the mockups:
+// lilac in the top-left, blending through soft pink-peach into cream.
 export const GRADIENT_BACKGROUND = {
-  colors: ['#BFD3DA', '#C9D6DD', '#D5D6DE', '#DCCFDC', '#E6D4E3'] as const,
-  locations: [0, 0.25, 0.5, 0.75, 1] as const,
-  start: { x: 0, y: 0.5 },
-  end: { x: 1, y: 0.5 },
+  colors: ['#E4D4F4', '#EEDCE8', '#F6E7D9', '#F9F1E8'] as const,
+  locations: [0, 0.3, 0.65, 1] as const,
+  start: { x: 0.15, y: 0 },
+  end: { x: 0.85, y: 1 },
 };
 
-// Purple → pink gradient used on primary buttons and accents.
+// Purple accent gradient for primary buttons / the "+" pill.
 export const ACCENT_GRADIENT = {
-  colors: ['#D8B4FE', '#F0ABFC', '#F9A8D4'] as const,
+  colors: ['#9C8AFA', '#8170F2'] as const,
   start: { x: 0, y: 0 },
-  end: { x: 1, y: 0 },
+  end: { x: 1, y: 1 },
+};
+
+// Priority pill palette (Add New Task + task cards).
+export type Priority = 'Low' | 'Medium' | 'High';
+export const PRIORITY_COLORS: Record<Priority, { color: string; bg: string }> = {
+  Low: { color: '#4CAF7D', bg: '#E9F6EE' },
+  Medium: { color: '#E9A23B', bg: '#FCF2E3' },
+  High: { color: '#E5484D', bg: '#FCE9EA' },
 };
 
 // Extra bottom room on scroll content so it clears the floating tab bar.

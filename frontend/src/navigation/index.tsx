@@ -16,6 +16,7 @@ import { BlurView } from 'expo-blur';
 import * as Haptics from 'expo-haptics';
 
 import { colors, radius } from '../theme';
+import { TabIcon } from '../components/TabIcons';
 import TodayScreen from '../screens/TodayScreen';
 import JournalScreen from '../screens/JournalScreen';
 import CalendarScreen from '../screens/CalendarScreen';
@@ -38,12 +39,8 @@ if (
   UIManager.setLayoutAnimationEnabledExperimental(true);
 }
 
-const TAB_ICON: Record<string, string> = {
-  Today: '🏠',
-  Journal: '📓',
-  Calendar: '📅',
-  Settings: '⚙️',
-};
+const ICON_ACTIVE = '#1C1C1E';
+const ICON_INACTIVE = 'rgba(60, 60, 67, 0.55)';
 
 const SPRING = { stiffness: 200, damping: 22, mass: 1 } as const;
 
@@ -54,6 +51,9 @@ function FloatingTabBar({ state, descriptors, navigation }: BottomTabBarProps) {
   const pillX = useRef(new Animated.Value(0)).current;
   const pillW = useRef(new Animated.Value(0)).current;
   const pillOpacity = useRef(new Animated.Value(0)).current;
+  const iconScales = useRef(
+    state.routes.map((_, i) => new Animated.Value(i === state.index ? 1.08 : 1)),
+  ).current;
   const focused = state.index;
 
   useEffect(() => {
@@ -67,6 +67,19 @@ function FloatingTabBar({ state, descriptors, navigation }: BottomTabBarProps) {
       Animated.timing(pillOpacity, { toValue: 1, duration: 160, useNativeDriver: false }),
     ]).start();
   }, [focused, layouts, pillX, pillW, pillOpacity]);
+
+  useEffect(() => {
+    // Gently pop the active icon and settle the rest.
+    Animated.parallel(
+      iconScales.map((v, i) =>
+        Animated.spring(v, {
+          toValue: i === focused ? 1.08 : 1,
+          useNativeDriver: true,
+          ...SPRING,
+        }),
+      ),
+    ).start();
+  }, [focused, iconScales]);
 
   return (
     <View style={styles.tabWrapper} pointerEvents="box-none">
@@ -106,9 +119,13 @@ function FloatingTabBar({ state, descriptors, navigation }: BottomTabBarProps) {
               }}
               style={styles.tab}
             >
-              <Text style={[styles.tabIcon, { opacity: isFocused ? 1 : 0.55 }]}>
-                {TAB_ICON[route.name] ?? '•'}
-              </Text>
+              <Animated.View style={{ transform: [{ scale: iconScales[index] }] }}>
+                <TabIcon
+                  name={route.name}
+                  color={isFocused ? ICON_ACTIVE : ICON_INACTIVE}
+                  size={26}
+                />
+              </Animated.View>
               {isFocused ? (
                 <Text style={styles.tabLabel} numberOfLines={1}>
                   {label}
@@ -128,10 +145,10 @@ function Tabs() {
       tabBar={(props) => <FloatingTabBar {...props} />}
       screenOptions={{ headerShown: false }}
     >
-      <Tab.Screen name="Today" component={TodayScreen} options={{ title: 'היום' }} />
-      <Tab.Screen name="Journal" component={JournalScreen} options={{ title: 'יומן' }} />
-      <Tab.Screen name="Calendar" component={CalendarScreen} options={{ title: 'לוח שנה' }} />
-      <Tab.Screen name="Settings" component={SettingsScreen} options={{ title: 'הגדרות' }} />
+      <Tab.Screen name="Today" component={TodayScreen} options={{ title: 'Home' }} />
+      <Tab.Screen name="Journal" component={JournalScreen} options={{ title: 'Journal' }} />
+      <Tab.Screen name="Calendar" component={CalendarScreen} options={{ title: 'Calendar' }} />
+      <Tab.Screen name="Settings" component={SettingsScreen} options={{ title: 'Profile' }} />
     </Tab.Navigator>
   );
 }
@@ -140,18 +157,16 @@ export default function RootNavigator() {
   return (
     <Stack.Navigator
       screenOptions={{
-        headerStyle: { backgroundColor: '#DCCFDC' },
-        headerTitleStyle: { color: colors.text, fontWeight: '700' },
-        headerTintColor: colors.text,
-        headerShadowVisible: false,
+        headerShown: false,
         contentStyle: { backgroundColor: colors.bg },
       }}
     >
-      <Stack.Screen name="Tabs" component={Tabs} options={{ headerShown: false }} />
+      <Stack.Screen name="Tabs" component={Tabs} />
+      {/* The Add New Task screen renders its own X / ✓ header. */}
       <Stack.Screen
         name="EntryForm"
         component={EntryFormScreen}
-        options={{ title: 'רשומה חדשה', presentation: 'modal' }}
+        options={{ presentation: 'modal' }}
       />
     </Stack.Navigator>
   );
@@ -160,7 +175,7 @@ export default function RootNavigator() {
 const styles = StyleSheet.create({
   tabWrapper: {
     position: 'absolute',
-    bottom: 25,
+    bottom: 14,
     left: 0,
     right: 0,
     alignItems: 'center',
@@ -169,20 +184,25 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     borderRadius: 100,
-    paddingHorizontal: 10,
-    paddingVertical: 8,
+    paddingHorizontal: 11,
+    paddingVertical: 10,
     gap: 6,
     overflow: 'hidden',
     borderWidth: 1,
     borderColor: 'rgba(255,255,255,0.6)',
-    backgroundColor: 'rgba(255,255,255,0.25)',
+    backgroundColor: 'rgba(255,255,255,0.28)',
+    shadowColor: '#3F2E64',
+    shadowOpacity: 0.12,
+    shadowRadius: 18,
+    shadowOffset: { width: 0, height: 8 },
+    elevation: 6,
   },
   activePill: {
     position: 'absolute',
-    height: 48,
+    height: 54,
     backgroundColor: '#FFFFFF',
     borderRadius: 100,
-    top: 8,
+    top: 10,
     left: 0,
     shadowColor: '#000',
     shadowOpacity: 0.09,
@@ -190,14 +210,13 @@ const styles = StyleSheet.create({
     shadowOffset: { width: 0, height: 3 },
   },
   tab: {
-    height: 48,
+    height: 54,
     justifyContent: 'center',
     alignItems: 'center',
     borderRadius: 100,
     flexDirection: 'row',
-    gap: 6,
-    paddingHorizontal: 16,
+    gap: 7,
+    paddingHorizontal: 18,
   },
-  tabIcon: { fontSize: 20 },
-  tabLabel: { fontSize: 15, fontWeight: '600', color: '#111' },
+  tabLabel: { fontSize: 16, fontWeight: '600', color: '#111' },
 });

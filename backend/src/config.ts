@@ -9,12 +9,20 @@ export const configSchema = z.object({
     .enum(['fatal', 'error', 'warn', 'info', 'debug', 'trace'])
     .default('info'),
   DATABASE_URL: z.string().min(1, 'DATABASE_URL is required'),
-  JWT_SECRET: z.string().min(1).optional(),
-  JWT_REFRESH_SECRET: z.string().min(1).optional(),
+  JWT_SECRET: z.string().min(32, 'JWT_SECRET must be at least 32 chars'),
+  JWT_REFRESH_SECRET: z.string().min(32, 'JWT_REFRESH_SECRET must be at least 32 chars'),
   GOOGLE_CLIENT_ID: z.string().optional(),
   APPLE_CLIENT_ID: z.string().optional(),
   OPENAI_API_KEY: z.string().optional(),
   EXPO_ACCESS_TOKEN: z.string().optional(),
+  CORS_ORIGINS: z
+    .string()
+    .optional()
+    .transform((s) =>
+      s
+        ? s.split(',').map((o) => o.trim()).filter(Boolean)
+        : [],
+    ),
 });
 
 export type Config = z.infer<typeof configSchema>;

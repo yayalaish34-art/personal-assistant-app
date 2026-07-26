@@ -57,7 +57,13 @@ Rate-limited responses include `Retry-After` header (seconds).
 ### `POST /auth/google`
 Request:
 ```json
-{ "idToken": "<google id token>" }
+{
+  "idToken": "<google id token>",
+  "timezone": "Asia/Jerusalem"   // optional; IANA name of the device timezone.
+                                 // Used only for NEW users (create path).
+                                 // Defaults to "UTC" if omitted — send it to
+                                 // avoid all new Israeli users being UTC.
+}
 ```
 Response `200`:
 ```json
@@ -70,7 +76,7 @@ Response `200`:
 - `401` invalid token · `500` provider unavailable.
 
 ### `POST /auth/apple`
-Same shape as `/auth/google`.
+Same request/response shape as `/auth/google` (including optional `timezone`).
 
 ### `POST /auth/refresh`
 Request:
@@ -85,11 +91,21 @@ Rotation: the returned `refreshToken` replaces the old one. Reusing a rotated
 token → `401`.
 
 ### `POST /auth/logout`
+**Requires `Authorization: Bearer <access_token>`.**
+
 Request:
 ```json
-{ "pushToken": "…" }     // optional; if present, that device row is deleted
+{
+  "refreshToken": "…",     // optional but strongly recommended — server
+                           // revokes this refresh token so the session
+                           // is closed on the server side too.
+  "pushToken": "…"         // optional; deletes the device row for the
+                           // caller's user + this pushToken.
+}
 ```
 Response `204`.
+- Both `refreshToken` and `pushToken` are scoped to the caller — a token
+  belonging to another user is a silent no-op (never leaks ownership).
 
 ---
 

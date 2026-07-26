@@ -79,6 +79,7 @@ export function errorHandler(
     error: {
       code: 'INTERNAL',
       message: config.NODE_ENV === 'production' ? 'Internal error' : message,
+      details: {},
     },
   });
 }

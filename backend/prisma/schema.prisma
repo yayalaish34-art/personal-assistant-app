@@ -1,0 +1,145 @@
+// Personal Assistant App — Backend schema
+// Source of truth: SPEC_BACKEND_V1.2.md §2
+// Conventions:
+//   - Prisma models use camelCase; DB columns are snake_case via @map / @@map.
+//   - All timestamps are TIMESTAMPTZ (UTC).
+//   - Soft delete via deletedAt; every mutation must bump updatedAt (CLAUDE.md §2.3).
+//   - Client-generated UUIDs on tasks/events for offline creation (CLAUDE.md §2.4).
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// ─── Enums ─────────────────────────────────────────────────────────────────
+
+enum AuthProvider {
+  google
+  apple
+}
+
+enum Language {
+  he
+  en
+}
+
+enum ChatRole {
+  user
+  assistant
+  tool
+}
+
+enum DevicePlatform {
+  ios
+  android
+  web
+}
+
+// ─── Users ─────────────────────────────────────────────────────────────────
+
+model User {
+  id                  String       @id @default(uuid()) @db.Uuid
+  provider            AuthProvider
+  providerUserId      String       @map("provider_user_id")
+  email               String
+  name                String
+  language            Language     @default(he)
+  timezone            String
+  deletionRequestedAt DateTime?    @map("deletion_requested_at") @db.Timestamptz(6)
+
+  createdAt DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt DateTime  @updatedAt @map("updated_at") @db.Timestamptz(6)
+  deletedAt DateTime? @map("deleted_at") @db.Timestamptz(6)
+
+  tasks        Task[]
+  events       Event[]
+  chatMessages ChatMessage[]
+  devices      Device[]
+
+  @@unique([provider, providerUserId])
+  @@map("users")
+}
+
+// ─── Tasks ─────────────────────────────────────────────────────────────────
+
+model Task {
+  id     String    @id @db.Uuid // client-generated
+  userId String    @map("user_id") @db.Uuid
+  title  String
+  notes  String?
+  dueAt  DateTime? @map("due_at") @db.Timestamptz(6)
+  isDone Boolean   @default(false) @map("is_done")
+
+  createdAt DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt DateTime  @updatedAt @map("updated_at") @db.Timestamptz(6)
+  deletedAt DateTime? @map("deleted_at") @db.Timestamptz(6)
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId, dueAt])
+  @@index([userId, updatedAt])
+  @@map("tasks")
+}
+
+// ─── Events ────────────────────────────────────────────────────────────────
+
+model Event {
+  id                    String   @id @db.Uuid // client-generated
+  userId                String   @map("user_id") @db.Uuid
+  title                 String
+  note                  String?
+  startsAt              DateTime @map("starts_at") @db.Timestamptz(6)
+  endsAt                DateTime @map("ends_at") @db.Timestamptz(6)
+  reminderMinutesBefore Int?     @map("reminder_minutes_before")
+
+  createdAt DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt DateTime  @updatedAt @map("updated_at") @db.Timestamptz(6)
+  deletedAt DateTime? @map("deleted_at") @db.Timestamptz(6)
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId, startsAt])
+  @@index([userId, updatedAt])
+  @@map("events")
+}
+
+// ─── Chat messages ─────────────────────────────────────────────────────────
+
+model ChatMessage {
+  id            String   @id @default(uuid()) @db.Uuid
+  userId        String   @map("user_id") @db.Uuid
+  role          ChatRole
+  content       String
+  toolCalls     Json?    @map("tool_calls") @db.JsonB // assistant only
+  toolCallId    String?  @map("tool_call_id") // tool only
+  pendingAction Json?    @map("pending_action") @db.JsonB // awaits confirm
+
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId, createdAt(sort: Desc)])
+  @@map("chat_messages")
+}
+
+// ─── Devices ───────────────────────────────────────────────────────────────
+
+model Device {
+  id         String         @id @default(uuid()) @db.Uuid
+  userId     String         @map("user_id") @db.Uuid
+  pushToken  String         @map("push_token")
+  platform   DevicePlatform
+  lastSeenAt DateTime       @default(now()) @map("last_seen_at") @db.Timestamptz(6)
+
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([platform, pushToken])
+  @@index([userId])
+  @@map("devices")
+}

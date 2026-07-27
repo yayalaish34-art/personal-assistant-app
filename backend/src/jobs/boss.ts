@@ -40,7 +40,18 @@ export function getBoss(): PgBoss {
 export async function startBoss(): Promise<PgBoss> {
   if (bossInstance) return bossInstance;
 
-  const boss = new PgBoss({ connectionString: config.DATABASE_URL });
+  // Managed Postgres (Render, Neon, Supabase, etc.) requires TLS. pg-boss
+  // takes the connection string separately from Prisma and does not honor
+  // sslmode= in the URL, so pass ssl explicitly. rejectUnauthorized:false
+  // accepts the provider's cert without shipping their CA bundle.
+  const needsSsl =
+    config.NODE_ENV === 'production' ||
+    /[?&]sslmode=(require|verify-ca|verify-full)/.test(config.DATABASE_URL);
+
+  const boss = new PgBoss({
+    connectionString: config.DATABASE_URL,
+    ...(needsSsl ? { ssl: { rejectUnauthorized: false } } : {}),
+  });
 
   boss.on('error', (err: unknown) => {
     logger.error({ err }, 'pg-boss error');

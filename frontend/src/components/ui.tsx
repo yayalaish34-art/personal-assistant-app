@@ -1,4 +1,4 @@
-import { ReactNode } from 'react';
+import { ReactNode, useState } from 'react';
 import {
   Text,
   View,
@@ -10,17 +10,59 @@ import {
   StyleProp,
   ViewStyle,
   TextStyle,
+  type LayoutChangeEvent,
 } from 'react-native';
 import { LinearGradient } from 'expo-linear-gradient';
+import Svg, { Defs, RadialGradient, Stop, Rect } from 'react-native-svg';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import {
   colors,
   radius,
   spacing,
+  font,
   GRADIENT_BACKGROUND,
+  BACKGROUND_BLOOMS,
   ACCENT_GRADIENT,
   TAB_BAR_CLEARANCE,
 } from '../theme';
+
+// Soft-edged radial color blooms painted over the base ramp. Each bloom fades
+// to fully transparent at its edge so overlapping circles read as one wash
+// rather than as distinct discs.
+function BackgroundBlooms({ width, height }: { width: number; height: number }) {
+  return (
+    <Svg
+      style={StyleSheet.absoluteFillObject}
+      width={width}
+      height={height}
+      pointerEvents="none"
+    >
+      <Defs>
+        {BACKGROUND_BLOOMS.map((b, i) => (
+          <RadialGradient key={i} id={`bloom${i}`} cx="50%" cy="50%" r="50%">
+            <Stop offset="0%" stopColor={b.color} stopOpacity={b.opacity} />
+            <Stop offset="55%" stopColor={b.color} stopOpacity={b.opacity * 0.45} />
+            <Stop offset="100%" stopColor={b.color} stopOpacity={0} />
+          </RadialGradient>
+        ))}
+      </Defs>
+      {BACKGROUND_BLOOMS.map((b, i) => {
+        // Blooms are sized off width so their aspect stays circular.
+        const d = width * b.size;
+        return (
+          <Rect
+            key={i}
+            x={b.x * width}
+            y={b.y * height}
+            width={d}
+            height={d}
+            fill={`url(#bloom${i})`}
+          />
+        );
+      })}
+    </Svg>
+  );
+}
 
 export function Screen({
   children,
@@ -31,6 +73,15 @@ export function Screen({
   clearTabBar?: boolean;
 }) {
   const insets = useSafeAreaInsets();
+  // Blooms are painted in absolute pixels, so they need the measured box.
+  const [size, setSize] = useState({ width: 0, height: 0 });
+  const onLayout = (e: LayoutChangeEvent) => {
+    const { width, height } = e.nativeEvent.layout;
+    setSize((prev) =>
+      prev.width === width && prev.height === height ? prev : { width, height },
+    );
+  };
+
   return (
     <LinearGradient
       colors={GRADIENT_BACKGROUND.colors as unknown as [string, string, ...string[]]}
@@ -38,7 +89,9 @@ export function Screen({
       start={GRADIENT_BACKGROUND.start}
       end={GRADIENT_BACKGROUND.end}
       style={styles.screen}
+      onLayout={onLayout}
     >
+      {size.width > 0 ? <BackgroundBlooms width={size.width} height={size.height} /> : null}
       <View
         style={[
           styles.screenInner,
@@ -144,16 +197,16 @@ const styles = StyleSheet.create({
     shadowRadius: 20,
     elevation: 3,
   },
-  title: { color: colors.text, fontSize: 18, fontWeight: '600', marginBottom: spacing.sm },
-  muted: { color: colors.textMuted, fontSize: 14, fontWeight: '400' },
+  title: { color: colors.text, fontSize: 18, ...font(600), marginBottom: spacing.sm },
+  muted: { color: colors.textMuted, fontSize: 14, ...font(400) },
   buttonWrap: { borderRadius: 50 },
   button: {
     borderRadius: 50,
-    paddingVertical: 16,
+    paddingVertical: 18,
     paddingHorizontal: spacing.md,
     alignItems: 'center',
     justifyContent: 'center',
-    minHeight: 54,
+    minHeight: 58,
   },
   ghost: {
     backgroundColor: colors.surface,
@@ -163,21 +216,21 @@ const styles = StyleSheet.create({
     shadowRadius: 10,
     elevation: 2,
   },
-  buttonText: { color: colors.primaryText, fontWeight: '600', fontSize: 15 },
+  buttonText: { color: colors.primaryText, ...font(600), fontSize: 15 },
   label: {
     color: colors.text,
     marginBottom: spacing.sm,
     fontSize: 15,
-    fontWeight: '500',
+    ...font(500),
   },
   input: {
     backgroundColor: colors.surface,
     color: colors.text,
     borderRadius: radius.sm + 2,
     paddingHorizontal: spacing.md,
-    paddingVertical: 14,
+    paddingVertical: 16,
     fontSize: 15,
-    fontWeight: '400',
+    ...font(400),
     shadowColor: '#3F2E64',
     shadowOffset: { width: 0, height: 3 },
     shadowOpacity: 0.04,

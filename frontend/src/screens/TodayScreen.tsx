@@ -1,5 +1,5 @@
 import { useCallback, useMemo, useState } from 'react';
-import { ScrollView, View, Text, Pressable, StyleSheet, Alert } from 'react-native';
+import { ScrollView, View, Text, Pressable, StyleSheet, Alert, Image } from 'react-native';
 import { useFocusEffect, useNavigation } from '@react-navigation/native';
 import type { NativeStackNavigationProp } from '@react-navigation/native-stack';
 import { LinearGradient } from 'expo-linear-gradient';
@@ -19,11 +19,15 @@ import {
   type TaskStatus,
 } from '../lib/tasks';
 import type { RootStackParamList } from '../navigation';
-import { colors, spacing, ACCENT_GRADIENT, PRIORITY_COLORS } from '../theme';
+import { colors, spacing, font, ACCENT_GRADIENT, PRIORITY_COLORS } from '../theme';
 
 type Nav = NativeStackNavigationProp<RootStackParamList>;
 
 const AVATAR_COLORS = ['#F2A0B5', '#9D8BFA', '#F1C46B'];
+
+// Placeholder portrait for the header avatar. Initials stay rendered underneath
+// as a fallback for when the image can't load (offline).
+const PROFILE_PHOTO_URI = 'https://i.pravatar.cc/144?img=47';
 
 function initialsOf(name: string): string {
   return (
@@ -60,9 +64,14 @@ function AvatarStack() {
 function StatRow({ value, label }: { value: number; label: string }) {
   return (
     <View style={styles.statRow}>
-      <View style={styles.statIcon}>
+      <LinearGradient
+        colors={['#D3BEF9', '#A98CF5']}
+        start={{ x: 0.15, y: 0 }}
+        end={{ x: 0.85, y: 1 }}
+        style={styles.statIcon}
+      >
         <ClipboardList color="#FFFFFF" size={17} />
-      </View>
+      </LinearGradient>
       <View>
         <Text style={styles.statValue}>{value}</Text>
         <Text style={styles.statLabel}>{label}</Text>
@@ -149,6 +158,7 @@ export default function TodayScreen() {
         <View style={styles.headerRow}>
           <View style={styles.profileAvatar}>
             <Text style={styles.profileInitials}>{initialsOf(name || 'You')}</Text>
+            <Image source={{ uri: PROFILE_PHOTO_URI }} style={styles.profilePhoto} />
           </View>
           <View style={{ flex: 1, marginLeft: 12 }}>
             <Text style={styles.greeting}>{greetingNow()}</Text>
@@ -178,22 +188,36 @@ export default function TodayScreen() {
           <Text style={styles.headlineStrong}>Today Productive</Text>
         </Text>
 
-        {/* ── Today's Progress card: translucent gradient glass ── */}
+        {/* ── Today's Progress card: layered lilac glass ── */}
         <LinearGradient
           colors={[
-            'rgba(255,255,255,0.92)',
-            'rgba(240,226,250,0.55)',
-            'rgba(226,203,246,0.5)',
+            'rgba(255,255,255,0.96)',
+            'rgba(247,240,253,0.82)',
+            'rgba(232,216,250,0.72)',
+            'rgba(215,193,247,0.68)',
           ]}
-          locations={[0, 0.55, 1]}
-          start={{ x: 0, y: 0 }}
-          end={{ x: 1, y: 1 }}
+          locations={[0, 0.38, 0.74, 1]}
+          start={{ x: 0.05, y: 0 }}
+          end={{ x: 0.95, y: 1 }}
           style={styles.progressCard}
         >
+          {/* Warm bloom in the lower-right corner, as in the reference. */}
+          <LinearGradient
+            colors={['rgba(200,168,246,0)', 'rgba(186,148,244,0.3)']}
+            start={{ x: 0.35, y: 0.3 }}
+            end={{ x: 1, y: 1 }}
+            style={styles.progressCardGlow}
+            pointerEvents="none"
+          />
           <Text style={styles.progressTitle}>Today{'’'}s Progress</Text>
           <View style={styles.progressBody}>
             <ProgressRing progress={stats.progress} />
-            <View style={styles.progressDivider} />
+            <LinearGradient
+              colors={['rgba(160,128,232,0)', 'rgba(160,128,232,0.35)', 'rgba(160,128,232,0)']}
+              start={{ x: 0, y: 0 }}
+              end={{ x: 0, y: 1 }}
+              style={styles.progressDivider}
+            />
             <View style={{ flex: 1, gap: 14 }}>
               <StatRow value={stats.total} label="Total Task" />
               <StatRow value={stats.done} label="Completed Task" />
@@ -294,10 +318,12 @@ const styles = StyleSheet.create({
     backgroundColor: '#E7DBF6',
     alignItems: 'center',
     justifyContent: 'center',
+    overflow: 'hidden',
   },
-  profileInitials: { fontWeight: '600', fontSize: 16, color: colors.primary },
-  greeting: { fontWeight: '500', fontSize: 15, color: colors.text },
-  greetingName: { fontWeight: '400', fontSize: 12, color: colors.textMuted, marginTop: 1 },
+  profileInitials: { ...font(600), fontSize: 16, color: colors.primary },
+  profilePhoto: { ...StyleSheet.absoluteFillObject, width: '100%', height: '100%' },
+  greeting: { ...font(500), fontSize: 15, color: colors.text },
+  greetingName: { ...font(400), fontSize: 12, color: colors.textMuted, marginTop: 1 },
   circleBtn: {
     width: 48,
     height: 48,
@@ -315,14 +341,14 @@ const styles = StyleSheet.create({
   },
 
   headline: {
-    fontWeight: '400',
-    fontSize: 28,
-    lineHeight: 36,
+    ...font(400),
+    fontSize: 34,
+    lineHeight: 42,
     color: colors.text,
-    letterSpacing: -0.3,
+    letterSpacing: -0.6,
     marginBottom: spacing.lg,
   },
-  headlineStrong: { fontWeight: '500' },
+  headlineStrong: { ...font(600) },
 
   progressCard: {
     borderRadius: 28,
@@ -330,14 +356,19 @@ const styles = StyleSheet.create({
     marginBottom: spacing.lg,
     overflow: 'hidden',
     borderWidth: 1,
-    borderColor: 'rgba(255,255,255,0.65)',
+    borderColor: 'rgba(255,255,255,0.75)',
+    shadowColor: '#5B3FA8',
+    shadowOffset: { width: 0, height: 10 },
+    shadowOpacity: 0.13,
+    shadowRadius: 24,
+    elevation: 5,
   },
-  progressTitle: { fontWeight: '500', fontSize: 16, color: colors.text, marginBottom: 14 },
+  progressCardGlow: { ...StyleSheet.absoluteFillObject },
+  progressTitle: { ...font(600), fontSize: 17, color: colors.text, marginBottom: 14 },
   progressBody: { flexDirection: 'row', alignItems: 'center' },
   progressDivider: {
     width: 1,
     alignSelf: 'stretch',
-    backgroundColor: '#EFE7F6',
     marginHorizontal: 18,
   },
   statRow: { flexDirection: 'row', alignItems: 'center', gap: 10 },
@@ -345,12 +376,16 @@ const styles = StyleSheet.create({
     width: 38,
     height: 38,
     borderRadius: 19,
-    backgroundColor: '#CBB3F1',
     alignItems: 'center',
     justifyContent: 'center',
+    shadowColor: '#6B4CC4',
+    shadowOffset: { width: 0, height: 3 },
+    shadowOpacity: 0.22,
+    shadowRadius: 6,
+    elevation: 2,
   },
-  statValue: { fontWeight: '600', fontSize: 15, color: colors.text },
-  statLabel: { fontWeight: '400', fontSize: 11, color: colors.textMuted, marginTop: 1 },
+  statValue: { ...font(600), fontSize: 15, color: colors.text },
+  statLabel: { ...font(400), fontSize: 11, color: colors.textMuted, marginTop: 1 },
 
   sectionRow: {
     flexDirection: 'row',
@@ -358,8 +393,8 @@ const styles = StyleSheet.create({
     justifyContent: 'space-between',
     marginBottom: spacing.md,
   },
-  sectionTitle: { fontWeight: '600', fontSize: 18, color: colors.text },
-  viewAll: { fontWeight: '500', fontSize: 14, color: colors.textMuted },
+  sectionTitle: { ...font(600), fontSize: 18, color: colors.text },
+  viewAll: { ...font(500), fontSize: 14, color: colors.textMuted },
 
   chip: {
     flexDirection: 'row',
@@ -367,7 +402,7 @@ const styles = StyleSheet.create({
     gap: 8,
     backgroundColor: '#FFFFFF',
     borderRadius: 50,
-    paddingVertical: 8,
+    paddingVertical: 10,
     paddingLeft: 8,
     paddingRight: 18,
   },
@@ -381,11 +416,11 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
   },
   chipCountActive: { backgroundColor: '#FFFFFF' },
-  chipCountText: { fontWeight: '600', fontSize: 14, color: colors.text },
-  chipLabel: { fontWeight: '500', fontSize: 14, color: colors.text },
+  chipCountText: { ...font(600), fontSize: 14, color: colors.text },
+  chipLabel: { ...font(500), fontSize: 14, color: colors.text },
 
   offline: {
-    fontWeight: '400',
+    ...font(400),
     fontSize: 13,
     color: colors.danger,
     marginBottom: spacing.md,
@@ -394,7 +429,7 @@ const styles = StyleSheet.create({
   taskCard: {
     backgroundColor: '#FFFFFF',
     borderRadius: 24,
-    padding: spacing.md + 2,
+    padding: spacing.md + 4,
     marginBottom: 14,
     shadowColor: '#3F2E64',
     shadowOffset: { width: 0, height: 6 },
@@ -417,7 +452,7 @@ const styles = StyleSheet.create({
     paddingHorizontal: 12,
   },
   priorityDot: { width: 7, height: 7, borderRadius: 4 },
-  priorityText: { fontWeight: '500', fontSize: 12 },
+  priorityText: { ...font(500), fontSize: 12 },
   arrowBtn: {
     width: 36,
     height: 36,
@@ -426,11 +461,11 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
   },
-  taskTitle: { fontWeight: '600', fontSize: 17, color: colors.text, marginBottom: 12 },
-  taskEmptyText: { fontWeight: '400', fontSize: 13, color: colors.textMuted },
+  taskTitle: { ...font(600), fontSize: 17, color: colors.text, marginBottom: 12 },
+  taskEmptyText: { ...font(400), fontSize: 13, color: colors.textMuted },
   taskBottomRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' },
   taskTimeRow: { flexDirection: 'row', alignItems: 'center', gap: 6 },
-  taskTime: { fontWeight: '400', fontSize: 13, color: colors.textMuted },
+  taskTime: { ...font(400), fontSize: 13, color: colors.textMuted },
 
   avatarRow: { flexDirection: 'row', alignItems: 'center' },
   avatarDot: {
@@ -446,5 +481,5 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
   },
-  avatarMoreText: { fontWeight: '500', fontSize: 10, color: '#FFFFFF' },
+  avatarMoreText: { ...font(500), fontSize: 10, color: '#FFFFFF' },
 });

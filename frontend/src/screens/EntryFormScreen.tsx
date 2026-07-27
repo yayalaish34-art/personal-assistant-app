@@ -18,7 +18,7 @@ import { api } from '../lib/api';
 import { storage } from '../lib/storage';
 import { withPriority, toDateStr } from '../lib/tasks';
 import type { RootStackParamList } from '../navigation';
-import { colors, spacing, PRIORITY_COLORS, type Priority } from '../theme';
+import { colors, spacing, font, PRIORITY_COLORS, type Priority } from '../theme';
 
 type Nav = NativeStackNavigationProp<RootStackParamList, 'EntryForm'>;
 type Route = RouteProp<RootStackParamList, 'EntryForm'>;
@@ -300,7 +300,7 @@ const styles = StyleSheet.create({
     justifyContent: 'space-between',
     marginBottom: spacing.lg,
   },
-  headerTitle: { fontWeight: '600', fontSize: 16, color: colors.text },
+  headerTitle: { ...font(600), fontSize: 16, color: colors.text },
   circleWhite: {
     width: 44,
     height: 44,
@@ -316,7 +316,7 @@ const styles = StyleSheet.create({
   },
 
   label: {
-    fontWeight: '500',
+    ...font(500),
     fontSize: 14,
     color: colors.text,
     marginBottom: spacing.sm,
@@ -325,13 +325,13 @@ const styles = StyleSheet.create({
     backgroundColor: '#FFFFFF',
     borderRadius: 16,
     paddingHorizontal: spacing.md,
-    paddingVertical: 15,
+    paddingVertical: 17,
     fontSize: 15,
-    fontWeight: '400',
+    ...font(400),
     color: colors.text,
     marginBottom: spacing.md + 2,
   },
-  inputMultiline: { minHeight: 96, textAlignVertical: 'top' },
+  inputMultiline: { minHeight: 104, textAlignVertical: 'top' },
 
   rowGap: { flexDirection: 'row', gap: 10, marginBottom: spacing.md + 2 },
   iconInput: {
@@ -344,9 +344,9 @@ const styles = StyleSheet.create({
   },
   iconInputText: {
     flex: 1,
-    paddingVertical: 15,
+    paddingVertical: 17,
     fontSize: 14,
-    fontWeight: '400',
+    ...font(400),
     color: colors.text,
   },
 
@@ -354,11 +354,11 @@ const styles = StyleSheet.create({
     flex: 1,
     borderWidth: 1.4,
     borderRadius: 50,
-    paddingVertical: 12,
+    paddingVertical: 14,
     alignItems: 'center',
     backgroundColor: '#FFFFFF',
   },
-  priorityText: { fontWeight: '500', fontSize: 14 },
+  priorityText: { ...font(500), fontSize: 14 },
 
   projectRow: {
     flexDirection: 'row',
@@ -367,10 +367,10 @@ const styles = StyleSheet.create({
     backgroundColor: '#FFFFFF',
     borderRadius: 16,
     paddingHorizontal: 14,
-    paddingVertical: 15,
+    paddingVertical: 17,
     marginBottom: spacing.md + 2,
   },
-  projectText: { fontWeight: '500', fontSize: 14, color: colors.text },
+  projectText: { ...font(500), fontSize: 14, color: colors.text },
 
   tagsRow: { flexDirection: 'row', flexWrap: 'wrap', gap: 9, alignItems: 'center' },
   tagChip: {
@@ -382,9 +382,9 @@ const styles = StyleSheet.create({
     backgroundColor: '#FFFFFF',
     borderRadius: 50,
     paddingHorizontal: 13,
-    paddingVertical: 8,
+    paddingVertical: 9,
   },
-  tagText: { fontWeight: '500', fontSize: 13, color: colors.primary },
+  tagText: { ...font(500), fontSize: 13, color: colors.primary },
   tagAdd: { borderColor: '#DDD6E4' },
   tagInput: {
     minWidth: 70,
@@ -393,8 +393,8 @@ const styles = StyleSheet.create({
     backgroundColor: '#FFFFFF',
     borderRadius: 50,
     paddingHorizontal: 13,
-    paddingVertical: 8,
-    fontWeight: '400',
+    paddingVertical: 9,
+    ...font(400),
     fontSize: 13,
     color: colors.text,
   },

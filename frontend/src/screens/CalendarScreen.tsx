@@ -1,11 +1,22 @@
 import { useCallback, useMemo, useState } from 'react';
-import { ScrollView, View, Text, Pressable, StyleSheet, Alert } from 'react-native';
+import {
+  ScrollView,
+  View,
+  Text,
+  Pressable,
+  StyleSheet,
+  Alert,
+  LayoutAnimation,
+} from 'react-native';
 import { useFocusEffect, useNavigation } from '@react-navigation/native';
 import type { NativeStackNavigationProp } from '@react-navigation/native-stack';
 import { LinearGradient } from 'expo-linear-gradient';
 import * as Haptics from 'expo-haptics';
 import {
   ArrowLeft,
+  ChevronLeft,
+  ChevronRight,
+  ChevronDown,
   Plus,
   Calendar as CalendarIcon,
   Sun,
@@ -20,7 +31,7 @@ import { Screen } from '../components/ui';
 import { api, CalendarEvent } from '../lib/api';
 import { parsePriority, statusOf, to12h, toDateStr } from '../lib/tasks';
 import type { RootStackParamList } from '../navigation';
-import { colors, spacing, ACCENT_GRADIENT } from '../theme';
+import { colors, spacing, font, ACCENT_GRADIENT } from '../theme';
 
 type Nav = NativeStackNavigationProp<RootStackParamList>;
 
@@ -32,15 +43,35 @@ const STATUS_CHIP = {
   done: { bg: '#E8F5EE', color: '#3EA06B', label: 'Done' },
 } as const;
 
-function weekOf(anchor: Date): Date[] {
-  const monOffset = (anchor.getDay() + 6) % 7; // Monday = 0
-  const monday = new Date(anchor);
-  monday.setDate(anchor.getDate() - monOffset);
-  return [...Array(7)].map((_, i) => {
-    const d = new Date(monday);
-    d.setDate(monday.getDate() + i);
-    return d;
-  });
+const WEEKDAYS = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'] as const;
+
+/**
+ * The full month grid containing `anchor`, as weeks of 7 days. Leading and
+ * trailing days from the neighbouring months pad the grid so every row is
+ * complete; `inMonth` distinguishes them so they can render dimmed.
+ */
+function monthGrid(anchor: Date): { date: Date; inMonth: boolean }[][] {
+  const year = anchor.getFullYear();
+  const month = anchor.getMonth();
+  const first = new Date(year, month, 1);
+  // Monday-first: how many days of the previous month lead the grid.
+  const lead = (first.getDay() + 6) % 7;
+
+  const start = new Date(year, month, 1 - lead);
+  const weeks: { date: Date; inMonth: boolean }[][] = [];
+  const cursor = new Date(start);
+
+  // Emit whole weeks until we've passed the end of the month.
+  do {
+    const week = [...Array(7)].map(() => {
+      const date = new Date(cursor);
+      cursor.setDate(cursor.getDate() + 1);
+      return { date, inMonth: date.getMonth() === month };
+    });
+    weeks.push(week);
+  } while (cursor.getMonth() === month && weeks.length < 6);
+
+  return weeks;
 }
 
 function sectionOf(e: CalendarEvent): 'All Day' | 'Morning' | 'Afternoon' | 'Evening' {
@@ -66,9 +97,23 @@ export default function CalendarScreen() {
   const [error, setError] = useState<string | null>(null);
   const [filter, setFilter] = useState<'all' | 'work' | 'personal'>('all');
 
+  // The month currently on screen, anchored to its 1st. Kept separate from
+  // `selected` so paging months doesn't move the selected day.
+  const [visibleMonth, setVisibleMonth] = useState<Date>(() => {
+    const d = new Date();
+    return new Date(d.getFullYear(), d.getMonth(), 1);
+  });
+  // The month grid is collapsed until the Calendar button opens it.
+  const [monthOpen, setMonthOpen] = useState(false);
+  // All task dates, for the "has tasks" dots under the day cells.
+  const [markedDates, setMarkedDates] = useState<Set<string>>(new Set());
+
   const selectedStr = toDateStr(selected);
   const todayStr = toDateStr(new Date());
-  const week = useMemo(() => weekOf(selected), [selectedStr]); // eslint-disable-line react-hooks/exhaustive-deps
+  const grid = useMemo(
+    () => monthGrid(visibleMonth),
+    [visibleMonth.getFullYear(), visibleMonth.getMonth()], // eslint-disable-line react-hooks/exhaustive-deps
+  );
 
   const load = useCallback(() => {
     let active = true;
@@ -82,6 +127,14 @@ export default function CalendarScreen() {
       } catch (e) {
         if (active) setError((e as Error).message);
       }
+      // Unfiltered fetch drives the month dots; a failure here just means no
+      // dots, so it must not clobber the day list's error state.
+      try {
+        const all = await api.listEvents();
+        if (active) setMarkedDates(new Set(all.map((e) => e.date)));
+      } catch {
+        /* dots are decorative — ignore */
+      }
     })();
     return () => {
       active = false;
@@ -90,11 +143,19 @@ export default function CalendarScreen() {
 
   useFocusEffect(load);
 
+  const shiftMonth = (delta: number) => {
+    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+    setVisibleMonth((m) => new Date(m.getFullYear(), m.getMonth() + delta, 1));
+  };
+
   const shiftDay = (delta: number) => {
     Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
     const d = new Date(selected);
     d.setDate(d.getDate() + delta);
     setSelected(d);
+    // Follow the day into a new month so the grid never shows a selection
+    // that isn't visible.
+    setVisibleMonth(new Date(d.getFullYear(), d.getMonth(), 1));
   };
 
   const openAddTask = () => {
@@ -170,50 +231,130 @@ export default function CalendarScreen() {
 
         {/* ── Headline ── */}
         <View style={styles.headlineRow}>
-          <Text style={styles.headline}>Task{'\n'}Schedule</Text>
+          {/* Light first line, heavier second — same treatment as
+              "Let's Make / Today Productive" on the Today screen. */}
+          <Text style={styles.headline}>
+            Task{'\n'}
+            <Text style={styles.headlineStrong}>Schedule</Text>
+          </Text>
           <Pressable
             onPress={() => {
               Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
-              setSelected(new Date());
+              // Opening always lands on the selected day's month, so the grid
+              // never appears showing a month the selection isn't in.
+              if (!monthOpen) {
+                setVisibleMonth(new Date(selected.getFullYear(), selected.getMonth(), 1));
+              }
+              LayoutAnimation.configureNext(
+                LayoutAnimation.create(220, LayoutAnimation.Types.easeInEaseOut, 'opacity'),
+              );
+              setMonthOpen((v) => !v);
             }}
-            style={styles.calendarPill}
+            style={[styles.calendarPill, monthOpen && styles.calendarPillActive]}
           >
-            <CalendarIcon color={colors.text} size={17} />
-            <Text style={styles.calendarPillText}>Calendar</Text>
+            <CalendarIcon color={monthOpen ? '#FFFFFF' : colors.text} size={17} />
+            <Text style={[styles.calendarPillText, monthOpen && { color: '#FFFFFF' }]}>
+              Calendar
+            </Text>
+            <ChevronDown
+              color={monthOpen ? '#FFFFFF' : colors.textMuted}
+              size={15}
+              style={{ transform: [{ rotate: monthOpen ? '180deg' : '0deg' }] }}
+            />
           </Pressable>
         </View>
 
-        {/* ── Week selector ── */}
-        <ScrollView
-          horizontal
-          showsHorizontalScrollIndicator={false}
-          contentContainerStyle={{ gap: 9, paddingBottom: 4 }}
-          style={{ marginBottom: spacing.md }}
+        {/* ── Month calendar: only mounted once the Calendar button opens it ── */}
+        {monthOpen ? (
+        <LinearGradient
+          colors={[
+            'rgba(255,255,255,0.96)',
+            'rgba(248,242,254,0.86)',
+            'rgba(234,220,251,0.76)',
+          ]}
+          locations={[0, 0.55, 1]}
+          start={{ x: 0.05, y: 0 }}
+          end={{ x: 0.95, y: 1 }}
+          style={styles.monthCard}
         >
-          {week.map((d) => {
-            const dStr = toDateStr(d);
-            const active = dStr === selectedStr;
-            return (
-              <Pressable
-                key={dStr}
-                onPress={() => {
-                  Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
-                  setSelected(new Date(d));
-                }}
-                style={styles.dayPill}
-              >
-                <Text style={styles.dayName}>
-                  {d.toLocaleDateString('en-US', { weekday: 'short' })}
-                </Text>
-                <View style={[styles.dayNum, active && styles.dayNumActive]}>
-                  <Text style={[styles.dayNumText, active && styles.dayNumTextActive]}>
-                    {d.getDate()}
-                  </Text>
-                </View>
-              </Pressable>
-            );
-          })}
-        </ScrollView>
+          {/* Month nav: ‹ July 2026 › + a Today shortcut */}
+          <View style={styles.monthNav}>
+            <Pressable onPress={() => shiftMonth(-1)} style={styles.monthArrow} hitSlop={8}>
+              <ChevronLeft color={colors.text} size={19} />
+            </Pressable>
+            <View style={styles.monthLabelBox}>
+              <Text style={styles.monthLabel}>
+                {visibleMonth.toLocaleDateString('en-US', { month: 'long' })}{' '}
+                <Text style={styles.monthLabelYear}>{visibleMonth.getFullYear()}</Text>
+              </Text>
+            </View>
+            <Pressable onPress={() => shiftMonth(1)} style={styles.monthArrow} hitSlop={8}>
+              <ChevronRight color={colors.text} size={19} />
+            </Pressable>
+          </View>
+
+          {/* Weekday header */}
+          <View style={styles.weekRow}>
+            {WEEKDAYS.map((w) => (
+              <Text key={w} style={styles.weekdayLabel}>
+                {w}
+              </Text>
+            ))}
+          </View>
+
+          {/* Day grid */}
+          {grid.map((week, wi) => (
+            <View key={wi} style={styles.weekRow}>
+              {week.map(({ date, inMonth }) => {
+                const dStr = toDateStr(date);
+                const active = dStr === selectedStr;
+                const isToday = dStr === todayStr;
+                const marked = markedDates.has(dStr);
+                return (
+                  <Pressable
+                    key={dStr}
+                    onPress={() => {
+                      Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+                      setSelected(new Date(date));
+                      // Tapping a spill-over day follows it into its month.
+                      if (!inMonth) {
+                        setVisibleMonth(new Date(date.getFullYear(), date.getMonth(), 1));
+                      }
+                    }}
+                    style={styles.dayCell}
+                  >
+                    {active ? (
+                      <LinearGradient
+                        colors={['#A98CF8', '#7C57EE']}
+                        start={{ x: 0.15, y: 0 }}
+                        end={{ x: 0.85, y: 1 }}
+                        style={styles.dayCellFill}
+                      />
+                    ) : isToday ? (
+                      <View style={styles.dayCellToday} />
+                    ) : null}
+                    <Text
+                      style={[
+                        styles.dayCellText,
+                        !inMonth && styles.dayCellTextMuted,
+                        active && styles.dayCellTextActive,
+                        !active && isToday && styles.dayCellTextToday,
+                      ]}
+                    >
+                      {date.getDate()}
+                    </Text>
+                    {marked ? (
+                      <View
+                        style={[styles.dayDot, active && styles.dayDotActive]}
+                      />
+                    ) : null}
+                  </Pressable>
+                );
+              })}
+            </View>
+          ))}
+        </LinearGradient>
+        ) : null}
 
         {/* ── Filter chips ── */}
         <View style={styles.filterRow}>
@@ -359,10 +500,10 @@ const styles = StyleSheet.create({
     backgroundColor: '#FFFFFF',
     borderRadius: 50,
     paddingHorizontal: 16,
-    paddingVertical: 12,
+    paddingVertical: 14,
     marginLeft: 10,
   },
-  datePillText: { fontWeight: '500', fontSize: 14, color: colors.text },
+  datePillText: { ...font(500), fontSize: 14, color: colors.text },
   dotsRow: { flexDirection: 'row', gap: 3 },
   dot: { width: 4, height: 4, borderRadius: 2, backgroundColor: colors.text },
 
@@ -373,43 +514,119 @@ const styles = StyleSheet.create({
     marginBottom: spacing.lg,
   },
   headline: {
-    fontWeight: '500',
-    fontSize: 28,
-    lineHeight: 34,
+    ...font(400),
+    fontSize: 34,
+    lineHeight: 42,
     color: colors.text,
-    letterSpacing: -0.3,
+    letterSpacing: -0.6,
   },
+  headlineStrong: { ...font(600) },
   calendarPill: {
     flexDirection: 'row',
     alignItems: 'center',
-    gap: 8,
+    gap: 7,
     backgroundColor: '#FFFFFF',
     borderRadius: 50,
-    paddingHorizontal: 18,
-    paddingVertical: 13,
+    paddingLeft: 16,
+    paddingRight: 13,
+    paddingVertical: 15,
+    shadowColor: '#3F2E64',
+    shadowOffset: { width: 0, height: 3 },
+    shadowOpacity: 0.07,
+    shadowRadius: 8,
+    elevation: 2,
   },
-  calendarPillText: { fontWeight: '500', fontSize: 15, color: colors.text },
+  calendarPillActive: {
+    backgroundColor: colors.primary,
+    shadowColor: colors.primary,
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.35,
+    shadowRadius: 10,
+    elevation: 3,
+  },
+  calendarPillText: { ...font(500), fontSize: 15, color: colors.text },
 
-  dayPill: {
-    backgroundColor: '#FFFFFF',
-    borderRadius: 26,
-    paddingTop: 10,
-    paddingBottom: 6,
-    paddingHorizontal: 6,
-    alignItems: 'center',
-    width: 52,
+  monthCard: {
+    borderRadius: 28,
+    padding: spacing.md,
+    paddingBottom: spacing.sm + 2,
+    marginBottom: spacing.md,
+    overflow: 'hidden',
+    borderWidth: 1,
+    borderColor: 'rgba(255,255,255,0.75)',
+    shadowColor: '#5B3FA8',
+    shadowOffset: { width: 0, height: 8 },
+    shadowOpacity: 0.1,
+    shadowRadius: 20,
+    elevation: 4,
   },
-  dayName: { fontWeight: '400', fontSize: 12, color: colors.textMuted, marginBottom: 6 },
-  dayNum: {
-    width: 38,
-    height: 38,
-    borderRadius: 19,
+  monthNav: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    marginBottom: 14,
+  },
+  monthArrow: {
+    width: 34,
+    height: 34,
+    borderRadius: 17,
     alignItems: 'center',
     justifyContent: 'center',
+    backgroundColor: 'rgba(255,255,255,0.9)',
+    shadowColor: '#3F2E64',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.08,
+    shadowRadius: 6,
+    elevation: 1,
   },
-  dayNumActive: { backgroundColor: '#17171B' },
-  dayNumText: { fontWeight: '600', fontSize: 15, color: colors.text },
-  dayNumTextActive: { color: '#FFFFFF' },
+  monthLabelBox: { flex: 1, alignItems: 'center' },
+  // "July" heavier, the year lighter — the same weight pairing as the headline.
+  monthLabel: { ...font(600), fontSize: 17, color: colors.text, letterSpacing: -0.2 },
+  monthLabelYear: { ...font(400), color: colors.textMuted },
+
+  weekRow: { flexDirection: 'row', justifyContent: 'space-between' },
+  weekdayLabel: {
+    ...font(500),
+    fontSize: 11,
+    color: colors.textMuted,
+    width: 38,
+    textAlign: 'center',
+    marginBottom: 6,
+  },
+  dayCell: {
+    width: 38,
+    height: 43,
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginBottom: 2,
+  },
+  dayCellFill: {
+    ...StyleSheet.absoluteFillObject,
+    borderRadius: 13,
+    shadowColor: '#6B4CC4',
+    shadowOffset: { width: 0, height: 3 },
+    shadowOpacity: 0.3,
+    shadowRadius: 7,
+  },
+  dayCellToday: {
+    ...StyleSheet.absoluteFillObject,
+    borderRadius: 13,
+    borderWidth: 1.5,
+    borderColor: 'rgba(136,117,246,0.5)',
+  },
+  dayCellText: { ...font(500), fontSize: 14, color: colors.text },
+  dayCellTextMuted: { color: 'rgba(142,139,150,0.45)' },
+  dayCellTextActive: { ...font(600), color: '#FFFFFF' },
+  dayCellTextToday: { ...font(600), color: colors.primary },
+  dayDot: {
+    position: 'absolute',
+    bottom: 4,
+    width: 4,
+    height: 4,
+    borderRadius: 2,
+    backgroundColor: colors.primary,
+  },
+  dayDotActive: { backgroundColor: 'rgba(255,255,255,0.9)' },
 
   filterRow: {
     flexDirection: 'row',
@@ -424,10 +641,10 @@ const styles = StyleSheet.create({
     backgroundColor: '#FFFFFF',
     borderRadius: 50,
     paddingHorizontal: 18,
-    paddingVertical: 11,
+    paddingVertical: 13,
   },
   filterChipActive: { backgroundColor: '#17171B' },
-  filterText: { fontWeight: '500', fontSize: 14, color: colors.text },
+  filterText: { ...font(500), fontSize: 14, color: colors.text },
   starBtn: {
     width: 42,
     height: 42,
@@ -443,13 +660,13 @@ const styles = StyleSheet.create({
     gap: 8,
     marginBottom: spacing.md,
   },
-  sectionTitle: { fontWeight: '600', fontSize: 16, color: colors.text },
-  sectionRight: { fontWeight: '400', fontSize: 13, color: colors.textMuted },
+  sectionTitle: { ...font(600), fontSize: 16, color: colors.text },
+  sectionRight: { ...font(400), fontSize: 13, color: colors.textMuted },
 
   timelineRow: { flexDirection: 'row', marginBottom: spacing.md },
   timeCol: { width: 48, alignItems: 'center', paddingTop: 2 },
-  timeHour: { fontWeight: '600', fontSize: 16, color: colors.text },
-  timeAmPm: { fontWeight: '400', fontSize: 11, color: colors.textMuted, marginTop: 1 },
+  timeHour: { ...font(600), fontSize: 16, color: colors.text },
+  timeAmPm: { ...font(400), fontSize: 11, color: colors.textMuted, marginTop: 1 },
   timeLine: {
     flex: 1,
     width: 1.5,
@@ -462,7 +679,7 @@ const styles = StyleSheet.create({
     flex: 1,
     backgroundColor: '#FFFFFF',
     borderRadius: 22,
-    padding: spacing.md,
+    padding: spacing.md + 2,
     marginLeft: 6,
     shadowColor: '#3F2E64',
     shadowOffset: { width: 0, height: 6 },
@@ -480,9 +697,9 @@ const styles = StyleSheet.create({
     shadowRadius: 14,
     elevation: 2,
   },
-  cardTitle: { fontWeight: '600', fontSize: 15.5, color: colors.text, marginBottom: 4 },
+  cardTitle: { ...font(600), fontSize: 15.5, color: colors.text, marginBottom: 4 },
   cardNotes: {
-    fontWeight: '400',
+    ...font(400),
     fontSize: 13,
     color: colors.textMuted,
     lineHeight: 18,
@@ -508,7 +725,7 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
   },
-  avatarMoreText: { fontWeight: '500', fontSize: 9, color: '#FFFFFF' },
+  avatarMoreText: { ...font(500), fontSize: 9, color: '#FFFFFF' },
   statusChip: { borderRadius: 50, paddingHorizontal: 13, paddingVertical: 7 },
-  statusChipText: { fontWeight: '500', fontSize: 12 },
+  statusChipText: { ...font(500), fontSize: 12 },
 });

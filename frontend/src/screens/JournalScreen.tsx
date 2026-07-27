@@ -9,7 +9,7 @@ import { Plus, ArrowUpRight, Clock } from 'lucide-react-native';
 import { Screen } from '../components/ui';
 import { api, JournalEntry } from '../lib/api';
 import type { RootStackParamList } from '../navigation';
-import { colors, spacing, ACCENT_GRADIENT, PRIORITY_COLORS } from '../theme';
+import { colors, spacing, font, ACCENT_GRADIENT, PRIORITY_COLORS } from '../theme';
 
 type Nav = NativeStackNavigationProp<RootStackParamList>;
 
@@ -197,7 +197,7 @@ const styles = StyleSheet.create({
     marginBottom: spacing.lg,
   },
   headline: {
-    fontWeight: '500',
+    ...font(500),
     fontSize: 28,
     lineHeight: 34,
     color: colors.text,
@@ -217,7 +217,7 @@ const styles = StyleSheet.create({
     gap: 8,
     backgroundColor: '#FFFFFF',
     borderRadius: 50,
-    paddingVertical: 8,
+    paddingVertical: 10,
     paddingLeft: 8,
     paddingRight: 18,
   },
@@ -231,13 +231,13 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
   },
   chipCountActive: { backgroundColor: '#FFFFFF' },
-  chipCountText: { fontWeight: '600', fontSize: 14, color: colors.text },
-  chipLabel: { fontWeight: '500', fontSize: 14, color: colors.text },
+  chipCountText: { ...font(600), fontSize: 14, color: colors.text },
+  chipLabel: { ...font(500), fontSize: 14, color: colors.text },
 
   card: {
     backgroundColor: '#FFFFFF',
     borderRadius: 24,
-    padding: spacing.md + 2,
+    padding: spacing.md + 4,
     marginBottom: 14,
     shadowColor: '#3F2E64',
     shadowOffset: { width: 0, height: 6 },
@@ -260,7 +260,7 @@ const styles = StyleSheet.create({
     paddingHorizontal: 12,
   },
   moodDot: { width: 7, height: 7, borderRadius: 4 },
-  moodText: { fontWeight: '500', fontSize: 12 },
+  moodText: { ...font(500), fontSize: 12 },
   arrowBtn: {
     width: 36,
     height: 36,
@@ -269,14 +269,14 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
   },
-  cardTitle: { fontWeight: '600', fontSize: 17, color: colors.text, marginBottom: 6 },
+  cardTitle: { ...font(600), fontSize: 17, color: colors.text, marginBottom: 6 },
   cardBody: {
-    fontWeight: '400',
+    ...font(400),
     fontSize: 14,
     color: colors.textMuted,
     lineHeight: 20,
     marginBottom: 12,
   },
   cardBottomRow: { flexDirection: 'row', alignItems: 'center', gap: 6 },
-  cardDate: { fontWeight: '400', fontSize: 13, color: colors.textMuted },
+  cardDate: { ...font(400), fontSize: 13, color: colors.textMuted },
 });

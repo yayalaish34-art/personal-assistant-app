@@ -1,72 +1,97 @@
-# Personal Assistant App — עוזר אישי עם יומן
+# Personal Assistant App — עוזר אישי
 
-אפליקציית מובייל (iOS / Android / Web) לניהול יומן אישי ולוח שנה, בנויה כמונורפו עם שני חלקים.
+> **English summary:** A Hebrew-first personal assistant with a chat interface, tasks, and calendar. This repository contains a production-ready Node/TypeScript backend (Phases 0–5 complete) and a React Native + Expo frontend (not touched in this iteration; may drift from the new backend contract).
 
-## ארכיטקטורה
+---
+
+## מה זה
+
+עוזר אישי מבוסס צ׳אט לניהול משימות ולוח שנה. המשתמש מדבר (טקסט או קול), ה-LLM מפרש כוונה ומציע פעולה, המשתמש מאשר, והפעולה מבוצעת. ה-Backend בנוי על Node.js + TypeScript + PostgreSQL.
+
+---
+
+## מבנה הרפו
 
 ```
-app/
-├── frontend/        React Native + Expo (SDK 54)
-│   ├── App.tsx                   נקודת כניסה + NavigationContainer
-│   ├── index.js                  registerRootComponent
-│   └── src/
-│       ├── navigation/           Tabs (היום/יומן/לוח שנה/הגדרות) + Stack (טופס מודאלי)
-│       ├── screens/              TodayScreen, JournalScreen, CalendarScreen,
-│       │                         SettingsScreen, EntryFormScreen
-│       ├── components/ui.tsx     רכיבי UI משותפים (Card, Button, Field, ...)
-│       ├── lib/api.ts            לקוח API (fetch) מול ה-Backend
-│       ├── lib/storage.ts        עטיפת AsyncStorage (הגדרות, מונה רשומות)
-│       └── theme.ts              צבעים, ריווח, רדיוסים
-│
-└── backend/         Express.js (Node) על פורט 5000
-    └── src/
-        ├── index.js              שרת + middleware + הרכבת ראוטרים
-        ├── store.js              אחסון בזיכרון עם שמירה ל-data/db.json
-        └── routes/
-            ├── journal.js        GET/POST/DELETE /api/journal
-            └── events.js         GET/POST/DELETE /api/events
+personal-assistant-app/
+├── backend/      Node.js + TypeScript + Express + PostgreSQL — זה מה שנבנה כאן
+└── frontend/     React Native + Expo (SDK 54) — לא נגע בזה בשלב זה
 ```
 
-### Frontend
-- **React Native + Expo** — קוד אחד ל-iOS, Android ו-Web.
-- **React Navigation** — ניווט Tabs + Stack.
-- **AsyncStorage** — שמירה מקומית של הגדרות ומונה רשומות.
+> **שים לב:** ה-Frontend עלול לא להיות מסונכרן עם חוזה ה-API החדש. יש להתאים אותו בנפרד מול `backend/API_CONTRACT.md`.
 
-### Backend
-- **Express.js** — שרת Node.js על פורט 5000, חושף REST API ל-journal ו-events.
-- אחסון פשוט בזיכרון עם persistence לקובץ JSON (להחלפה ב-DB אמיתי בהמשך).
+---
 
-## הרצה
+## דרישות מוקדמות
 
-### 1. שרת (Backend)
+- **Node.js 22+** — נדרש לתמיכה ב-`--env-file` המובנה (נטמע ב-Node 20.6 אך מומלץ 22)
+- **Docker Desktop** — לאתחול Postgres מקומי
+- **git**
+
+---
+
+## הרצה מקומית
+
+### 1. כניסה לתיקיית ה-Backend וסביבת עבודה
+
 ```bash
 cd backend
-npm install      # פעם ראשונה
-npm run dev      # רץ על http://localhost:5000
+cp .env.example .env
 ```
-בדיקה: http://localhost:5000/api/health
 
-### 2. אפליקציה (Frontend)
+פתח את `.env` ומלא:
+
+- `JWT_SECRET` ו-`JWT_REFRESH_SECRET` — צור כל אחד עם:
+  ```bash
+  node -e "console.log(require('crypto').randomBytes(48).toString('base64url'))"
+  ```
+- `OPENAI_API_KEY` — נדרש לצ׳אט ולתמלול קול
+- `GOOGLE_CLIENT_ID` / `APPLE_CLIENT_ID` — נדרש לאימות (ניתן לדלג אם לא בודקים auth)
+- `EXPO_ACCESS_TOKEN` — נדרש לשליחת push notifications
+
+### 2. הפעלת ה-DB
+
 ```bash
-cd frontend
-npm install      # פעם ראשונה
-npm start        # פותח את Expo Dev Tools
+docker compose up -d
 ```
-- לחיצה על `w` — הרצה בדפדפן (Web).
-- לחיצה על `a` / `i` — אמולטור Android / iOS.
-- סריקת ה-QR עם **Expo Go** (חייב לתמוך ב-SDK 54) — הרצה במכשיר.
 
-> **מכשיר פיזי:** `localhost` מצביע על הטלפון, לא על המחשב.
-> היכנס להגדרות באפליקציה ושנה את *כתובת API* ל-IP של המחשב, למשל `http://192.168.1.10:5000`.
+המתן עד שהסטטוס `(healthy)` — לרוב כ-60 שניות. בדוק עם `docker compose ps`.
 
-## API
+### 3. התקנת תלויות
 
-| Method | Path                 | תיאור                    |
-|--------|----------------------|--------------------------|
-| GET    | `/api/health`        | בדיקת חיים               |
-| GET    | `/api/journal`       | כל רשומות היומן          |
-| POST   | `/api/journal`       | יצירת רשומה              |
-| DELETE | `/api/journal/:id`   | מחיקת רשומה              |
-| GET    | `/api/events`        | אירועים (`?date=YYYY-MM-DD` לסינון) |
-| POST   | `/api/events`        | יצירת אירוע              |
-| DELETE | `/api/events/:id`    | מחיקת אירוע              |
+```bash
+npm install
+```
+
+### 4. הרצת מיגרציות
+
+```bash
+npx prisma migrate deploy
+```
+
+(לסביבת פיתוח טרייה לגמרי: `npx prisma migrate dev`)
+
+### 5. הרצת השרת
+
+```bash
+npm run dev
+```
+
+השרת מאזין על `http://localhost:5000`. בדוק: `GET /health`.
+
+### 6. הרצת הטסטים
+
+```bash
+npm test
+```
+
+---
+
+## מסמכים מרכזיים
+
+| קובץ | תוכן |
+|---|---|
+| `backend/SPEC_MVP_V1.1.md` | מפרט המוצר — חזון, משתמש יעד, משטחי ה-Frontend |
+| `backend/SPEC_BACKEND_V1.2.md` | מפרט טכני — מודל נתונים, API, אבטחה, stack |
+| `backend/API_CONTRACT.md` | חוזה ה-Wire עם ה-Frontend — כל endpoint, שדה, status code ו-enum |
+| `backend/CLAUDE.md` | הנחיות לסוכן AI — אינווריאנטים, בחירת מודל, הרשאות קבצים |

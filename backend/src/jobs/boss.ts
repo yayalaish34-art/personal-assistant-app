@@ -40,17 +40,17 @@ export function getBoss(): PgBoss {
 export async function startBoss(): Promise<PgBoss> {
   if (bossInstance) return bossInstance;
 
-  // Managed Postgres (Render, Neon, Supabase, etc.) requires TLS. pg-boss
+  // Managed Postgres (Render, Neon, Supabase, ...) requires TLS. pg-boss
   // takes the connection string separately from Prisma and does not honor
-  // sslmode= in the URL, so pass ssl explicitly. rejectUnauthorized:false
-  // accepts the provider's cert without shipping their CA bundle.
-  const needsSsl =
-    config.NODE_ENV === 'production' ||
-    /[?&]sslmode=(require|verify-ca|verify-full)/.test(config.DATABASE_URL);
-
+  // sslmode= in the URL, so we pass ssl explicitly. Detect "not local" by
+  // parsing the host — anything other than localhost/127.0.0.1 or a plain
+  // docker service name gets TLS. rejectUnauthorized:false accepts the
+  // provider's cert without shipping their CA bundle.
   const boss = new PgBoss({
     connectionString: config.DATABASE_URL,
-    ...(needsSsl ? { ssl: { rejectUnauthorized: false } } : {}),
+    ...(isRemoteHost(config.DATABASE_URL)
+      ? { ssl: { rejectUnauthorized: false } }
+      : {}),
   });
 
   boss.on('error', (err: unknown) => {
@@ -68,6 +68,17 @@ export async function startBoss(): Promise<PgBoss> {
   bossInstance = boss;
   logger.info('pg-boss started');
   return boss;
+}
+
+function isRemoteHost(url: string): boolean {
+  try {
+    const host = new URL(url).hostname.toLowerCase();
+    if (host === 'localhost' || host === '127.0.0.1' || host === '::1') return false;
+    if (host === 'postgres' || host === 'db' || host === 'personal-assistant-db') return false;
+    return true;
+  } catch {
+    return false;
+  }
 }
 
 export async function stopBoss(): Promise<void> {

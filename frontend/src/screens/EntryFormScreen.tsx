@@ -14,9 +14,9 @@ import {
 } from 'lucide-react-native';
 
 import { Screen, Button } from '../components/ui';
-import { api } from '../lib/api';
+import { api, uuid } from '../lib/api';
 import { storage } from '../lib/storage';
-import { withPriority, toDateStr } from '../lib/tasks';
+import { withPriority, toDateStr, toUtcIso, nowIso, plusHour } from '../lib/tasks';
 import type { RootStackParamList } from '../navigation';
 import { colors, spacing, font, PRIORITY_COLORS, type Priority } from '../theme';
 
@@ -24,12 +24,6 @@ type Nav = NativeStackNavigationProp<RootStackParamList, 'EntryForm'>;
 type Route = RouteProp<RootStackParamList, 'EntryForm'>;
 
 const PROJECTS = ['Personal', 'Work', 'Website Redesign'];
-
-const MOODS: { key: string; label: string; palette: { color: string; bg: string } }[] = [
-  { key: 'good', label: 'Good', palette: PRIORITY_COLORS.Low },
-  { key: 'neutral', label: 'Okay', palette: PRIORITY_COLORS.Medium },
-  { key: 'bad', label: 'Low', palette: PRIORITY_COLORS.High },
-];
 
 // Input with a leading icon, matching the mockup's date/time fields.
 function IconInput({
@@ -51,11 +45,10 @@ function IconInput({
 export default function EntryFormScreen() {
   const navigation = useNavigation<Nav>();
   const { kind } = useRoute<Route>().params;
-  const isJournal = kind === 'journal';
+  const isTask = kind === 'task';
 
   const [title, setTitle] = useState('');
   const [body, setBody] = useState('');
-  const [mood, setMood] = useState('neutral');
   const [priority, setPriority] = useState<Priority | null>('Medium');
   const [date, setDate] = useState(toDateStr(new Date()));
   const [time, setTime] = useState('');
@@ -72,19 +65,37 @@ export default function EntryFormScreen() {
     }
     setSaving(true);
     try {
-      if (isJournal) {
-        await api.createJournal({ title: title.trim(), body, mood });
+      // Ids are client-generated so creates work offline and replays are
+      // idempotent server-side (200 on same-id replay, 409 across users).
+      const id = uuid();
+      const updatedAt = nowIso();
+      const notes = withPriority(body, priority);
+
+      if (isTask) {
+        await api.createTask({
+          id,
+          title: title.trim(),
+          notes,
+          // An undated task is valid: dueAt is nullable.
+          dueAt: date.trim() ? toUtcIso(date.trim(), time.trim() || '09:00') : undefined,
+          updatedAt,
+        });
       } else {
         if (!date.trim()) {
           Alert.alert('Missing date', 'Enter a date as YYYY-MM-DD.');
           setSaving(false);
           return;
         }
+        const startTime = time.trim() || '09:00';
         await api.createEvent({
+          id,
           title: title.trim(),
-          date: date.trim(),
-          time: time.trim(),
-          notes: withPriority(body, priority),
+          note: notes,
+          // Events are UTC instants; convert from the local date + time.
+          startsAt: toUtcIso(date.trim(), startTime),
+          endsAt: toUtcIso(date.trim(), plusHour(startTime)),
+          reminderMinutesBefore: 15,
+          updatedAt,
         });
       }
       await storage.bumpEntryCount();
@@ -110,18 +121,18 @@ export default function EntryFormScreen() {
           <Pressable onPress={close} style={styles.circleWhite}>
             <X color={colors.text} size={20} />
           </Pressable>
-          <Text style={styles.headerTitle}>{isJournal ? 'New Journal Entry' : 'Add New Task'}</Text>
+          <Text style={styles.headerTitle}>{isTask ? 'Add New Task' : 'Add New Event'}</Text>
           <Pressable onPress={save} style={styles.circleWhite}>
             <Check color={colors.text} size={20} />
           </Pressable>
         </View>
 
         {/* ── Title ── */}
-        <Text style={styles.label}>{isJournal ? 'Entry Title' : 'Task Title'}</Text>
+        <Text style={styles.label}>{isTask ? 'Task Title' : 'Event Title'}</Text>
         <TextInput
           value={title}
           onChangeText={setTitle}
-          placeholder={isJournal ? 'What’s on your mind?' : 'Finish landing page design'}
+          placeholder={isTask ? 'Finish landing page design' : 'Meeting with client'}
           placeholderTextColor={colors.textMuted}
           style={styles.input}
         />
@@ -131,18 +142,17 @@ export default function EntryFormScreen() {
         <TextInput
           value={body}
           onChangeText={setBody}
-          placeholder={
-            isJournal ? 'Write it down…' : 'Design the new landing page for the product launch.'
-          }
+          placeholder="Design the new landing page for the product launch."
+
           placeholderTextColor={colors.textMuted}
           style={[styles.input, styles.inputMultiline]}
           multiline
           numberOfLines={4}
         />
 
-        {!isJournal && (
+        {(
           <>
-            {/* ── Due Date & time ── */}
+            {/* ── Due Date & time — dueAt for tasks, startsAt for events ── */}
             <Text style={styles.label}>Due Date {'&'} time</Text>
             <View style={styles.rowGap}>
               <View style={{ flex: 1.4 }}>
@@ -255,36 +265,10 @@ export default function EntryFormScreen() {
           </>
         )}
 
-        {isJournal && (
-          <>
-            <Text style={styles.label}>Mood</Text>
-            <View style={styles.rowGap}>
-              {MOODS.map((m) => {
-                const active = mood === m.key;
-                return (
-                  <Pressable
-                    key={m.key}
-                    onPress={() => {
-                      Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
-                      setMood(m.key);
-                    }}
-                    style={[
-                      styles.priorityPill,
-                      { borderColor: m.palette.color },
-                      active && { backgroundColor: m.palette.bg },
-                    ]}
-                  >
-                    <Text style={[styles.priorityText, { color: m.palette.color }]}>{m.label}</Text>
-                  </Pressable>
-                );
-              })}
-            </View>
-          </>
-        )}
 
         <View style={{ height: spacing.lg }} />
         <Button
-          label={isJournal ? 'Save Entry' : 'Create Task'}
+          label={isTask ? 'Create Task' : 'Create Event'}
           onPress={save}
           loading={saving}
         />

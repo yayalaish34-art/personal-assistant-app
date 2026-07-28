@@ -4,33 +4,36 @@ import { useFocusEffect, useNavigation } from '@react-navigation/native';
 import type { NativeStackNavigationProp } from '@react-navigation/native-stack';
 import { LinearGradient } from 'expo-linear-gradient';
 import * as Haptics from 'expo-haptics';
-import { Plus, ArrowUpRight, Clock } from 'lucide-react-native';
+import { Plus, ArrowUpRight, Clock, Check } from 'lucide-react-native';
 
 import { Screen } from '../components/ui';
-import { api, JournalEntry } from '../lib/api';
+import { api, ApiError, type Task } from '../lib/api';
+import { parsePriority, isLive } from '../lib/tasks';
 import type { RootStackParamList } from '../navigation';
 import { colors, spacing, font, ACCENT_GRADIENT, PRIORITY_COLORS } from '../theme';
 
 type Nav = NativeStackNavigationProp<RootStackParamList>;
 
-const MOOD_CHIP: Record<string, { label: string; color: string; bg: string }> = {
-  good: { label: 'Good', ...PRIORITY_COLORS.Low },
-  neutral: { label: 'Okay', ...PRIORITY_COLORS.Medium },
-  bad: { label: 'Low', ...PRIORITY_COLORS.High },
-};
+// The backend has no journal resource, so this screen is the task list —
+// GET/PATCH/DELETE /tasks. Priority still rides in the notes field as a
+// "[High] " prefix, since the schema has no priority column.
+const PRIORITY_CHIP = {
+  High: { label: 'High', ...PRIORITY_COLORS.High },
+  Medium: { label: 'Medium', ...PRIORITY_COLORS.Medium },
+  Low: { label: 'Low', ...PRIORITY_COLORS.Low },
+} as const;
 
 const FILTERS = [
   { key: 'all', label: 'All' },
-  { key: 'good', label: 'Good' },
-  { key: 'neutral', label: 'Okay' },
-  { key: 'bad', label: 'Low' },
+  { key: 'open', label: 'Open' },
+  { key: 'done', label: 'Done' },
 ] as const;
 
 type Filter = (typeof FILTERS)[number]['key'];
 
 export default function JournalScreen() {
   const navigation = useNavigation<Nav>();
-  const [entries, setEntries] = useState<JournalEntry[]>([]);
+  const [entries, setEntries] = useState<Task[]>([]);
   const [error, setError] = useState<string | null>(null);
   const [filter, setFilter] = useState<Filter>('all');
 
@@ -38,13 +41,20 @@ export default function JournalScreen() {
     let active = true;
     (async () => {
       try {
-        const data = await api.listJournal();
+        const { tasks } = await api.listTasks();
         if (active) {
-          setEntries(data);
+          // Sync responses include soft-deleted rows; drop them.
+          setEntries(tasks.filter(isLive));
           setError(null);
         }
       } catch (e) {
-        if (active) setError((e as Error).message);
+        if (active) {
+          setError(
+            e instanceof ApiError && e.isAuthError
+              ? 'Sign in required — open Profile to connect your account.'
+              : (e as Error).message,
+          );
+        }
       }
     })();
     return () => {
@@ -54,15 +64,28 @@ export default function JournalScreen() {
 
   useFocusEffect(load);
 
-  const confirmDelete = (entry: JournalEntry) => {
-    Alert.alert('Delete entry', `Delete "${entry.title}"?`, [
+  const toggleDone = async (task: Task) => {
+    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+    try {
+      await api.updateTask(task.id, {
+        isDone: !task.isDone,
+        updatedAt: new Date().toISOString(),
+      });
+      load();
+    } catch (e) {
+      Alert.alert('Error', (e as Error).message);
+    }
+  };
+
+  const confirmDelete = (entry: Task) => {
+    Alert.alert('Delete task', `Delete "${entry.title}"?`, [
       { text: 'Cancel', style: 'cancel' },
       {
         text: 'Delete',
         style: 'destructive',
         onPress: async () => {
           try {
-            await api.deleteJournal(entry.id);
+            await api.deleteTask(entry.id);
             load();
           } catch (e) {
             Alert.alert('Error', (e as Error).message);
@@ -72,9 +95,10 @@ export default function JournalScreen() {
     ]);
   };
 
-  const countOf = (f: Filter) =>
-    f === 'all' ? entries.length : entries.filter((e) => e.mood === f).length;
-  const visible = filter === 'all' ? entries : entries.filter((e) => e.mood === filter);
+  const matches = (t: Task, f: Filter) =>
+    f === 'all' ? true : f === 'done' ? t.isDone : !t.isDone;
+  const countOf = (f: Filter) => entries.filter((e) => matches(e, f)).length;
+  const visible = entries.filter((e) => matches(e, filter));
 
   return (
     <Screen>
@@ -90,7 +114,7 @@ export default function JournalScreen() {
               <Pressable
                 onPress={() => {
                   Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
-                  navigation.navigate('EntryForm', { kind: 'journal' });
+                  navigation.navigate('EntryForm', { kind: 'task' });
                 }}
               >
                 <LinearGradient
@@ -135,50 +159,57 @@ export default function JournalScreen() {
         ListEmptyComponent={
           <View style={styles.card}>
             <Text style={styles.cardTitle}>
-              {error ? 'Couldn’t load entries' : 'No entries yet'}
+              {error ? 'Couldn’t load tasks' : 'No tasks yet'}
             </Text>
             <Text style={styles.cardBody}>
-              {error ?? 'Tap + to write your first journal entry.'}
+              {error ?? 'Tap + to add your first task.'}
             </Text>
           </View>
         }
         renderItem={({ item }) => {
-          const chip = MOOD_CHIP[item.mood];
-          const created = new Date(item.createdAt);
+          const { priority, text } = parsePriority(item.notes);
+          const chip = PRIORITY_CHIP[priority ?? 'Medium'];
+          const due = item.dueAt ? new Date(item.dueAt) : null;
           return (
-            <Pressable onLongPress={() => confirmDelete(item)} style={styles.card}>
+            <Pressable
+              onPress={() => toggleDone(item)}
+              onLongPress={() => confirmDelete(item)}
+              style={styles.card}
+            >
               <View style={styles.cardTopRow}>
-                {chip ? (
-                  <View style={[styles.moodChip, { backgroundColor: chip.bg }]}>
-                    <View style={[styles.moodDot, { backgroundColor: chip.color }]} />
-                    <Text style={[styles.moodText, { color: chip.color }]}>{chip.label}</Text>
-                  </View>
-                ) : (
-                  <View />
-                )}
+                <View style={[styles.moodChip, { backgroundColor: chip.bg }]}>
+                  <View style={[styles.moodDot, { backgroundColor: chip.color }]} />
+                  <Text style={[styles.moodText, { color: chip.color }]}>{chip.label}</Text>
+                </View>
                 <View style={styles.arrowBtn}>
-                  <ArrowUpRight color={colors.text} size={18} />
+                  {item.isDone ? (
+                    <Check color="#3EA06B" size={18} />
+                  ) : (
+                    <ArrowUpRight color={colors.text} size={18} />
+                  )}
                 </View>
               </View>
-              <Text style={styles.cardTitle}>{item.title}</Text>
-              {item.body ? (
+              <Text style={[styles.cardTitle, item.isDone && styles.cardTitleDone]}>
+                {item.title}
+              </Text>
+              {text ? (
                 <Text style={styles.cardBody} numberOfLines={3}>
-                  {item.body}
+                  {text}
                 </Text>
               ) : null}
               <View style={styles.cardBottomRow}>
                 <Clock color={colors.textMuted} size={15} />
                 <Text style={styles.cardDate}>
-                  {created.toLocaleDateString('en-US', {
-                    weekday: 'short',
-                    month: 'long',
-                    day: 'numeric',
-                  })}
-                  {'  ·  '}
-                  {created.toLocaleTimeString('en-US', {
-                    hour: 'numeric',
-                    minute: '2-digit',
-                  })}
+                  {due
+                    ? `${due.toLocaleDateString('en-US', {
+                        weekday: 'short',
+                        month: 'long',
+                        day: 'numeric',
+                      })}  ·  ${due.toLocaleTimeString('en-US', {
+                        hour: 'numeric',
+                        minute: '2-digit',
+                      })}`
+                    : 'No due date'}
                 </Text>
               </View>
             </Pressable>
@@ -197,12 +228,13 @@ const styles = StyleSheet.create({
     marginBottom: spacing.lg,
   },
   headline: {
-    ...font(500),
-    fontSize: 28,
-    lineHeight: 34,
+    ...font(400),
+    fontSize: 34,
+    lineHeight: 42,
     color: colors.text,
-    letterSpacing: -0.3,
+    letterSpacing: -0.6,
   },
+  headlineStrong: { ...font(600) },
   circleBtn: {
     width: 48,
     height: 48,
@@ -270,6 +302,7 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
   },
   cardTitle: { ...font(600), fontSize: 17, color: colors.text, marginBottom: 6 },
+  cardTitleDone: { textDecorationLine: 'line-through', color: colors.textMuted },
   cardBody: {
     ...font(400),
     fontSize: 14,

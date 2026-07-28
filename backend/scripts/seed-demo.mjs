@@ -1,16 +1,22 @@
-// Seeds the running backend with realistic demo tasks + journal entries.
+// Seeds the running backend with realistic demo events + tasks.
 //
-//   node scripts/seed-demo.mjs            # add demo data
-//   node scripts/seed-demo.mjs --reset    # wipe existing data first
+//   ACCESS_TOKEN=<jwt> node scripts/seed-demo.mjs            # add demo data
+//   ACCESS_TOKEN=<jwt> node scripts/seed-demo.mjs --reset    # wipe first
 //
-// Task status in this app is derived from the clock, not stored: a task is
-// `done` once its hour has passed, `inprogress` during that hour, `todo` if
-// still upcoming (see frontend/src/lib/tasks.ts). So times are generated as
-// offsets from "now" to guarantee a believable spread across all three
-// columns whenever the script runs.
+// Mint a token with `npx tsx sign-token.ts`; every data endpoint is behind
+// authMiddleware.
+//
+// Events have no completion flag, so the UI infers status from the clock: an
+// event is `done` once its hour has passed, `inprogress` during it, `todo` if
+// still upcoming (see frontend/src/lib/tasks.ts). Today's times are therefore
+// laid out on a window anchored to the current hour, so all three columns are
+// populated whenever the script runs.
 
 const BASE = process.env.API_BASE ?? 'http://localhost:5000';
 const RESET = process.argv.includes('--reset');
+// Every data endpoint requires a Bearer token. Mint one with
+// `npx tsx sign-token.ts` in backend/ and pass it here.
+const TOKEN = process.env.ACCESS_TOKEN ?? '';
 
 const pad = (n) => String(n).padStart(2, '0');
 const dateStr = (d) =>
@@ -152,10 +158,29 @@ const JOURNAL = [
    'ok'],
 ];
 
+/** RFC-4122 v4 — ids are client-generated, per the sync contract. */
+function uuid() {
+  return 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, (c) => {
+    const r = (Math.random() * 16) | 0;
+    const v = c === 'x' ? r : (r & 0x3) | 0x8;
+    return v.toString(16);
+  });
+}
+
+/** Local date + 'HH:MM' -> UTC ISO instant, which is what the API expects. */
+function utcIso(dateStr, timeStr) {
+  const [y, m, d] = dateStr.split('-').map(Number);
+  const [hh, mm] = (timeStr || '00:00').split(':').map(Number);
+  return new Date(y, m - 1, d, hh, mm, 0, 0).toISOString();
+}
+
 async function req(method, path, body) {
+  const headers = {};
+  if (body) headers['Content-Type'] = 'application/json';
+  if (TOKEN) headers.Authorization = `Bearer ${TOKEN}`;
   const res = await fetch(`${BASE}${path}`, {
     method,
-    headers: body ? { 'Content-Type': 'application/json' } : undefined,
+    headers,
     body: body ? JSON.stringify(body) : undefined,
   });
   if (!res.ok) {
@@ -165,21 +190,34 @@ async function req(method, path, body) {
 }
 
 async function reset() {
-  const [events, journal] = await Promise.all([
-    req('GET', '/api/events'),
-    req('GET', '/api/journal'),
+  const [{ events }, { tasks }] = await Promise.all([
+    req('GET', '/events'),
+    req('GET', '/tasks'),
   ]);
-  for (const e of events) await req('DELETE', `/api/events/${e.id}`);
-  for (const j of journal) await req('DELETE', `/api/journal/${j.id}`);
-  console.log(`🗑  removed ${events.length} events, ${journal.length} journal entries`);
+  const liveEvents = events.filter((e) => !e.deletedAt);
+  const liveTasks = tasks.filter((t) => !t.deletedAt);
+  for (const e of liveEvents) await req('DELETE', `/events/${e.id}`);
+  for (const t of liveTasks) await req('DELETE', `/tasks/${t.id}`);
+  console.log(`🗑  removed ${liveEvents.length} events, ${liveTasks.length} tasks`);
 }
 
 async function main() {
   // Fail fast with a clear message if the backend isn't up.
   try {
-    await req('GET', '/api/health');
+    await req('GET', '/health');
   } catch {
     console.error(`✗ Backend not reachable at ${BASE}. Start it with: npm run dev`);
+    process.exit(1);
+  }
+
+  if (!TOKEN) {
+    console.error(
+      [
+        '✗ ACCESS_TOKEN is required — every data endpoint needs a Bearer token.',
+        '  Mint one in backend/:  npx tsx sign-token.ts',
+        '  Then:  ACCESS_TOKEN=<token> node scripts/seed-demo.mjs --reset',
+      ].join('\n'),
+    );
     process.exit(1);
   }
 
@@ -203,12 +241,28 @@ async function main() {
     })),
   ];
 
-  for (const e of [...events].reverse()) await req('POST', '/api/events', e);
-  for (const [title, body, mood] of [...JOURNAL].reverse()) {
-    await req('POST', '/api/journal', { title, body, mood });
+  for (const e of events) {
+    await req('POST', '/events', {
+      id: uuid(),
+      title: e.title,
+      note: e.notes,
+      startsAt: utcIso(e.date, e.time),
+      reminderMinutesBefore: 15,
+      updatedAt: new Date().toISOString(),
+    });
+  }
+  // The backend has no journal resource; the former journal entries become
+  // undated tasks so the Tasks screen has content too.
+  for (const [title, body] of JOURNAL) {
+    await req('POST', '/tasks', {
+      id: uuid(),
+      title,
+      notes: body,
+      updatedAt: new Date().toISOString(),
+    });
   }
 
-  console.log(`✓ seeded ${events.length} tasks (${TODAY.length} today) and ${JOURNAL.length} journal entries`);
+  console.log(`✓ seeded ${events.length} events (${TODAY.length} today) and ${JOURNAL.length} tasks`);
 }
 
 main().catch((e) => {

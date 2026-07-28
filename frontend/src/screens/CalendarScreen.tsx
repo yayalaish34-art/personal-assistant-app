@@ -28,8 +28,16 @@ import {
 } from 'lucide-react-native';
 
 import { Screen } from '../components/ui';
-import { api, CalendarEvent } from '../lib/api';
-import { parsePriority, statusOf, to12h, toDateStr } from '../lib/tasks';
+import { api, ApiError } from '../lib/api';
+import {
+  parsePriority,
+  statusOf,
+  to12h,
+  toDateStr,
+  eventToItem,
+  taskToItem,
+  type AgendaItem,
+} from '../lib/tasks';
 import type { RootStackParamList } from '../navigation';
 import { colors, spacing, font, ACCENT_GRADIENT } from '../theme';
 
@@ -74,7 +82,7 @@ function monthGrid(anchor: Date): { date: Date; inMonth: boolean }[][] {
   return weeks;
 }
 
-function sectionOf(e: CalendarEvent): 'All Day' | 'Morning' | 'Afternoon' | 'Evening' {
+function sectionOf(e: AgendaItem): 'All Day' | 'Morning' | 'Afternoon' | 'Evening' {
   if (!e.time) return 'All Day';
   const h = parseInt(e.time.split(':')[0], 10);
   if (Number.isNaN(h)) return 'All Day';
@@ -93,7 +101,7 @@ const SECTION_ICON = {
 export default function CalendarScreen() {
   const navigation = useNavigation<Nav>();
   const [selected, setSelected] = useState<Date>(new Date());
-  const [events, setEvents] = useState<CalendarEvent[]>([]);
+  const [events, setEvents] = useState<AgendaItem[]>([]);
   const [error, setError] = useState<string | null>(null);
   const [filter, setFilter] = useState<'all' | 'work' | 'personal'>('all');
 
@@ -119,19 +127,39 @@ export default function CalendarScreen() {
     let active = true;
     (async () => {
       try {
-        const data = await api.listEvents(selectedStr);
+        // The day list: /agenda resolves the date in the user's timezone.
+        const { events: ev, tasks } = await api.agendaForDate(selectedStr);
         if (active) {
-          setEvents(data.sort((a, b) => (a.time || '').localeCompare(b.time || '')));
+          const items = [...ev.map(eventToItem), ...tasks.map(taskToItem)];
+          setEvents(items.sort((a, b) => (a.time || '').localeCompare(b.time || '')));
           setError(null);
         }
       } catch (e) {
-        if (active) setError((e as Error).message);
+        if (active) {
+          setError(
+            e instanceof ApiError && e.isAuthError
+              ? 'Sign in required — open Profile to connect your account.'
+              : (e as Error).message,
+          );
+        }
       }
-      // Unfiltered fetch drives the month dots; a failure here just means no
-      // dots, so it must not clobber the day list's error state.
+      // Dots for the visible month, fetched as one range request. A failure
+      // here only means no dots, so it must not clobber the list's error.
       try {
-        const all = await api.listEvents();
-        if (active) setMarkedDates(new Set(all.map((e) => e.date)));
+        const y = visibleMonth.getFullYear();
+        const m = visibleMonth.getMonth();
+        const from = toDateStr(new Date(y, m, 1));
+        const to = toDateStr(new Date(y, m + 1, 0));
+        const { events: mev, tasks: mtasks } = await api.agendaForRange(from, to);
+        if (active) {
+          setMarkedDates(
+            new Set(
+              [...mev.map(eventToItem), ...mtasks.map(taskToItem)]
+                .map((i) => i.date)
+                .filter(Boolean),
+            ),
+          );
+        }
       } catch {
         /* dots are decorative — ignore */
       }
@@ -139,7 +167,8 @@ export default function CalendarScreen() {
     return () => {
       active = false;
     };
-  }, [selectedStr]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [selectedStr, visibleMonth.getFullYear(), visibleMonth.getMonth()]);
 
   useFocusEffect(load);
 
@@ -163,7 +192,7 @@ export default function CalendarScreen() {
     navigation.navigate('EntryForm', { kind: 'event' });
   };
 
-  const confirmDelete = (evt: CalendarEvent) => {
+  const confirmDelete = (evt: AgendaItem) => {
     Alert.alert('Delete task', `Delete "${evt.title}"?`, [
       { text: 'Cancel', style: 'cancel' },
       {
@@ -171,7 +200,9 @@ export default function CalendarScreen() {
         style: 'destructive',
         onPress: async () => {
           try {
-            await api.deleteEvent(evt.id);
+            // Tasks and events are distinct resources with distinct ids.
+            if (evt.kind === 'task') await api.deleteTask(evt.id);
+            else await api.deleteEvent(evt.id);
             load();
           } catch (e) {
             Alert.alert('Error', (e as Error).message);

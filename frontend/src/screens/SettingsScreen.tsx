@@ -20,15 +20,16 @@ import {
   CheckCircle2,
   ListTodo,
   Flame,
-  BookOpen,
+  CalendarDays,
   Pencil,
   Wifi,
+  LogOut,
 } from 'lucide-react-native';
 
 import { Screen } from '../components/ui';
 import { storage, defaultSettings, Settings } from '../lib/storage';
-import { api, CalendarEvent, JournalEntry } from '../lib/api';
-import { statusOf, toDateStr } from '../lib/tasks';
+import { api, ApiError, type Task, type Event } from '../lib/api';
+import { toDateStr, isLive } from '../lib/tasks';
 import { colors, spacing, font, ACCENT_GRADIENT } from '../theme';
 
 // Placeholder portrait, matching the Today header avatar.
@@ -96,12 +97,13 @@ function GlassCard({
   );
 }
 
-export default function SettingsScreen() {
+export default function SettingsScreen({ onSignedOut }: { onSignedOut?: () => void } = {}) {
   const [settings, setSettings] = useState<Settings>(defaultSettings);
   const [testing, setTesting] = useState(false);
-  const [events, setEvents] = useState<CalendarEvent[]>([]);
-  const [journal, setJournal] = useState<JournalEntry[]>([]);
+  const [events, setEvents] = useState<Event[]>([]);
+  const [tasks, setTasks] = useState<Task[]>([]);
   const [online, setOnline] = useState<boolean | null>(null);
+  const [needsAuth, setNeedsAuth] = useState(false);
 
   const load = useCallback(() => {
     let active = true;
@@ -109,13 +111,24 @@ export default function SettingsScreen() {
       const s = await storage.getSettings();
       if (active) setSettings(s);
       try {
-        const [ev, jr] = await Promise.all([api.listEvents(), api.listJournal()]);
+        // /me is the authoritative profile; the local displayName is only a
+        // fallback for when there's no session yet.
+        const [me, evRes, taskRes] = await Promise.all([
+          api.getMe(),
+          api.listEvents(),
+          api.listTasks(),
+        ]);
         if (!active) return;
-        setEvents(ev);
-        setJournal(jr);
+        setSettings((prev) => ({ ...prev, displayName: me.user.name || prev.displayName }));
+        // Sync endpoints include soft-deleted rows; drop them before counting.
+        setEvents(evRes.events.filter(isLive));
+        setTasks(taskRes.tasks.filter(isLive));
         setOnline(true);
-      } catch {
-        if (active) setOnline(false);
+        setNeedsAuth(false);
+      } catch (e) {
+        if (!active) return;
+        setOnline(false);
+        setNeedsAuth(e instanceof ApiError && e.isAuthError);
       }
     })();
     return () => {
@@ -127,12 +140,14 @@ export default function SettingsScreen() {
 
   // Real figures from the API rather than a decorative counter.
   const stats = useMemo(() => {
-    const now = new Date();
-    const done = events.filter((e) => statusOf(e, now) === 'done').length;
-    const open = events.length - done;
+    // Tasks carry an explicit isDone flag — no clock inference needed.
+    const done = tasks.filter((t) => t.isDone).length;
+    const open = tasks.length - done;
 
-    // Consecutive days up to today that have at least one task.
-    const dates = new Set(events.map((e) => e.date));
+    // Consecutive days up to today that have at least one dated item.
+    const dates = new Set<string>();
+    for (const t of tasks) if (t.dueAt) dates.add(toDateStr(new Date(t.dueAt)));
+    for (const e of events) dates.add(toDateStr(new Date(e.startsAt)));
     let streak = 0;
     const cursor = new Date();
     while (dates.has(toDateStr(cursor))) {
@@ -140,15 +155,50 @@ export default function SettingsScreen() {
       cursor.setDate(cursor.getDate() - 1);
     }
 
-    return { total: events.length, done, open, streak, journal: journal.length };
-  }, [events, journal]);
+    return { total: tasks.length, done, open, streak, events: events.length };
+  }, [events, tasks]);
 
   const completion = stats.total ? Math.round((stats.done / stats.total) * 100) : 0;
 
   const save = async () => {
     Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
     await storage.saveSettings(settings);
-    Alert.alert('Saved', 'Your settings were updated.');
+    // The display name lives on the server too — push it if we have a session.
+    try {
+      const session = await storage.getSession();
+      if (session && settings.displayName.trim()) {
+        await api.updateMe({ name: settings.displayName.trim() });
+      }
+      Alert.alert('Saved', 'Your settings were updated.');
+    } catch (e) {
+      Alert.alert(
+        'Saved locally',
+        `Couldn’t sync your name to the server: ${(e as Error).message}`,
+      );
+    }
+  };
+
+  const signOut = async () => {
+    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
+    Alert.alert('Sign out', 'You’ll need a token to sign back in.', [
+      { text: 'Cancel', style: 'cancel' },
+      {
+        text: 'Sign out',
+        style: 'destructive',
+        onPress: async () => {
+          // Revoking server-side is best-effort: the local session must be
+          // cleared either way, or an expired token would trap the user here.
+          try {
+            const session = await storage.getSession();
+            if (session?.refreshToken) await api.logout(session.refreshToken);
+          } catch {
+            /* ignore — clearing locally is what matters */
+          }
+          await storage.clearSession();
+          onSignedOut?.();
+        },
+      },
+    ]);
   };
 
   const testConnection = async () => {
@@ -212,11 +262,20 @@ export default function SettingsScreen() {
                 <View
                   style={[
                     styles.statusDot,
-                    { backgroundColor: online === false ? '#FFB4B7' : '#C6E265' },
+                    {
+                      backgroundColor:
+                        needsAuth ? '#FFD9A0' : online === false ? '#FFB4B7' : '#C6E265',
+                    },
                   ]}
                 />
                 <Text style={styles.statusText}>
-                  {online === false ? 'Offline' : online ? 'Synced' : 'Connecting…'}
+                  {needsAuth
+                    ? 'Sign in required'
+                    : online === false
+                      ? 'Offline'
+                      : online
+                        ? 'Synced'
+                        : 'Connecting…'}
                 </Text>
               </View>
             </View>
@@ -244,7 +303,7 @@ export default function SettingsScreen() {
             <HeroStat Icon={ListTodo} value={stats.total} label="Tasks" />
             <HeroStat Icon={CheckCircle2} value={stats.done} label="Done" />
             <HeroStat Icon={Flame} value={stats.streak} label="Day streak" />
-            <HeroStat Icon={BookOpen} value={stats.journal} label="Journal" />
+            <HeroStat Icon={CalendarDays} value={stats.events} label="Events" />
           </View>
         </LinearGradient>
 
@@ -354,6 +413,15 @@ export default function SettingsScreen() {
           >
             <Text style={styles.saveBtnText}>Save Settings</Text>
           </LinearGradient>
+        </Pressable>
+
+        {/* ── Sign out: also the escape hatch when a token has expired ── */}
+        <Pressable
+          onPress={signOut}
+          style={({ pressed }) => [styles.signOutBtn, { opacity: pressed ? 0.8 : 1 }]}
+        >
+          <LogOut color={colors.danger} size={16} />
+          <Text style={styles.signOutText}>Sign out</Text>
         </Pressable>
       </ScrollView>
     </Screen>
@@ -547,4 +615,17 @@ const styles = StyleSheet.create({
     elevation: 5,
   },
   saveBtnText: { ...font(600), fontSize: 15.5, color: '#FFFFFF' },
+  signOutBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 8,
+    marginTop: 12,
+    paddingVertical: 15,
+    borderRadius: 50,
+    backgroundColor: 'rgba(255,255,255,0.7)',
+    borderWidth: 1,
+    borderColor: 'rgba(229,72,77,0.22)',
+  },
+  signOutText: { ...font(600), fontSize: 14.5, color: colors.danger },
 });

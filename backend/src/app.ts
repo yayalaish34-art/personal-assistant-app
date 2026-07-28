@@ -10,6 +10,7 @@ import {
   notFoundHandler,
 } from './middleware/errorHandler.js';
 import { authRouter } from './modules/auth/router.js';
+import { devAuthRouter } from './modules/auth/devRouter.js';
 import { authLimiter } from './middleware/rateLimit.js';
 import { usersRouter } from './modules/users/router.js';
 import { tasksRouter } from './modules/tasks/router.js';
@@ -47,6 +48,11 @@ export function createApp(): Express {
     res.json({ status: 'ok', version: pkg.version });
   });
 
+  // Dev-only sign-in shortcut; never mounted in production so it cannot
+  // become an auth bypass.
+  if (config.NODE_ENV !== 'production') {
+    app.use('/auth', authLimiter, devAuthRouter);
+  }
   app.use('/auth', authLimiter, authRouter);
   // The following routers register their full paths internally (/tasks, /events,
   // /agenda, /me), so they mount at root.

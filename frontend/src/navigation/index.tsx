@@ -24,7 +24,8 @@ import EntryFormScreen from '../screens/EntryFormScreen';
 
 export type RootStackParamList = {
   Tabs: undefined;
-  EntryForm: { kind: 'journal' | 'event' };
+  // 'task' → POST /tasks, 'event' → POST /events. Two separate resources.
+  EntryForm: { kind: 'task' | 'event' };
 };
 
 const Tab = createBottomTabNavigator();
@@ -132,14 +133,24 @@ function FloatingTabBar({ state, descriptors, navigation }: BottomTabBarProps) {
                 style={[styles.iconBox, { transform: [{ scale: iconScales[index] }] }]}
               >
                 {/* Two stacked copies cross-faded by `active`: RN can't
-                    interpolate a color into an SVG fill prop natively. */}
-                <Animated.View style={{ opacity: active.interpolate({
-                  inputRange: [0, 1],
-                  outputRange: [1, 0],
-                }) }}>
+                    interpolate a color into an SVG fill prop natively.
+                    Both layers are absolutely positioned and centred — using
+                    absoluteFillObject alone stretches the wrapper while the
+                    SVG keeps its intrinsic size, so it lands off-centre. */}
+                <Animated.View
+                  style={[
+                    styles.iconLayer,
+                    {
+                      opacity: active.interpolate({
+                        inputRange: [0, 1],
+                        outputRange: [1, 0],
+                      }),
+                    },
+                  ]}
+                >
                   <TabIcon name={route.name} color={NAV_BAR.inactiveIcon} size={26} />
                 </Animated.View>
-                <Animated.View style={[StyleSheet.absoluteFillObject, { opacity: active }]}>
+                <Animated.View style={[styles.iconLayer, { opacity: active }]}>
                   <TabIcon name={route.name} color={NAV_BAR.activeIcon} size={26} />
                 </Animated.View>
               </Animated.View>
@@ -156,7 +167,7 @@ function FloatingTabBar({ state, descriptors, navigation }: BottomTabBarProps) {
   );
 }
 
-function Tabs() {
+function Tabs({ onSignedOut }: { onSignedOut?: () => void }) {
   return (
     <Tab.Navigator
       tabBar={(props) => <FloatingTabBar {...props} />}
@@ -165,12 +176,14 @@ function Tabs() {
       <Tab.Screen name="Today" component={TodayScreen} options={{ title: 'Home' }} />
       <Tab.Screen name="Calendar" component={CalendarScreen} options={{ title: 'Calendar' }} />
       <Tab.Screen name="Journal" component={JournalScreen} options={{ title: 'Journal' }} />
-      <Tab.Screen name="Settings" component={SettingsScreen} options={{ title: 'Profile' }} />
+      <Tab.Screen name="Settings" options={{ title: 'Profile' }}>
+        {() => <SettingsScreen onSignedOut={onSignedOut} />}
+      </Tab.Screen>
     </Tab.Navigator>
   );
 }
 
-export default function RootNavigator() {
+export default function RootNavigator({ onSignedOut }: { onSignedOut?: () => void }) {
   return (
     <Stack.Navigator
       screenOptions={{
@@ -178,7 +191,7 @@ export default function RootNavigator() {
         contentStyle: { backgroundColor: colors.bg },
       }}
     >
-      <Stack.Screen name="Tabs" component={Tabs} />
+      <Stack.Screen name="Tabs">{() => <Tabs onSignedOut={onSignedOut} />}</Stack.Screen>
       {/* The Add New Task screen renders its own X / ✓ header. */}
       <Stack.Screen
         name="EntryForm"
@@ -234,5 +247,13 @@ const styles = StyleSheet.create({
     paddingHorizontal: 18,
   },
   iconBox: { width: 26, height: 26, alignItems: 'center', justifyContent: 'center' },
+  // Both cross-fade layers occupy the same centred 26×26 box.
+  iconLayer: {
+    position: 'absolute',
+    width: 26,
+    height: 26,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
   tabLabel: { fontSize: 16, ...font(600), color: NAV_BAR.activeIcon },
 });

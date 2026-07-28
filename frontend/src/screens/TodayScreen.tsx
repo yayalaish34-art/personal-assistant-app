@@ -8,7 +8,7 @@ import { Bell, Plus, ArrowUpRight, Clock, ClipboardList } from 'lucide-react-nat
 
 import { Screen } from '../components/ui';
 import { ProgressRing } from '../components/ProgressRing';
-import { api, CalendarEvent } from '../lib/api';
+import { api, ApiError } from '../lib/api';
 import { storage } from '../lib/storage';
 import {
   parsePriority,
@@ -16,6 +16,9 @@ import {
   to12h,
   plusHour,
   toDateStr,
+  eventToItem,
+  taskToItem,
+  type AgendaItem,
   type TaskStatus,
 } from '../lib/tasks';
 import type { RootStackParamList } from '../navigation';
@@ -83,8 +86,9 @@ function StatRow({ value, label }: { value: number; label: string }) {
 export default function TodayScreen() {
   const navigation = useNavigation<Nav>();
   const [name, setName] = useState('');
-  const [events, setEvents] = useState<CalendarEvent[]>([]);
+  const [items, setItems] = useState<AgendaItem[]>([]);
   const [online, setOnline] = useState<boolean | null>(null);
+  const [needsAuth, setNeedsAuth] = useState(false);
   const [filter, setFilter] = useState<TaskStatus | 'all'>('todo');
 
   const today = toDateStr(new Date());
@@ -93,14 +97,20 @@ export default function TodayScreen() {
     let active = true;
     (async () => {
       const settings = await storage.getSettings();
-      if (active) setName(settings.displayName);
+      const session = await storage.getSession();
+      if (active) setName(session?.user.name || settings.displayName);
       try {
-        const list = await api.listEvents(today);
+        // /agenda?date= resolves the day in the user's timezone server-side and
+        // returns both events and tasks due that day.
+        const { events, tasks } = await api.agendaForDate(today);
         if (!active) return;
-        setEvents(list);
+        setItems([...events.map(eventToItem), ...tasks.map(taskToItem)]);
         setOnline(true);
-      } catch {
-        if (active) setOnline(false);
+        setNeedsAuth(false);
+      } catch (err) {
+        if (!active) return;
+        setOnline(false);
+        setNeedsAuth(err instanceof ApiError && err.isAuthError);
       }
     })();
     return () => {
@@ -112,36 +122,36 @@ export default function TodayScreen() {
 
   const now = new Date();
   const stats = useMemo(() => {
-    // Seed with the mockup's demo numbers until real tasks exist.
-    if (events.length === 0) return { total: 12, done: 12, pending: 12, progress: 0.72 };
-    const done = events.filter((e) => statusOf(e, now) === 'done').length;
-    const total = events.length;
+    const done = items.filter((i) => statusOf(i, now) === 'done').length;
+    const total = items.length;
     return { total, done, pending: total - done, progress: total ? done / total : 0 };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [events]);
+  }, [items]);
 
   const chips: { key: TaskStatus; label: string }[] = [
     { key: 'todo', label: 'To Do' },
     { key: 'inprogress', label: 'In Progress' },
     { key: 'done', label: 'Done' },
   ];
-  const countOf = (s: TaskStatus) => events.filter((e) => statusOf(e, now) === s).length;
-  const visible = filter === 'all' ? events : events.filter((e) => statusOf(e, now) === filter);
+  const countOf = (s: TaskStatus) => items.filter((i) => statusOf(i, now) === s).length;
+  const visible = filter === 'all' ? items : items.filter((i) => statusOf(i, now) === filter);
 
   const openAddTask = () => {
     Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
     navigation.navigate('EntryForm', { kind: 'event' });
   };
 
-  const confirmDelete = (e: CalendarEvent) => {
-    Alert.alert('Delete task', `Delete "${e.title}"?`, [
+  const confirmDelete = (item: AgendaItem) => {
+    Alert.alert('Delete', `Delete "${item.title}"?`, [
       { text: 'Cancel', style: 'cancel' },
       {
         text: 'Delete',
         style: 'destructive',
         onPress: async () => {
           try {
-            await api.deleteEvent(e.id);
+            // Tasks and events are separate resources with separate ids.
+            if (item.kind === 'task') await api.deleteTask(item.id);
+            else await api.deleteEvent(item.id);
             load();
           } catch (err) {
             Alert.alert('Error', (err as Error).message);
@@ -263,7 +273,11 @@ export default function TodayScreen() {
         </ScrollView>
 
         {online === false ? (
-          <Text style={styles.offline}>Server unavailable — check the API URL in Profile.</Text>
+          <Text style={styles.offline}>
+            {needsAuth
+              ? 'Sign in required — open Profile to connect your account.'
+              : 'Server unavailable — check the API URL in Profile.'}
+          </Text>
         ) : null}
 
         {visible.length === 0 ? (

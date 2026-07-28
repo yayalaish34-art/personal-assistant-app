@@ -314,6 +314,16 @@ function toOpenAIMessages(
     { role: 'system', content: systemPrompt },
   ];
 
+  // The API rejects the whole request if an assistant message carries
+  // `tool_calls` that no later `tool` message answers:
+  //   "must be followed by tool messages responding to each tool_call_id"
+  // That happens routinely here, because a proposal waits for the user to
+  // confirm and is never answered if they decline. Collect the ids that do
+  // have a response so unanswered ones can be sent without `tool_calls`.
+  const answeredToolCallIds = new Set(
+    history.filter((m) => m.role === 'tool' && m.toolCallId).map((m) => m.toolCallId as string),
+  );
+
   for (const m of history) {
     if (m.role === 'user') {
       out.push({ role: 'user', content: m.content });
@@ -322,8 +332,17 @@ function toOpenAIMessages(
         role: 'assistant',
         content: m.content || null,
       };
-      if (m.toolCalls) {
-        base.tool_calls = m.toolCalls as unknown as OpenAI.Chat.Completions.ChatCompletionMessageToolCall[];
+      const calls = m.toolCalls as
+        | OpenAI.Chat.Completions.ChatCompletionMessageToolCall[]
+        | null;
+      const answered = calls?.filter((c) => answeredToolCallIds.has(c.id)) ?? [];
+      if (answered.length > 0) {
+        base.tool_calls = answered;
+      } else if (!base.content) {
+        // A proposal with nothing answered and no prose carries no information
+        // the model needs, and an assistant message must have content or
+        // tool_calls — so drop it rather than send an empty one.
+        continue;
       }
       out.push(base);
     } else if (m.role === 'tool') {

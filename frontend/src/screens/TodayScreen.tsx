@@ -7,6 +7,7 @@ import * as Haptics from 'expo-haptics';
 import { Bell, Plus, ArrowUpRight, Clock, ClipboardList } from 'lucide-react-native';
 
 import { Screen } from '../components/ui';
+import { AddSheet } from '../components/AddSheet';
 import { ProgressRing } from '../components/ProgressRing';
 import { api, ApiError } from '../lib/api';
 import { storage } from '../lib/storage';
@@ -136,9 +137,11 @@ export default function TodayScreen() {
   const countOf = (s: TaskStatus) => items.filter((i) => statusOf(i, now) === s).length;
   const visible = filter === 'all' ? items : items.filter((i) => statusOf(i, now) === filter);
 
+  // The + button asks how to add: dictate to the assistant, or fill the form.
+  const [addOpen, setAddOpen] = useState(false);
   const openAddTask = () => {
     Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
-    navigation.navigate('EntryForm', { kind: 'event' });
+    setAddOpen(true);
   };
 
   const confirmDelete = (item: AgendaItem) => {
@@ -319,6 +322,19 @@ export default function TodayScreen() {
           })
         )}
       </ScrollView>
+
+      <AddSheet
+        visible={addOpen}
+        onClose={() => setAddOpen(false)}
+        onManual={() => {
+          setAddOpen(false);
+          navigation.navigate('EntryForm', { kind: 'event' });
+        }}
+        onAssistant={() => {
+          setAddOpen(false);
+          navigation.navigate('Assistant');
+        }}
+      />
     </Screen>
   );
 }

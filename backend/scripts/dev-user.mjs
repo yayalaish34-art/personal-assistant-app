@@ -37,7 +37,7 @@ const user = await prisma.user.upsert({
     email: 'dev@local',
     name: 'Dev User',
     timezone: 'Asia/Jerusalem',
-    language: 'he',
+    language: 'en',
   },
 });
 

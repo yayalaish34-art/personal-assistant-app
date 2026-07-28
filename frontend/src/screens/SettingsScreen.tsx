@@ -23,7 +23,6 @@ import {
   CalendarDays,
   Pencil,
   Wifi,
-  LogOut,
 } from 'lucide-react-native';
 
 import { Screen } from '../components/ui';
@@ -97,7 +96,7 @@ function GlassCard({
   );
 }
 
-export default function SettingsScreen({ onSignedOut }: { onSignedOut?: () => void } = {}) {
+export default function SettingsScreen() {
   const [settings, setSettings] = useState<Settings>(defaultSettings);
   const [testing, setTesting] = useState(false);
   const [events, setEvents] = useState<Event[]>([]);
@@ -178,28 +177,6 @@ export default function SettingsScreen({ onSignedOut }: { onSignedOut?: () => vo
     }
   };
 
-  const signOut = async () => {
-    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
-    Alert.alert('Sign out', 'You’ll need a token to sign back in.', [
-      { text: 'Cancel', style: 'cancel' },
-      {
-        text: 'Sign out',
-        style: 'destructive',
-        onPress: async () => {
-          // Revoking server-side is best-effort: the local session must be
-          // cleared either way, or an expired token would trap the user here.
-          try {
-            const session = await storage.getSession();
-            if (session?.refreshToken) await api.logout(session.refreshToken);
-          } catch {
-            /* ignore — clearing locally is what matters */
-          }
-          await storage.clearSession();
-          onSignedOut?.();
-        },
-      },
-    ]);
-  };
 
   const testConnection = async () => {
     Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
@@ -415,14 +392,6 @@ export default function SettingsScreen({ onSignedOut }: { onSignedOut?: () => vo
           </LinearGradient>
         </Pressable>
 
-        {/* ── Sign out: also the escape hatch when a token has expired ── */}
-        <Pressable
-          onPress={signOut}
-          style={({ pressed }) => [styles.signOutBtn, { opacity: pressed ? 0.8 : 1 }]}
-        >
-          <LogOut color={colors.danger} size={16} />
-          <Text style={styles.signOutText}>Sign out</Text>
-        </Pressable>
       </ScrollView>
     </Screen>
   );
@@ -615,17 +584,4 @@ const styles = StyleSheet.create({
     elevation: 5,
   },
   saveBtnText: { ...font(600), fontSize: 15.5, color: '#FFFFFF' },
-  signOutBtn: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'center',
-    gap: 8,
-    marginTop: 12,
-    paddingVertical: 15,
-    borderRadius: 50,
-    backgroundColor: 'rgba(255,255,255,0.7)',
-    borderWidth: 1,
-    borderColor: 'rgba(229,72,77,0.22)',
-  },
-  signOutText: { ...font(600), fontSize: 14.5, color: colors.danger },
 });

@@ -7,6 +7,7 @@ import * as Haptics from 'expo-haptics';
 import { Plus, ArrowUpRight, Clock, Check } from 'lucide-react-native';
 
 import { Screen } from '../components/ui';
+import { AddSheet } from '../components/AddSheet';
 import { api, ApiError, type Task } from '../lib/api';
 import { parsePriority, isLive } from '../lib/tasks';
 import type { RootStackParamList } from '../navigation';
@@ -36,6 +37,7 @@ export default function JournalScreen() {
   const [entries, setEntries] = useState<Task[]>([]);
   const [error, setError] = useState<string | null>(null);
   const [filter, setFilter] = useState<Filter>('all');
+  const [addOpen, setAddOpen] = useState(false);
 
   const load = useCallback(() => {
     let active = true;
@@ -114,7 +116,7 @@ export default function JournalScreen() {
               <Pressable
                 onPress={() => {
                   Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
-                  navigation.navigate('EntryForm', { kind: 'task' });
+                  setAddOpen(true);
                 }}
               >
                 <LinearGradient
@@ -128,7 +130,7 @@ export default function JournalScreen() {
               </Pressable>
             </View>
 
-            {/* ── Mood filter chips (same pattern as Today's Tasks) ── */}
+            {/* ── Status filter chips (same pattern as Today's Tasks) ── */}
             <ScrollView
               horizontal
               showsHorizontalScrollIndicator={false}
@@ -214,6 +216,19 @@ export default function JournalScreen() {
               </View>
             </Pressable>
           );
+        }}
+      />
+
+      <AddSheet
+        visible={addOpen}
+        onClose={() => setAddOpen(false)}
+        onManual={() => {
+          setAddOpen(false);
+          navigation.navigate('EntryForm', { kind: 'task' });
+        }}
+        onAssistant={() => {
+          setAddOpen(false);
+          navigation.navigate('Assistant');
         }}
       />
     </Screen>

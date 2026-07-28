@@ -21,11 +21,13 @@ import JournalScreen from '../screens/JournalScreen';
 import CalendarScreen from '../screens/CalendarScreen';
 import SettingsScreen from '../screens/SettingsScreen';
 import EntryFormScreen from '../screens/EntryFormScreen';
+import AssistantScreen from '../screens/AssistantScreen';
 
 export type RootStackParamList = {
   Tabs: undefined;
   // 'task' → POST /tasks, 'event' → POST /events. Two separate resources.
   EntryForm: { kind: 'task' | 'event' };
+  Assistant: undefined;
 };
 
 const Tab = createBottomTabNavigator();
@@ -51,11 +53,6 @@ function FloatingTabBar({ state, descriptors, navigation }: BottomTabBarProps) {
   const iconScales = useRef(
     state.routes.map((_, i) => new Animated.Value(i === state.index ? 1.08 : 1)),
   ).current;
-  // Per-tab 0→1 "activeness", driving the grey→white icon cross-fade so the
-  // icon turns white in step with the purple pill arriving under it.
-  const activeAnims = useRef(
-    state.routes.map((_, i) => new Animated.Value(i === state.index ? 1 : 0)),
-  ).current;
   const focused = state.index;
 
   useEffect(() => {
@@ -71,24 +68,17 @@ function FloatingTabBar({ state, descriptors, navigation }: BottomTabBarProps) {
   }, [focused, layouts, pillX, pillW, pillOpacity]);
 
   useEffect(() => {
-    // Gently pop the active icon, settle the rest, and cross-fade icon colors.
-    Animated.parallel([
-      ...iconScales.map((v, i) =>
+    // Gently pop the active icon and settle the rest.
+    Animated.parallel(
+      iconScales.map((v, i) =>
         Animated.spring(v, {
           toValue: i === focused ? 1.08 : 1,
           useNativeDriver: true,
           ...SPRING,
         }),
       ),
-      ...activeAnims.map((v, i) =>
-        Animated.timing(v, {
-          toValue: i === focused ? 1 : 0,
-          duration: 220,
-          useNativeDriver: true,
-        }),
-      ),
-    ]).start();
-  }, [focused, iconScales, activeAnims]);
+    ).start();
+  }, [focused, iconScales]);
 
   return (
     <View style={styles.tabWrapper} pointerEvents="box-none">
@@ -105,7 +95,10 @@ function FloatingTabBar({ state, descriptors, navigation }: BottomTabBarProps) {
           const label =
             typeof options.title === 'string' ? options.title : route.name;
           const isFocused = state.index === index;
-          const active = activeAnims[index];
+          // The purple pill is hidden until the first onLayout measures it, so
+          // tie the white icon to the pill actually being there — otherwise the
+          // active icon renders white on the white bar and looks missing.
+          const onPill = isFocused && layouts[index] !== undefined;
 
           const onPress = () => {
             Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
@@ -129,33 +122,27 @@ function FloatingTabBar({ state, descriptors, navigation }: BottomTabBarProps) {
               }}
               style={styles.tab}
             >
+              {/* One icon, colour picked from focus state. An earlier version
+                  cross-faded two stacked copies, but that drove opacity from a
+                  natively-driven Animated.Value — both as a raw value and via
+                  .interpolate() — and a native value read from a JS-evaluated
+                  style doesn't update, so the icon could settle at opacity 0
+                  and disappear. Colour is not animatable on an SVG fill prop
+                  anyway, so there is nothing to gain from the extra layer. */}
               <Animated.View
                 style={[styles.iconBox, { transform: [{ scale: iconScales[index] }] }]}
               >
-                {/* Two stacked copies cross-faded by `active`: RN can't
-                    interpolate a color into an SVG fill prop natively.
-                    Both layers are absolutely positioned and centred — using
-                    absoluteFillObject alone stretches the wrapper while the
-                    SVG keeps its intrinsic size, so it lands off-centre. */}
-                <Animated.View
-                  style={[
-                    styles.iconLayer,
-                    {
-                      opacity: active.interpolate({
-                        inputRange: [0, 1],
-                        outputRange: [1, 0],
-                      }),
-                    },
-                  ]}
-                >
-                  <TabIcon name={route.name} color={NAV_BAR.inactiveIcon} size={26} />
-                </Animated.View>
-                <Animated.View style={[styles.iconLayer, { opacity: active }]}>
-                  <TabIcon name={route.name} color={NAV_BAR.activeIcon} size={26} />
-                </Animated.View>
+                <TabIcon
+                  name={route.name}
+                  color={onPill ? NAV_BAR.activeIcon : NAV_BAR.inactiveIcon}
+                  size={26}
+                />
               </Animated.View>
               {isFocused ? (
-                <Text style={styles.tabLabel} numberOfLines={1}>
+                <Text
+                  style={[styles.tabLabel, !onPill && { color: NAV_BAR.inactiveIcon }]}
+                  numberOfLines={1}
+                >
                   {label}
                 </Text>
               ) : null}
@@ -167,7 +154,7 @@ function FloatingTabBar({ state, descriptors, navigation }: BottomTabBarProps) {
   );
 }
 
-function Tabs({ onSignedOut }: { onSignedOut?: () => void }) {
+function Tabs() {
   return (
     <Tab.Navigator
       tabBar={(props) => <FloatingTabBar {...props} />}
@@ -176,14 +163,12 @@ function Tabs({ onSignedOut }: { onSignedOut?: () => void }) {
       <Tab.Screen name="Today" component={TodayScreen} options={{ title: 'Home' }} />
       <Tab.Screen name="Calendar" component={CalendarScreen} options={{ title: 'Calendar' }} />
       <Tab.Screen name="Journal" component={JournalScreen} options={{ title: 'Journal' }} />
-      <Tab.Screen name="Settings" options={{ title: 'Profile' }}>
-        {() => <SettingsScreen onSignedOut={onSignedOut} />}
-      </Tab.Screen>
+      <Tab.Screen name="Settings" component={SettingsScreen} options={{ title: 'Profile' }} />
     </Tab.Navigator>
   );
 }
 
-export default function RootNavigator({ onSignedOut }: { onSignedOut?: () => void }) {
+export default function RootNavigator() {
   return (
     <Stack.Navigator
       screenOptions={{
@@ -191,11 +176,16 @@ export default function RootNavigator({ onSignedOut }: { onSignedOut?: () => voi
         contentStyle: { backgroundColor: colors.bg },
       }}
     >
-      <Stack.Screen name="Tabs">{() => <Tabs onSignedOut={onSignedOut} />}</Stack.Screen>
+      <Stack.Screen name="Tabs" component={Tabs} />
       {/* The Add New Task screen renders its own X / ✓ header. */}
       <Stack.Screen
         name="EntryForm"
         component={EntryFormScreen}
+        options={{ presentation: 'modal' }}
+      />
+      <Stack.Screen
+        name="Assistant"
+        component={AssistantScreen}
         options={{ presentation: 'modal' }}
       />
     </Stack.Navigator>
@@ -247,13 +237,5 @@ const styles = StyleSheet.create({
     paddingHorizontal: 18,
   },
   iconBox: { width: 26, height: 26, alignItems: 'center', justifyContent: 'center' },
-  // Both cross-fade layers occupy the same centred 26×26 box.
-  iconLayer: {
-    position: 'absolute',
-    width: 26,
-    height: 26,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
   tabLabel: { fontSize: 16, ...font(600), color: NAV_BAR.activeIcon },
 });

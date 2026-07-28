@@ -271,6 +271,47 @@ export const api = {
   agendaForRange: (from: string, to: string) =>
     request<{ events: Event[]; tasks: Task[] }>(`/agenda?from=${from}&to=${to}`),
 
+  // ── Speech ──
+  /**
+   * Uploads a recording to POST /speech/transcribe and returns the text.
+   *
+   * Multipart, so it bypasses the JSON `request()` helper: setting
+   * Content-Type by hand would omit the multipart boundary and the server
+   * would reject the body. Audio is not stored — the server streams it to the
+   * STT provider and discards it.
+   */
+  async transcribe(uri: string, language?: 'he' | 'en'): Promise<{ text: string }> {
+    const session = await storage.getSession();
+    const form = new FormData();
+
+    if (uri.startsWith('blob:') || uri.startsWith('data:')) {
+      // Web: MediaRecorder hands back a blob URL.
+      const blob = await (await fetch(uri)).blob();
+      const ext = blob.type.includes('webm') ? 'webm' : 'm4a';
+      form.append('audio', blob, `recording.${ext}`);
+    } else {
+      // Native: React Native's FormData accepts a file descriptor object.
+      const name = uri.split('/').pop() || 'recording.m4a';
+      const ext = name.split('.').pop()?.toLowerCase() || 'm4a';
+      form.append('audio', {
+        uri,
+        name,
+        type: ext === 'webm' ? 'audio/webm' : 'audio/m4a',
+      } as unknown as Blob);
+    }
+    if (language) form.append('language', language);
+
+    const res = await fetch(`${await baseUrl()}/speech/transcribe`, {
+      method: 'POST',
+      headers: session?.accessToken
+        ? { Authorization: `Bearer ${session.accessToken}` }
+        : undefined,
+      body: form,
+    });
+    if (!res.ok) throw await toApiError(res);
+    return (await res.json()) as { text: string };
+  },
+
   // ── Chat ──
   sendMessage: (text: string) =>
     request<{ messages: ChatMessage[] }>('/chat/message', {

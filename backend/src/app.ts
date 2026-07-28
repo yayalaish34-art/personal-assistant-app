@@ -30,16 +30,8 @@ export function createApp(): Express {
   app.disable('x-powered-by');
   app.use(helmet());
 
-  // CORS: in production require CORS_ORIGINS (comma-separated allowlist). In
-  // dev, an empty list permits any origin so the RN client on localhost/LAN
-  // works out of the box.
-  if (config.CORS_ORIGINS.length > 0) {
-    app.use(cors({ origin: config.CORS_ORIGINS, credentials: true }));
-  } else if (config.NODE_ENV === 'production') {
-    throw new Error('CORS_ORIGINS must be set in production');
-  } else {
-    app.use(cors());
-  }
+  // CORS: allow all origins (temporary — permissive for now).
+  app.use(cors());
 
   app.use(express.json({ limit: '1mb' }));
   app.use(httpLogger);

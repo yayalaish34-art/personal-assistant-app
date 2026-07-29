@@ -18,15 +18,19 @@ export type Settings = {
 
 const API_PORT = 5000;
 
+/** The deployed backend. Reachable from anywhere — no Wi-Fi requirement. */
+export const REMOTE_API_URL =
+  'https://personal-assistant-api-production-618a.up.railway.app';
+
 /**
- * Default API host, derived from wherever the app was loaded from.
+ * Local dev server, derived from whatever host served the bundle.
  *
  * On a physical device `localhost` resolves to the phone itself, so a hardcoded
  * default can never reach the dev machine. Expo exposes the host it served the
- * bundle from (`exp://10.0.0.29:8081`), and that is by definition an address
- * the device can reach — so reuse its hostname and swap the port.
+ * bundle from, and that is by definition an address the device can reach — so
+ * reuse its hostname and swap the port.
  */
-function defaultApiBaseUrl(): string {
+export function localApiBaseUrl(): string {
   if (Platform.OS === 'web') return `http://localhost:${API_PORT}`;
 
   // hostUri is 'host:port'; expoConfig.hostUri is the SDK 50+ location.
@@ -36,6 +40,13 @@ function defaultApiBaseUrl(): string {
   const host = hostUri?.split(':')[0];
 
   return host ? `http://${host}:${API_PORT}` : `http://localhost:${API_PORT}`;
+}
+
+// The hosted backend is the default: it needs no local server and works off
+// the home network. Switch to Local in Profile when developing against
+// backend changes.
+function defaultApiBaseUrl(): string {
+  return REMOTE_API_URL;
 }
 
 export const defaultSettings: Settings = {
@@ -87,8 +98,9 @@ export const storage = {
    */
   async getSettings(): Promise<Settings> {
     const saved = await getJSON<Settings>(KEYS.settings, defaultSettings);
-    const fresh = defaultApiBaseUrl();
+    // Only a stale LAN address is re-derived; a saved remote URL is kept.
     const isLanUrl = (u: string) => /^http:\/\/(\d{1,3}\.){3}\d{1,3}:/.test(u);
+    const fresh = localApiBaseUrl();
     if (isLanUrl(saved.apiBaseUrl) && isLanUrl(fresh) && saved.apiBaseUrl !== fresh) {
       return { ...saved, apiBaseUrl: fresh };
     }

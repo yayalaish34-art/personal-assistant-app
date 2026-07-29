@@ -567,7 +567,7 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     borderColor: 'rgba(136,117,246,0.14)',
   },
-  inputIcon: { position: 'absolute', right: 14 },
+  inputIcon: { position: 'absolute', end: 14 },
 
   langGrid: { flexDirection: 'row', flexWrap: 'wrap', gap: 8 },
   langChip: {

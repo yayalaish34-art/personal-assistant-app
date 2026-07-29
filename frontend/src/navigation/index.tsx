@@ -15,7 +15,7 @@ import { createNativeStackNavigator } from '@react-navigation/native-stack';
 import * as Haptics from 'expo-haptics';
 
 import { colors, font, NAV_BAR } from '../theme';
-import { t } from '../lib/i18n';
+import { t, isRTL } from '../lib/i18n';
 import { TabIcon } from '../components/TabIcons';
 import TodayScreen from '../screens/TodayScreen';
 import JournalScreen from '../screens/JournalScreen';
@@ -83,7 +83,7 @@ function FloatingTabBar({ state, descriptors, navigation }: BottomTabBarProps) {
 
   return (
     <View style={styles.tabWrapper} pointerEvents="box-none">
-      <View style={styles.barContainer}>
+      <View style={[styles.barContainer, { direction: isRTL() ? 'rtl' : 'ltr' }]}>
         <Animated.View
           style={[
             styles.activePill,

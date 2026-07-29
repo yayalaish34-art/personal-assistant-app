@@ -476,7 +476,7 @@ export default function CalendarScreen() {
                                 key={c}
                                 style={[
                                   styles.avatarDot,
-                                  { backgroundColor: c, marginLeft: i ? -9 : 0 },
+                                  { backgroundColor: c, marginStart: i ? -9 : 0 },
                                 ]}
                               />
                             ))}
@@ -751,7 +751,7 @@ const styles = StyleSheet.create({
   },
   avatarMore: {
     backgroundColor: '#17171B',
-    marginLeft: -9,
+    marginStart: -9,
     alignItems: 'center',
     justifyContent: 'center',
   },

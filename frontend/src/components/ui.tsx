@@ -15,6 +15,7 @@ import {
 import { LinearGradient } from 'expo-linear-gradient';
 import Svg, { Defs, RadialGradient, Stop, Rect } from 'react-native-svg';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import { isRTL } from '../lib/i18n';
 import {
   colors,
   radius,
@@ -98,6 +99,11 @@ export function Screen({
           {
             paddingTop: Math.max(insets.top, spacing.md) + spacing.xs,
             paddingBottom: clearTabBar ? TAB_BAR_CLEARANCE : spacing.lg,
+            // Declared explicitly rather than left to inherit: on web
+            // react-native-web's I18nManager is a no-op, so this is what makes
+            // rows, text alignment, and logical margins mirror. Native reads
+            // I18nManager, and this agrees with it.
+            direction: isRTL() ? 'rtl' : 'ltr',
           },
         ]}
       >

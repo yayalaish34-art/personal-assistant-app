@@ -56,7 +56,7 @@ function AvatarStack() {
   return (
     <View style={styles.avatarRow}>
       {AVATAR_COLORS.map((c, i) => (
-        <View key={c} style={[styles.avatarDot, { backgroundColor: c, marginLeft: i ? -10 : 0 }]} />
+        <View key={c} style={[styles.avatarDot, { backgroundColor: c, marginStart: i ? -10 : 0 }]} />
       ))}
       <View style={[styles.avatarDot, styles.avatarMore]}>
         <Text style={styles.avatarMoreText}>+4</Text>
@@ -492,7 +492,7 @@ const styles = StyleSheet.create({
   },
   avatarMore: {
     backgroundColor: '#17171B',
-    marginLeft: -10,
+    marginStart: -10,
     alignItems: 'center',
     justifyContent: 'center',
   },

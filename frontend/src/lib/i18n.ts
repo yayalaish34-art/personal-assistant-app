@@ -1,4 +1,4 @@
-import { I18nManager } from 'react-native';
+import { I18nManager, Platform } from 'react-native';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import * as Localization from 'expo-localization';
 
@@ -1006,6 +1006,21 @@ export async function loadLanguage(): Promise<Language> {
  */
 function applyDirection(): void {
   const rtl = LANGUAGES[current].rtl;
+
+  if (Platform.OS === 'web') {
+    // react-native-web ships I18nManager as a no-op stub: allowRTL and
+    // forceRTL return immediately and isRTL is hardcoded false, so calling
+    // them flips nothing. The browser mirrors layout from the document's
+    // `dir` attribute instead, which also gives flex rows, text alignment,
+    // and logical properties the right direction for free.
+    const doc = (globalThis as { document?: Document }).document;
+    if (doc?.documentElement) {
+      doc.documentElement.setAttribute('dir', rtl ? 'rtl' : 'ltr');
+      doc.documentElement.setAttribute('lang', current);
+    }
+    return;
+  }
+
   I18nManager.allowRTL(rtl);
   if (I18nManager.isRTL !== rtl) {
     I18nManager.forceRTL(rtl);

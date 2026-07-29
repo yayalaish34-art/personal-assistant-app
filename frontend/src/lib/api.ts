@@ -1,149 +1,56 @@
-import { storage } from './storage';
+import AsyncStorage from '@react-native-async-storage/async-storage';
 
-// API client for the backend described in backend/API_CONTRACT.md.
+// Local-only data layer. Everything lives in AsyncStorage on the device —
+// there is no server, no network, and no account.
 //
-// Contract essentials this file encodes:
-//  - No `/api` prefix. Health is `/health`; everything else is `/tasks`,
-//    `/events`, `/agenda`, `/me`, `/auth/*`, `/chat/*`, `/devices`.
-//  - Every endpoint except `/auth/*` and `/health` needs
-//    `Authorization: Bearer <accessToken>`.
-//  - Errors come back as `{ error: { code, message, details } }`.
-//  - Timestamps are ISO-8601 UTC with a `Z` suffix.
-//  - Creates are idempotent on a client-generated UUID: `201` new,
-//    `200` replay, `409` if the id belongs to another user.
+// The method names and return shapes mirror the REST API this replaced, so the
+// screens did not have to change how they call it. Reads that were `GET /x`
+// are now a JSON parse; writes that were `POST /x` are a read-modify-write.
+//
+// Identity: a device-scoped uuid generated on first launch. It exists so rows
+// have a stable owner if data is ever synced; nothing authenticates.
 
-async function baseUrl(): Promise<string> {
-  const s = await storage.getSettings();
-  return s.apiBaseUrl.replace(/\/$/, '');
+const KEYS = {
+  tasks: '@pa/tasks',
+  events: '@pa/events',
+  chat: '@pa/chat',
+  user: '@pa/user',
+  seeded: '@pa/seeded',
+} as const;
+
+async function readList<T>(key: string): Promise<T[]> {
+  try {
+    const raw = await AsyncStorage.getItem(key);
+    const parsed = raw ? JSON.parse(raw) : [];
+    return Array.isArray(parsed) ? (parsed as T[]) : [];
+  } catch {
+    // Corrupt payload — start clean rather than failing every read.
+    return [];
+  }
 }
 
-/** Error codes from the contract's error envelope. */
-export type ApiErrorCode =
-  | 'VALIDATION_ERROR'
-  | 'UNAUTHORIZED'
-  | 'FORBIDDEN'
-  | 'NOT_FOUND'
-  | 'CONFLICT'
-  | 'RATE_LIMITED'
-  | 'PAYLOAD_TOO_LARGE'
-  | 'UNSUPPORTED_MEDIA'
-  | 'INTERNAL';
+async function writeList<T>(key: string, rows: T[]): Promise<void> {
+  await AsyncStorage.setItem(key, JSON.stringify(rows));
+}
 
+/** Kept so screens can keep catching a typed error. */
 export class ApiError extends Error {
   constructor(
     readonly status: number,
-    readonly code: ApiErrorCode | string,
+    readonly code: string,
     message: string,
-    readonly details?: unknown,
-    /** Seconds to wait, from the Retry-After header on 429. */
-    readonly retryAfter?: number,
   ) {
     super(message);
     this.name = 'ApiError';
   }
 
-  /** True when the caller has no valid session and should sign in again. */
+  /** Always false now: there is nothing to sign in to. */
   get isAuthError(): boolean {
-    return this.status === 401;
-  }
-}
-
-async function toApiError(res: Response): Promise<ApiError> {
-  const retryAfterRaw = res.headers.get('Retry-After');
-  const retryAfter = retryAfterRaw ? Number(retryAfterRaw) : undefined;
-  let code = 'INTERNAL';
-  let message = res.statusText || `Request failed (${res.status})`;
-  let details: unknown;
-  try {
-    const body = await res.json();
-    if (body?.error) {
-      code = body.error.code ?? code;
-      message = body.error.message ?? message;
-      details = body.error.details;
-    }
-  } catch {
-    // Non-JSON body (proxy error page, empty response) — keep the defaults.
-  }
-  return new ApiError(res.status, code, message, details, retryAfter);
-}
-
-type RequestOpts = {
-  method?: string;
-  body?: unknown;
-  /** Skip the Authorization header — for /auth/* and /health. */
-  anonymous?: boolean;
-  /** Internal: prevents an infinite refresh loop. */
-  isRetry?: boolean;
-};
-
-/**
- * Refreshes the access token using the stored refresh token. The contract
- * rotates refresh tokens, so the new one must replace the old one — reusing a
- * rotated token returns 401.
- */
-async function refreshSession(): Promise<boolean> {
-  const session = await storage.getSession();
-  if (!session?.refreshToken) return false;
-  try {
-    const res = await fetch(`${await baseUrl()}/auth/refresh`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ refreshToken: session.refreshToken }),
-    });
-    if (!res.ok) {
-      // The refresh token is spent or revoked; the session is unrecoverable.
-      await storage.clearSession();
-      return false;
-    }
-    const { accessToken, refreshToken } = await res.json();
-    await storage.saveSession({ ...session, accessToken, refreshToken });
-    return true;
-  } catch {
     return false;
   }
 }
 
-async function request<T>(path: string, opts: RequestOpts = {}): Promise<T> {
-  const { method = 'GET', body, anonymous = false, isRetry = false } = opts;
-
-  const headers: Record<string, string> = {};
-  if (body !== undefined) headers['Content-Type'] = 'application/json';
-  if (!anonymous) {
-    const session = await storage.getSession();
-    if (session?.accessToken) {
-      headers.Authorization = `Bearer ${session.accessToken}`;
-    }
-  }
-
-  // React Native's fetch has no default timeout: against an unreachable host
-  // the promise never settles, so callers hang indefinitely.
-  const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort(), 15000);
-  let res: Response;
-  try {
-    res = await fetch(`${await baseUrl()}${path}`, {
-      method,
-      headers,
-      body: body === undefined ? undefined : JSON.stringify(body),
-      signal: controller.signal,
-    });
-  } finally {
-    clearTimeout(timeout);
-  }
-
-  // One transparent refresh attempt on 401, then surface the error.
-  if (res.status === 401 && !anonymous && !isRetry) {
-    if (await refreshSession()) {
-      return request<T>(path, { ...opts, isRetry: true });
-    }
-  }
-
-  if (!res.ok) throw await toApiError(res);
-  if (res.status === 204) return undefined as T;
-  return (await res.json()) as T;
-}
-
-// ── Wire types (exactly the contract's shapes) ───────────────────────────────
+// ── Types (unchanged from the shape the screens were written against) ──
 
 export type User = {
   id: string;
@@ -187,7 +94,7 @@ export type ChatMessage = {
   createdAt: string;
 };
 
-/** RFC-4122 v4 UUID. Ids are client-generated so creates work offline. */
+/** RFC-4122 v4 UUID. */
 export function uuid(): string {
   return 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, (c) => {
     const r = (Math.random() * 16) | 0;
@@ -196,69 +103,172 @@ export function uuid(): string {
   });
 }
 
+const nowIso = () => new Date().toISOString();
+
+/** Device profile, created on first use. */
+async function loadUser(): Promise<User> {
+  const raw = await AsyncStorage.getItem(KEYS.user);
+  if (raw) {
+    try {
+      return JSON.parse(raw) as User;
+    } catch {
+      /* fall through and recreate */
+    }
+  }
+  const user: User = {
+    id: uuid(),
+    email: '',
+    name: '',
+    language: 'en',
+    // Falls back to UTC on the rare platform without a resolved timezone.
+    timezone: Intl.DateTimeFormat().resolvedOptions().timeZone || 'UTC',
+    createdAt: nowIso(),
+  };
+  await AsyncStorage.setItem(KEYS.user, JSON.stringify(user));
+  return user;
+}
+
+/** Local YYYY-MM-DD, matching how the screens format dates. */
+function localDay(iso: string): string {
+  const d = new Date(iso);
+  const p = (n: number) => String(n).padStart(2, '0');
+  return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}`;
+}
+
+const live = <T extends { deletedAt: string | null }>(rows: T[]) =>
+  rows.filter((r) => r.deletedAt === null);
+
+/**
+ * Puts a small set of example rows in place on first launch, so the app has
+ * something to show instead of four empty screens. Runs once — the marker is
+ * written whether or not rows were added, so a user who deletes everything
+ * doesn't get it back on the next launch.
+ */
+async function seedOnce(): Promise<void> {
+  if (await AsyncStorage.getItem(KEYS.seeded)) return;
+  await AsyncStorage.setItem(KEYS.seeded, '1');
+
+  const at = (dayOffset: number, h: number, m = 0) => {
+    const d = new Date();
+    d.setDate(d.getDate() + dayOffset);
+    d.setHours(h, m, 0, 0);
+    return d.toISOString();
+  };
+  const stamp = nowIso();
+
+  const events: Event[] = [
+    ['Daily standup', '[Medium] Blockers and hand-offs', 0, 9],
+    ['Review pull requests', '[High] Clear the queue', 0, 11],
+    ['Design review', '[Medium] Onboarding flow', 0, 14],
+    ['Gym', '[Low] Upper body, 45 min', 0, 18],
+    ['Stakeholder demo', '[High] Walkthrough, 40 min', 1, 11],
+    ['Dentist appointment', '[Low] Cleaning', 2, 16, 30],
+    ['Sprint planning', '[High] Scope and capacity', 3, 9, 30],
+  ].map(([title, note, d, h, m]) => ({
+    id: uuid(),
+    title: title as string,
+    note: note as string,
+    startsAt: at(d as number, h as number, (m as number) ?? 0),
+    endsAt: at(d as number, (h as number) + 1, (m as number) ?? 0),
+    reminderMinutesBefore: 15,
+    createdAt: stamp,
+    updatedAt: stamp,
+    deletedAt: null,
+  }));
+
+  const tasks: Task[] = [
+    ['Write the weekly update', '[Medium] Send before end of day', 0, 17],
+    ['Book flights for the offsite', '[High] Two travellers, direct', 1, 12],
+    ['Renew the SSL certificate', '[High] Expires soon', 2, 10],
+    ['Read the docs', '[Low] Background job patterns', null, 0],
+  ].map(([title, notes, d, h]) => ({
+    id: uuid(),
+    title: title as string,
+    notes: notes as string,
+    dueAt: d === null ? null : at(d as number, h as number),
+    isDone: false,
+    createdAt: stamp,
+    updatedAt: stamp,
+    deletedAt: null,
+  }));
+
+  await Promise.all([writeList(KEYS.events, events), writeList(KEYS.tasks, tasks)]);
+}
+
 export const api = {
-  // ── Health (no auth) ──
-  health: () => request<{ status: string }>('/health', { anonymous: true }),
+  // ── Health: nothing to reach, so this always succeeds ──
+  health: async () => ({ status: 'ok' }),
 
-  // ── Auth ──
-  signInWithGoogle: (idToken: string, timezone?: string) =>
-    request<{ user: User; accessToken: string; refreshToken: string }>(
-      '/auth/google',
-      { method: 'POST', body: { idToken, timezone }, anonymous: true },
-    ),
-  signInWithApple: (idToken: string, timezone?: string) =>
-    request<{ user: User; accessToken: string; refreshToken: string }>(
-      '/auth/apple',
-      { method: 'POST', body: { idToken, timezone }, anonymous: true },
-    ),
-  /**
-   * Dev-only sign-in as the seeded local user. The backend mounts this only
-   * when NODE_ENV !== 'production'; replace with signInWithGoogle once an
-   * OAuth client id is configured.
-   */
-  signInAsDevUser: () =>
-    request<{ user: User; accessToken: string; refreshToken: string }>('/auth/dev', {
-      method: 'POST',
-      anonymous: true,
-    }),
-  logout: (refreshToken?: string, pushToken?: string) =>
-    request<void>('/auth/logout', {
-      method: 'POST',
-      body: { refreshToken, pushToken },
-    }),
-
-  // ── Users ──
-  getMe: () => request<{ user: User }>('/me'),
-  updateMe: (patch: Partial<Pick<User, 'name' | 'language' | 'timezone'>>) =>
-    request<{ user: User }>('/me', { method: 'PATCH', body: patch }),
-  deleteMe: () => request<{ deletionRequestedAt: string }>('/me', { method: 'DELETE' }),
+  // ── User ──
+  getMe: async () => ({ user: await loadUser() }),
+  updateMe: async (patch: Partial<Pick<User, 'name' | 'language' | 'timezone'>>) => {
+    const user = { ...(await loadUser()), ...patch };
+    await AsyncStorage.setItem(KEYS.user, JSON.stringify(user));
+    return { user };
+  },
 
   // ── Tasks ──
-  listTasks: (updatedSince?: string) =>
-    request<{ tasks: Task[]; serverTime: string }>(
-      `/tasks${updatedSince ? `?updatedSince=${encodeURIComponent(updatedSince)}` : ''}`,
-    ),
-  createTask: (t: {
+  listTasks: async () => ({
+    tasks: (await seedOnce(), await readList<Task>(KEYS.tasks)),
+    serverTime: nowIso(),
+  }),
+
+  createTask: async (t: {
     id: string;
     title: string;
     notes?: string;
     dueAt?: string;
     updatedAt: string;
-  }) => request<Task>('/tasks', { method: 'POST', body: t }),
-  updateTask: (
+  }) => {
+    const rows = await readList<Task>(KEYS.tasks);
+    // Same id twice is a no-op, keeping the old create-is-idempotent rule.
+    const existing = rows.find((r) => r.id === t.id);
+    if (existing) return existing;
+
+    const task: Task = {
+      id: t.id,
+      title: t.title,
+      notes: t.notes ?? null,
+      dueAt: t.dueAt ?? null,
+      isDone: false,
+      createdAt: nowIso(),
+      updatedAt: t.updatedAt,
+      deletedAt: null,
+    };
+    await writeList(KEYS.tasks, [task, ...rows]);
+    return task;
+  },
+
+  updateTask: async (
     id: string,
     patch: Partial<Pick<Task, 'title' | 'notes' | 'dueAt' | 'isDone'>> & {
       updatedAt?: string;
     },
-  ) => request<Task>(`/tasks/${id}`, { method: 'PATCH', body: patch }),
-  deleteTask: (id: string) => request<void>(`/tasks/${id}`, { method: 'DELETE' }),
+  ) => {
+    const rows = await readList<Task>(KEYS.tasks);
+    const i = rows.findIndex((r) => r.id === id);
+    if (i === -1) throw new ApiError(404, 'NOT_FOUND', 'Task not found');
+    rows[i] = { ...rows[i], ...patch, updatedAt: patch.updatedAt ?? nowIso() };
+    await writeList(KEYS.tasks, rows);
+    return rows[i];
+  },
+
+  deleteTask: async (id: string) => {
+    const rows = await readList<Task>(KEYS.tasks);
+    // Hard delete: there is no sync partner that needs to see a tombstone.
+    await writeList(
+      KEYS.tasks,
+      rows.filter((r) => r.id !== id),
+    );
+  },
 
   // ── Events ──
-  listEvents: (updatedSince?: string) =>
-    request<{ events: Event[]; serverTime: string }>(
-      `/events${updatedSince ? `?updatedSince=${encodeURIComponent(updatedSince)}` : ''}`,
-    ),
-  createEvent: (e: {
+  listEvents: async () => ({
+    events: (await seedOnce(), await readList<Event>(KEYS.events)),
+    serverTime: nowIso(),
+  }),
+
+  createEvent: async (e: {
     id: string;
     title: string;
     note?: string;
@@ -266,82 +276,93 @@ export const api = {
     endsAt?: string;
     reminderMinutesBefore?: number | null;
     updatedAt: string;
-  }) => request<Event>('/events', { method: 'POST', body: e }),
-  updateEvent: (
+  }) => {
+    const rows = await readList<Event>(KEYS.events);
+    const existing = rows.find((r) => r.id === e.id);
+    if (existing) return existing;
+
+    const event: Event = {
+      id: e.id,
+      title: e.title,
+      note: e.note ?? null,
+      startsAt: e.startsAt,
+      // Default duration matches what the old backend applied.
+      endsAt:
+        e.endsAt ??
+        new Date(new Date(e.startsAt).getTime() + 60 * 60 * 1000).toISOString(),
+      reminderMinutesBefore: e.reminderMinutesBefore ?? null,
+      createdAt: nowIso(),
+      updatedAt: e.updatedAt,
+      deletedAt: null,
+    };
+    await writeList(KEYS.events, [event, ...rows]);
+    return event;
+  },
+
+  updateEvent: async (
     id: string,
     patch: Partial<
       Pick<Event, 'title' | 'note' | 'startsAt' | 'endsAt' | 'reminderMinutesBefore'>
     > & { updatedAt?: string },
-  ) => request<Event>(`/events/${id}`, { method: 'PATCH', body: patch }),
-  deleteEvent: (id: string) => request<void>(`/events/${id}`, { method: 'DELETE' }),
-
-  // ── Agenda: events + tasks for a day or range, in the user's timezone ──
-  agendaForDate: (date: string) =>
-    request<{ events: Event[]; tasks: Task[] }>(`/agenda?date=${date}`),
-  agendaForRange: (from: string, to: string) =>
-    request<{ events: Event[]; tasks: Task[] }>(`/agenda?from=${from}&to=${to}`),
-
-  // ── Speech ──
-  /**
-   * Uploads a recording to POST /speech/transcribe and returns the text.
-   *
-   * Multipart, so it bypasses the JSON `request()` helper: setting
-   * Content-Type by hand would omit the multipart boundary and the server
-   * would reject the body. Audio is not stored — the server streams it to the
-   * STT provider and discards it.
-   */
-  async transcribe(uri: string, language?: 'he' | 'en'): Promise<{ text: string }> {
-    const session = await storage.getSession();
-    const form = new FormData();
-
-    if (uri.startsWith('blob:') || uri.startsWith('data:')) {
-      // Web: MediaRecorder hands back a blob URL.
-      const blob = await (await fetch(uri)).blob();
-      const ext = blob.type.includes('webm') ? 'webm' : 'm4a';
-      form.append('audio', blob, `recording.${ext}`);
-    } else {
-      // Native: React Native's FormData accepts a file descriptor object.
-      const name = uri.split('/').pop() || 'recording.m4a';
-      const ext = name.split('.').pop()?.toLowerCase() || 'm4a';
-      form.append('audio', {
-        uri,
-        name,
-        type: ext === 'webm' ? 'audio/webm' : 'audio/m4a',
-      } as unknown as Blob);
-    }
-    if (language) form.append('language', language);
-
-    const res = await fetch(`${await baseUrl()}/speech/transcribe`, {
-      method: 'POST',
-      headers: session?.accessToken
-        ? { Authorization: `Bearer ${session.accessToken}` }
-        : undefined,
-      body: form,
-    });
-    if (!res.ok) throw await toApiError(res);
-    return (await res.json()) as { text: string };
+  ) => {
+    const rows = await readList<Event>(KEYS.events);
+    const i = rows.findIndex((r) => r.id === id);
+    if (i === -1) throw new ApiError(404, 'NOT_FOUND', 'Event not found');
+    rows[i] = { ...rows[i], ...patch, updatedAt: patch.updatedAt ?? nowIso() };
+    await writeList(KEYS.events, rows);
+    return rows[i];
   },
 
-  // ── Chat ──
-  sendMessage: (text: string) =>
-    request<{ messages: ChatMessage[] }>('/chat/message', {
-      method: 'POST',
-      body: { text },
-    }),
-  confirmAction: (confirmMessageId: string) =>
-    request<{ messages: ChatMessage[] }>('/chat/message', {
-      method: 'POST',
-      body: { confirmMessageId },
-    }),
-  chatHistory: (cursor?: string, limit = 50) =>
-    request<{ messages: ChatMessage[]; nextCursor: string | null }>(
-      `/chat/history?limit=${limit}${cursor ? `&cursor=${encodeURIComponent(cursor)}` : ''}`,
-    ),
+  deleteEvent: async (id: string) => {
+    const rows = await readList<Event>(KEYS.events);
+    await writeList(
+      KEYS.events,
+      rows.filter((r) => r.id !== id),
+    );
+  },
 
-  // ── Devices ──
-  registerDevice: (pushToken: string, platform: 'ios' | 'android' | 'web') =>
-    request<{ device: { id: string; platform: string; lastSeenAt: string } }>(
-      '/devices',
-      { method: 'POST', body: { pushToken, platform } },
-    ),
+  // ── Agenda: events and tasks for a day or range, in local time ──
+  agendaForDate: async (date: string) => {
+    await seedOnce();
+    const [events, tasks] = await Promise.all([
+      readList<Event>(KEYS.events),
+      readList<Task>(KEYS.tasks),
+    ]);
+    return {
+      events: live(events).filter((e) => localDay(e.startsAt) === date),
+      tasks: live(tasks).filter((t) => t.dueAt && localDay(t.dueAt) === date),
+    };
+  },
+
+  agendaForRange: async (from: string, to: string) => {
+    const [events, tasks] = await Promise.all([
+      readList<Event>(KEYS.events),
+      readList<Task>(KEYS.tasks),
+    ]);
+    const within = (day: string) => day >= from && day <= to;
+    return {
+      events: live(events).filter((e) => within(localDay(e.startsAt))),
+      tasks: live(tasks).filter((t) => t.dueAt && within(localDay(t.dueAt))),
+    };
+  },
+
+  // ── Chat history (local; reply logic lives in lib/assistant.ts) ──
+  chatHistory: async () => ({
+    messages: await readList<ChatMessage>(KEYS.chat),
+    nextCursor: null as string | null,
+  }),
+
+  appendChat: async (messages: ChatMessage[]) => {
+    const rows = await readList<ChatMessage>(KEYS.chat);
+    await writeList(KEYS.chat, [...rows, ...messages]);
+  },
+
+  clearChat: async () => {
+    await AsyncStorage.removeItem(KEYS.chat);
+  },
+
+  /** Wipes every stored row. Used by "Clear all data" in Profile. */
+  clearAll: async () => {
+    await AsyncStorage.multiRemove([KEYS.tasks, KEYS.events, KEYS.chat]);
+  },
 };

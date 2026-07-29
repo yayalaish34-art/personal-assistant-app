@@ -8,7 +8,7 @@ import { Plus, ArrowUpRight, Clock, Check } from 'lucide-react-native';
 
 import { Screen } from '../components/ui';
 import { AddSheet } from '../components/AddSheet';
-import { api, ApiError, type Task } from '../lib/api';
+import { api, type Task } from '../lib/api';
 import { parsePriority, isLive } from '../lib/tasks';
 import type { RootStackParamList } from '../navigation';
 import { colors, spacing, font, ACCENT_GRADIENT, PRIORITY_COLORS } from '../theme';
@@ -51,10 +51,7 @@ export default function JournalScreen() {
         }
       } catch (e) {
         if (active) {
-          setError(
-            e instanceof ApiError && e.isAuthError
-              ? 'Sign in required — open Profile to connect your account.'
-              : (e as Error).message,
+          setError( (e as Error).message,
           );
         }
       }

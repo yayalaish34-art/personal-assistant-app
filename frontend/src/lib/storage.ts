@@ -1,71 +1,21 @@
 import AsyncStorage from '@react-native-async-storage/async-storage';
-import Constants from 'expo-constants';
-import { Platform } from 'react-native';
 
-// Thin typed wrapper around AsyncStorage for local device data
-// (settings, auth tokens, cached data).
+// Local preferences. Task and event data lives in lib/api.ts, which is also
+// AsyncStorage-backed — this file only holds settings.
+
 const KEYS = {
   settings: '@pa/settings',
   entryCount: '@pa/entryCount',
-  auth: '@pa/auth',
 } as const;
 
 export type Settings = {
   displayName: string;
-  apiBaseUrl: string;
   notifications: boolean;
 };
 
-const API_PORT = 5000;
-
-/** The deployed backend. Reachable from anywhere — no Wi-Fi requirement. */
-export const REMOTE_API_URL =
-  'https://personal-assistant-api-production-618a.up.railway.app';
-
-/**
- * Local dev server, derived from whatever host served the bundle.
- *
- * On a physical device `localhost` resolves to the phone itself, so a hardcoded
- * default can never reach the dev machine. Expo exposes the host it served the
- * bundle from, and that is by definition an address the device can reach — so
- * reuse its hostname and swap the port.
- */
-export function localApiBaseUrl(): string {
-  if (Platform.OS === 'web') return `http://localhost:${API_PORT}`;
-
-  // hostUri is 'host:port'; expoConfig.hostUri is the SDK 50+ location.
-  const hostUri =
-    Constants.expoConfig?.hostUri ??
-    (Constants.expoGoConfig as { debuggerHost?: string } | undefined)?.debuggerHost;
-  const host = hostUri?.split(':')[0];
-
-  return host ? `http://${host}:${API_PORT}` : `http://localhost:${API_PORT}`;
-}
-
-// The hosted backend is the default: it needs no local server and works off
-// the home network. Switch to Local in Profile when developing against
-// backend changes.
-function defaultApiBaseUrl(): string {
-  return REMOTE_API_URL;
-}
-
 export const defaultSettings: Settings = {
   displayName: '',
-  apiBaseUrl: defaultApiBaseUrl(),
   notifications: true,
-};
-
-/** Tokens from POST /auth/google|apple, plus the user row it returned. */
-export type AuthSession = {
-  accessToken: string;
-  refreshToken: string;
-  user: {
-    id: string;
-    email: string;
-    name: string;
-    language: string;
-    timezone: string;
-  };
 };
 
 async function getJSON<T>(key: string, fallback: T): Promise<T> {
@@ -81,42 +31,20 @@ async function setJSON<T>(key: string, value: T): Promise<void> {
   try {
     await AsyncStorage.setItem(key, JSON.stringify(value));
   } catch {
-    // best-effort; ignore write failures on the skeleton
+    // Best-effort; a failed preference write shouldn't break the screen.
   }
 }
 
 export const storage = {
-  /**
-   * Saved settings, with one exception: a saved LAN `apiBaseUrl` is replaced by
-   * the freshly-derived one when the host no longer matches.
-   *
-   * DHCP hands the dev machine a new address regularly, and a URL frozen into
-   * storage by a previous "Save Settings" would keep pointing at the dead one —
-   * the app would look broken with no way to recover except retyping the IP on
-   * a phone keyboard. A remote (https) URL is always kept as-is; only private
-   * dev addresses are re-derived.
-   */
+  // Merged over the defaults so a key added later is still populated for
+  // installs that saved settings before it existed.
   async getSettings(): Promise<Settings> {
-    const saved = await getJSON<Settings>(KEYS.settings, defaultSettings);
-    // Only a stale LAN address is re-derived; a saved remote URL is kept.
-    const isLanUrl = (u: string) => /^http:\/\/(\d{1,3}\.){3}\d{1,3}:/.test(u);
-    const fresh = localApiBaseUrl();
-    if (isLanUrl(saved.apiBaseUrl) && isLanUrl(fresh) && saved.apiBaseUrl !== fresh) {
-      return { ...saved, apiBaseUrl: fresh };
-    }
-    return saved;
+    return {
+      ...defaultSettings,
+      ...(await getJSON<Partial<Settings>>(KEYS.settings, {})),
+    };
   },
   saveSettings: (s: Settings) => setJSON(KEYS.settings, s),
-
-  getSession: () => getJSON<AuthSession | null>(KEYS.auth, null),
-  saveSession: (s: AuthSession) => setJSON(KEYS.auth, s),
-  async clearSession(): Promise<void> {
-    try {
-      await AsyncStorage.removeItem(KEYS.auth);
-    } catch {
-      /* best-effort */
-    }
-  },
 
   async getEntryCount(): Promise<number> {
     return getJSON<number>(KEYS.entryCount, 0);

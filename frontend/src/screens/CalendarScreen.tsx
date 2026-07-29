@@ -29,7 +29,7 @@ import {
 
 import { Screen } from '../components/ui';
 import { AddSheet } from '../components/AddSheet';
-import { api, ApiError } from '../lib/api';
+import { api } from '../lib/api';
 import {
   parsePriority,
   statusOf,
@@ -137,10 +137,7 @@ export default function CalendarScreen() {
         }
       } catch (e) {
         if (active) {
-          setError(
-            e instanceof ApiError && e.isAuthError
-              ? 'Sign in required — open Profile to connect your account.'
-              : (e as Error).message,
+          setError( (e as Error).message,
           );
         }
       }

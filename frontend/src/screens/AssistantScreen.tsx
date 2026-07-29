@@ -18,7 +18,8 @@ import { MicButton } from '../components/MicButton';
 import { X, Send, Check, Sparkles } from 'lucide-react-native';
 
 import { Screen } from '../components/ui';
-import { api, ApiError, type ChatMessage } from '../lib/api';
+import { api, uuid, type ChatMessage } from '../lib/api';
+import { respondTo, confirmationFor } from '../lib/assistant';
 import type { RootStackParamList } from '../navigation';
 import { colors, spacing, font, ACCENT_GRADIENT } from '../theme';
 
@@ -27,7 +28,7 @@ type Nav = NativeStackNavigationProp<RootStackParamList, 'Assistant'>;
 /** Turns create_event/create_task arguments into a readable confirmation line. */
 function describeAction(tool: string, args: Record<string, unknown>): string {
   const title = typeof args.title === 'string' ? args.title : 'Untitled';
-  const when = args.starts_at ?? args.due_at;
+  const when = args.startsAt ?? args.dueAt;
   if (typeof when === 'string') {
     const d = new Date(when);
     if (!Number.isNaN(d.getTime())) {
@@ -70,11 +71,7 @@ export default function AssistantScreen() {
   }, []);
 
   const failed = (e: unknown) => {
-    const msg =
-      e instanceof ApiError && e.status === 429
-        ? `Too many requests — try again in ${e.retryAfter ?? 60}s.`
-        : (e as Error).message;
-    Alert.alert('Assistant unavailable', msg);
+    Alert.alert('Something went wrong', (e as Error).message);
   };
 
   const send = async (text: string) => {
@@ -82,8 +79,7 @@ export default function AssistantScreen() {
     if (!body || sending) return;
     setDraft('');
     setSending(true);
-    // Show the user's line immediately; the server echoes it back in `messages`
-    // but waiting for the round trip makes the UI feel broken.
+    // Render the user's line before parsing so the bubble appears instantly.
     setMessages((prev) => [
       ...prev,
       {
@@ -98,9 +94,9 @@ export default function AssistantScreen() {
     ]);
     requestAnimationFrame(() => scrollRef.current?.scrollToEnd({ animated: true }));
     try {
-      const { messages: incoming } = await api.sendMessage(body);
-      // Drop the server's copy of our own message to avoid showing it twice.
-      append(incoming.filter((m) => m.role !== 'user'));
+      const replies = await respondTo(body);
+      append(replies);
+      await api.appendChat(replies);
     } catch (e) {
       failed(e);
     } finally {
@@ -112,12 +108,47 @@ export default function AssistantScreen() {
     Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
     setSending(true);
     try {
-      const { messages: incoming } = await api.confirmAction(messageId);
-      // The server clears pendingAction on the original message once executed.
+      const target = messages.find((m) => m.id === messageId);
+      const action = target?.pendingAction;
+      if (!action) return;
+
+      const args = action.arguments as Record<string, string | undefined>;
+      const updatedAt = new Date().toISOString();
+
+      if (action.tool === 'create_event' && args.startsAt) {
+        await api.createEvent({
+          id: uuid(),
+          title: args.title ?? 'Untitled',
+          startsAt: args.startsAt,
+          endsAt: args.endsAt,
+          reminderMinutesBefore: 15,
+          updatedAt,
+        });
+      } else {
+        await api.createTask({
+          id: uuid(),
+          title: args.title ?? 'Untitled',
+          dueAt: args.dueAt,
+          updatedAt,
+        });
+      }
+
+      // Clear the proposal so it can't be confirmed twice.
       setMessages((prev) =>
         prev.map((m) => (m.id === messageId ? { ...m, pendingAction: null } : m)),
       );
-      append(incoming.filter((m) => m.role !== 'user'));
+
+      const done: ChatMessage = {
+        id: uuid(),
+        role: 'assistant',
+        content: confirmationFor(action.tool, action.arguments),
+        toolCalls: null,
+        toolCallId: null,
+        pendingAction: null,
+        createdAt: updatedAt,
+      };
+      append([done]);
+      await api.appendChat([done]);
     } catch (e) {
       failed(e);
     } finally {

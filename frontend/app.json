@@ -12,12 +12,14 @@
       "backgroundColor": "#0f172a"
     },
     "ios": {
-      "supportsTablet": true
+      "supportsTablet": true,
+      "bundleIdentifier": "com.yayalaish34art.personalassistant"
     },
     "android": {
       "adaptiveIcon": {
         "backgroundColor": "#0f172a"
-      }
+      },
+      "package": "com.yayalaish34art.personalassistant"
     },
     "web": {
       "bundler": "metro"

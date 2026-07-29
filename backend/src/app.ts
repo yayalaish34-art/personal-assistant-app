@@ -19,6 +19,7 @@ import { agendaRouter } from './modules/agenda/router.js';
 import { devicesRouter } from './modules/devices/router.js';
 import { chatHistoryRouter } from './modules/chat/historyRouter.js';
 import { chatRouter } from './modules/chat/router.js';
+import { parseRouter } from './modules/chat/parseRouter.js';
 import { speechRouter } from './modules/speech/router.js';
 
 const require = createRequire(import.meta.url);
@@ -55,6 +56,9 @@ export function createApp(): Express {
   app.use('/', devicesRouter);
   app.use('/', chatHistoryRouter);
   app.use('/', chatRouter);
+  // Stateless language parsing for the local-first client; no auth, since it
+  // reads and writes nothing.
+  app.use('/', parseRouter);
   app.use('/', speechRouter);
 
   app.use(notFoundHandler);

@@ -22,12 +22,13 @@ import {
   Flame,
   CalendarDays,
   Pencil,
-  Wifi,
+  Database,
+  Trash2,
 } from 'lucide-react-native';
 
 import { Screen } from '../components/ui';
 import { storage, defaultSettings, Settings } from '../lib/storage';
-import { api, ApiError, type Task, type Event } from '../lib/api';
+import { api, type Task, type Event } from '../lib/api';
 import { toDateStr, isLive } from '../lib/tasks';
 import { colors, spacing, font, ACCENT_GRADIENT } from '../theme';
 
@@ -98,7 +99,6 @@ function GlassCard({
 
 export default function SettingsScreen() {
   const [settings, setSettings] = useState<Settings>(defaultSettings);
-  const [testing, setTesting] = useState(false);
   const [events, setEvents] = useState<Event[]>([]);
   const [tasks, setTasks] = useState<Task[]>([]);
   const [online, setOnline] = useState<boolean | null>(null);
@@ -127,7 +127,7 @@ export default function SettingsScreen() {
       } catch (e) {
         if (!active) return;
         setOnline(false);
-        setNeedsAuth(e instanceof ApiError && e.isAuthError);
+        setNeedsAuth(false);
       }
     })();
     return () => {
@@ -162,37 +162,27 @@ export default function SettingsScreen() {
   const save = async () => {
     Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
     await storage.saveSettings(settings);
-    // The display name lives on the server too — push it if we have a session.
-    try {
-      const session = await storage.getSession();
-      if (session && settings.displayName.trim()) {
-        await api.updateMe({ name: settings.displayName.trim() });
-      }
-      Alert.alert('Saved', 'Your settings were updated.');
-    } catch (e) {
-      Alert.alert(
-        'Saved locally',
-        `Couldn’t sync your name to the server: ${(e as Error).message}`,
-      );
+    // Mirror the name onto the device profile so other screens can read it.
+    if (settings.displayName.trim()) {
+      await api.updateMe({ name: settings.displayName.trim() });
     }
+    Alert.alert('Saved', 'Your settings were updated.');
   };
 
 
-  const testConnection = async () => {
-    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
-    setTesting(true);
-    // Persist first so the API client reads the new base URL.
-    await storage.saveSettings(settings);
-    try {
-      await api.health();
-      setOnline(true);
-      Alert.alert('Connected', 'The server is responding.');
-    } catch (e) {
-      setOnline(false);
-      Alert.alert('Unavailable', (e as Error).message);
-    } finally {
-      setTesting(false);
-    }
+  const clearData = () => {
+    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
+    Alert.alert('Clear all data', 'Deletes every task and event on this device. This cannot be undone.', [
+      { text: 'Cancel', style: 'cancel' },
+      {
+        text: 'Delete everything',
+        style: 'destructive',
+        onPress: async () => {
+          await api.clearAll();
+          load();
+        },
+      },
+    ]);
   };
 
   return (
@@ -239,20 +229,11 @@ export default function SettingsScreen() {
                 <View
                   style={[
                     styles.statusDot,
-                    {
-                      backgroundColor:
-                        needsAuth ? '#FFD9A0' : online === false ? '#FFB4B7' : '#C6E265',
-                    },
+                    { backgroundColor: '#C6E265' },
                   ]}
                 />
                 <Text style={styles.statusText}>
-                  {needsAuth
-                    ? 'Sign in required'
-                    : online === false
-                      ? 'Offline'
-                      : online
-                        ? 'Synced'
-                        : 'Connecting…'}
+                  On this device
                 </Text>
               </View>
             </View>
@@ -344,38 +325,23 @@ export default function SettingsScreen() {
           </View>
         </GlassCard>
 
-        {/* ── Server connection ── */}
+        {/* ── Local data ── */}
         <GlassCard>
           <View style={styles.cardHeaderRow}>
             <IconSquare>
-              <Globe color={colors.primary} size={18} />
+              <Database color={colors.primary} size={18} />
             </IconSquare>
             <View style={{ flex: 1 }}>
-              <Text style={styles.cardTitle}>Server Connection</Text>
-              <Text style={styles.mutedText}>Where the app reads and writes data</Text>
+              <Text style={styles.cardTitle}>Storage</Text>
+              <Text style={styles.mutedText}>
+                Everything is kept on this device. Nothing is uploaded.
+              </Text>
             </View>
           </View>
-          <TextInput
-            value={settings.apiBaseUrl}
-            onChangeText={(apiBaseUrl) => setSettings((s) => ({ ...s, apiBaseUrl }))}
-            placeholder="http://localhost:5000"
-            placeholderTextColor={colors.textMuted}
-            autoCapitalize="none"
-            autoCorrect={false}
-            style={styles.input}
-          />
-          <Text style={[styles.mutedText, { marginTop: 10 }]}>
-            On a physical device, replace localhost with your computer{'’'}s IP (e.g.
-            http://192.168.1.10:5000).
-          </Text>
-          <Pressable
-            onPress={testConnection}
-            disabled={testing}
-            style={[styles.ghostBtn, testing && { opacity: 0.6 }]}
-          >
-            <Wifi color={colors.primary} size={16} />
-            <Text style={styles.ghostBtnText}>
-              {testing ? 'Testing…' : 'Test Connection'}
+          <Pressable onPress={clearData} style={styles.ghostBtn}>
+            <Trash2 color={colors.danger} size={16} />
+            <Text style={[styles.ghostBtnText, { color: colors.danger }]}>
+              Clear all data
             </Text>
           </Pressable>
         </GlassCard>

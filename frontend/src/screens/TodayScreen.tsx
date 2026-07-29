@@ -9,7 +9,7 @@ import { Bell, Plus, ArrowUpRight, Clock, ClipboardList } from 'lucide-react-nat
 import { Screen } from '../components/ui';
 import { AddSheet } from '../components/AddSheet';
 import { ProgressRing } from '../components/ProgressRing';
-import { api, ApiError } from '../lib/api';
+import { api } from '../lib/api';
 import { storage } from '../lib/storage';
 import {
   parsePriority,
@@ -98,8 +98,7 @@ export default function TodayScreen() {
     let active = true;
     (async () => {
       const settings = await storage.getSettings();
-      const session = await storage.getSession();
-      if (active) setName(session?.user.name || settings.displayName);
+      if (active) setName(settings.displayName);
       try {
         // /agenda?date= resolves the day in the user's timezone server-side and
         // returns both events and tasks due that day.
@@ -111,7 +110,7 @@ export default function TodayScreen() {
       } catch (err) {
         if (!active) return;
         setOnline(false);
-        setNeedsAuth(err instanceof ApiError && err.isAuthError);
+        setNeedsAuth(false);
       }
     })();
     return () => {

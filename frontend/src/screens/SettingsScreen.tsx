@@ -560,7 +560,7 @@ const styles = StyleSheet.create({
     borderRadius: 14,
     paddingHorizontal: 14,
     paddingVertical: 15,
-    paddingRight: 38,
+    paddingEnd: 38,
     fontSize: 15,
     ...font(400),
     color: colors.text,

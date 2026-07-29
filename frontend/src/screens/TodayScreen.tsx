@@ -23,6 +23,7 @@ import {
 } from '../lib/tasks';
 import type { RootStackParamList } from '../navigation';
 import { colors, spacing, font, ACCENT_GRADIENT, PRIORITY_COLORS } from '../theme';
+import { t } from '../lib/i18n';
 
 type Nav = NativeStackNavigationProp<RootStackParamList>;
 
@@ -45,9 +46,9 @@ function initialsOf(name: string): string {
 
 function greetingNow(): string {
   const h = new Date().getHours();
-  if (h < 12) return 'Good Morning';
-  if (h < 17) return 'Good Afternoon';
-  return 'Good Evening';
+  if (h < 12) return t('today.greeting.morning');
+  if (h < 17) return t('today.greeting.afternoon');
+  return t('today.greeting.evening');
 }
 
 // Decorative collaborator stack, as in the mockup.
@@ -128,9 +129,9 @@ export default function TodayScreen() {
   }, [items]);
 
   const chips: { key: TaskStatus; label: string }[] = [
-    { key: 'todo', label: 'To Do' },
-    { key: 'inprogress', label: 'In Progress' },
-    { key: 'done', label: 'Done' },
+    { key: 'todo', label: t('today.filter.todo') },
+    { key: 'inprogress', label: t('today.filter.inprogress') },
+    { key: 'done', label: t('today.filter.done') },
   ];
   const countOf = (s: TaskStatus) => items.filter((i) => statusOf(i, now) === s).length;
   const visible = filter === 'all' ? items : items.filter((i) => statusOf(i, now) === filter);
@@ -141,10 +142,10 @@ export default function TodayScreen() {
   };
 
   const confirmDelete = (item: AgendaItem) => {
-    Alert.alert('Delete', `Delete "${item.title}"?`, [
-      { text: 'Cancel', style: 'cancel' },
+    Alert.alert(t('common.deleteTitle'), t('common.deleteBody', { title: item.title }), [
+      { text: t('common.cancel'), style: 'cancel' },
       {
-        text: 'Delete',
+        text: t('common.delete'),
         style: 'destructive',
         onPress: async () => {
           try {
@@ -153,7 +154,7 @@ export default function TodayScreen() {
             else await api.deleteEvent(item.id);
             load();
           } catch (err) {
-            Alert.alert('Error', (err as Error).message);
+            Alert.alert(t('common.error'), (err as Error).message);
           }
         },
       },
@@ -169,9 +170,9 @@ export default function TodayScreen() {
             <Text style={styles.profileInitials}>{initialsOf(name || 'You')}</Text>
             <Image source={{ uri: PROFILE_PHOTO_URI }} style={styles.profilePhoto} />
           </View>
-          <View style={{ flex: 1, marginLeft: 12 }}>
+          <View style={{ flex: 1, marginStart: 12 }}>
             <Text style={styles.greeting}>{greetingNow()}</Text>
-            <Text style={styles.greetingName}>{name || 'Set your name in Profile'}</Text>
+            <Text style={styles.greetingName}>{name || t('today.setName')}</Text>
           </View>
           <Pressable onPress={openAddTask}>
             <LinearGradient
@@ -185,7 +186,7 @@ export default function TodayScreen() {
           </Pressable>
           <Pressable
             onPress={() => Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light)}
-            style={[styles.circleBtn, styles.circleBtnWhite, { marginLeft: 10 }]}
+            style={[styles.circleBtn, styles.circleBtnWhite, { marginStart: 10 }]}
           >
             <Bell color={colors.text} size={22} />
           </Pressable>
@@ -193,8 +194,8 @@ export default function TodayScreen() {
 
         {/* ── Headline: light first line, medium second line ── */}
         <Text style={styles.headline}>
-          Let{'’'}s Make{'\n'}
-          <Text style={styles.headlineStrong}>Today Productive</Text>
+          {t('today.headline.line1')}{'\n'}
+          <Text style={styles.headlineStrong}>{t('today.headline.line2')}</Text>
         </Text>
 
         {/* ── Today's Progress card: layered lilac glass ── */}
@@ -218,7 +219,7 @@ export default function TodayScreen() {
             style={styles.progressCardGlow}
             pointerEvents="none"
           />
-          <Text style={styles.progressTitle}>Today{'’'}s Progress</Text>
+          <Text style={styles.progressTitle}>{t('today.progress.title')}</Text>
           <View style={styles.progressBody}>
             <ProgressRing progress={stats.progress} />
             <LinearGradient
@@ -228,19 +229,19 @@ export default function TodayScreen() {
               style={styles.progressDivider}
             />
             <View style={{ flex: 1, gap: 14 }}>
-              <StatRow value={stats.total} label="Total Task" />
-              <StatRow value={stats.done} label="Completed Task" />
-              <StatRow value={stats.pending} label="Pending Task" />
+              <StatRow value={stats.total} label={t('today.progress.total')} />
+              <StatRow value={stats.done} label={t('today.progress.completed')} />
+              <StatRow value={stats.pending} label={t('today.progress.pending')} />
             </View>
           </View>
         </LinearGradient>
 
         {/* ── Today's Tasks ── */}
         <View style={styles.sectionRow}>
-          <Text style={styles.sectionTitle}>Today{'’'}s Tasks</Text>
+          <Text style={styles.sectionTitle}>{t('today.tasks.title')}</Text>
           <Pressable onPress={() => setFilter('all')}>
             <Text style={[styles.viewAll, filter === 'all' && { color: colors.primary }]}>
-              View All
+              {t('today.tasks.viewAll')}
             </Text>
           </Pressable>
         </View>
@@ -281,9 +282,9 @@ export default function TodayScreen() {
 
         {visible.length === 0 ? (
           <View style={styles.taskCard}>
-            <Text style={styles.taskTitle}>No tasks here</Text>
+            <Text style={styles.taskTitle}>{t('today.empty.title')}</Text>
             <Text style={styles.taskEmptyText}>
-              Tap the + button to add your first task for today.
+              {t('today.empty.body')}
             </Text>
           </View>
         ) : (
@@ -296,7 +297,7 @@ export default function TodayScreen() {
                   <View style={[styles.priorityPill, { backgroundColor: pc.bg }]}>
                     <View style={[styles.priorityDot, { backgroundColor: pc.color }]} />
                     <Text style={[styles.priorityText, { color: pc.color }]}>
-                      {(priority ?? 'High') + ' Priority'}
+                      {t('today.priority', { level: priority ?? 'High' })}
                     </Text>
                   </View>
                   <View style={styles.arrowBtn}>
@@ -308,7 +309,7 @@ export default function TodayScreen() {
                   <View style={styles.taskTimeRow}>
                     <Clock color={colors.textMuted} size={15} />
                     <Text style={styles.taskTime}>
-                      {e.time ? `${to12h(e.time)} - ${to12h(plusHour(e.time))}` : 'All day'}
+                      {e.time ? `${to12h(e.time)} - ${to12h(plusHour(e.time))}` : t('today.allDay')}
                     </Text>
                   </View>
                   <AvatarStack />
@@ -417,8 +418,8 @@ const styles = StyleSheet.create({
     backgroundColor: '#FFFFFF',
     borderRadius: 50,
     paddingVertical: 10,
-    paddingLeft: 8,
-    paddingRight: 18,
+    paddingStart: 8,
+    paddingEnd: 18,
   },
   chipActive: { backgroundColor: colors.lime },
   chipCount: {

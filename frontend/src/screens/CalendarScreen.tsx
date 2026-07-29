@@ -40,15 +40,16 @@ import {
 } from '../lib/tasks';
 import type { RootStackParamList } from '../navigation';
 import { colors, spacing, font, ACCENT_GRADIENT } from '../theme';
+import { t } from '../lib/i18n';
 
 type Nav = NativeStackNavigationProp<RootStackParamList>;
 
 const AVATAR_COLORS = ['#F2A0B5', '#9D8BFA', '#F1C46B'];
 
 const STATUS_CHIP = {
-  inprogress: { bg: '#ECE7FE', color: '#7B68F0', label: 'In Progress' },
-  todo: { bg: '#E5EFFE', color: '#3D7BF7', label: 'Upcoming' },
-  done: { bg: '#E8F5EE', color: '#3EA06B', label: 'Done' },
+  inprogress: { bg: '#ECE7FE', color: '#7B68F0', labelKey: 'calendar.status.inprogress' },
+  todo: { bg: '#E5EFFE', color: '#3D7BF7', labelKey: 'calendar.status.todo' },
+  done: { bg: '#E8F5EE', color: '#3EA06B', labelKey: 'calendar.status.done' },
 } as const;
 
 const WEEKDAYS = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'] as const;
@@ -190,10 +191,10 @@ export default function CalendarScreen() {
   };
 
   const confirmDelete = (evt: AgendaItem) => {
-    Alert.alert('Delete task', `Delete "${evt.title}"?`, [
-      { text: 'Cancel', style: 'cancel' },
+    Alert.alert(t('common.deleteTitle'), t('common.deleteBody', { title: evt.title }), [
+      { text: t('common.cancel'), style: 'cancel' },
       {
-        text: 'Delete',
+        text: t('common.delete'),
         style: 'destructive',
         onPress: async () => {
           try {
@@ -202,7 +203,7 @@ export default function CalendarScreen() {
             else await api.deleteEvent(evt.id);
             load();
           } catch (e) {
-            Alert.alert('Error', (e as Error).message);
+            Alert.alert(t('common.error'), (e as Error).message);
           }
         },
       },
@@ -247,7 +248,7 @@ export default function CalendarScreen() {
           </Pressable>
           <Pressable
             onPress={() => Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light)}
-            style={[styles.circleWhite, { marginLeft: 10 }]}
+            style={[styles.circleWhite, { marginStart: 10 }]}
           >
             <View style={styles.dotsRow}>
               {[0, 1, 2].map((i) => (
@@ -282,7 +283,7 @@ export default function CalendarScreen() {
           >
             <CalendarIcon color={monthOpen ? '#FFFFFF' : colors.text} size={17} />
             <Text style={[styles.calendarPillText, monthOpen && { color: '#FFFFFF' }]}>
-              Calendar
+              {t('calendar.button')}
             </Text>
             <ChevronDown
               color={monthOpen ? '#FFFFFF' : colors.textMuted}
@@ -388,9 +389,9 @@ export default function CalendarScreen() {
         <View style={styles.filterRow}>
           {(
             [
-              { key: 'all', label: 'All', Icon: null },
-              { key: 'work', label: 'Work', Icon: Briefcase },
-              { key: 'personal', label: 'Personal', Icon: User },
+              { key: 'all', label: t('calendar.filter.all'), Icon: null },
+              { key: 'work', label: t('calendar.filter.work'), Icon: Briefcase },
+              { key: 'personal', label: t('calendar.filter.personal'), Icon: User },
             ] as const
           ).map(({ key, label, Icon }) => {
             const active = filter === key;
@@ -485,7 +486,7 @@ export default function CalendarScreen() {
                           </View>
                           <View style={[styles.statusChip, { backgroundColor: st.bg }]}>
                             <Text style={[styles.statusChipText, { color: st.color }]}>
-                              {st.label}
+                              {t(st.labelKey)}
                             </Text>
                           </View>
                         </View>
@@ -530,7 +531,7 @@ const styles = StyleSheet.create({
     borderRadius: 50,
     paddingHorizontal: 16,
     paddingVertical: 14,
-    marginLeft: 10,
+    marginStart: 10,
   },
   datePillText: { ...font(500), fontSize: 14, color: colors.text },
   dotsRow: { flexDirection: 'row', gap: 3 },
@@ -556,8 +557,8 @@ const styles = StyleSheet.create({
     gap: 7,
     backgroundColor: '#FFFFFF',
     borderRadius: 50,
-    paddingLeft: 16,
-    paddingRight: 13,
+    paddingStart: 16,
+    paddingEnd: 13,
     paddingVertical: 15,
     shadowColor: '#3F2E64',
     shadowOffset: { width: 0, height: 3 },
@@ -709,7 +710,7 @@ const styles = StyleSheet.create({
     backgroundColor: '#FFFFFF',
     borderRadius: 22,
     padding: spacing.md + 2,
-    marginLeft: 6,
+    marginStart: 6,
     shadowColor: '#3F2E64',
     shadowOffset: { width: 0, height: 6 },
     shadowOpacity: 0.05,

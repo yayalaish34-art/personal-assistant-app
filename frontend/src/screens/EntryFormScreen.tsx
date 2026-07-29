@@ -19,6 +19,7 @@ import { storage } from '../lib/storage';
 import { withPriority, toDateStr, toUtcIso, nowIso, plusHour } from '../lib/tasks';
 import type { RootStackParamList } from '../navigation';
 import { colors, spacing, font, PRIORITY_COLORS, type Priority } from '../theme';
+import { t } from '../lib/i18n';
 
 type Nav = NativeStackNavigationProp<RootStackParamList, 'EntryForm'>;
 type Route = RouteProp<RootStackParamList, 'EntryForm'>;
@@ -60,7 +61,7 @@ export default function EntryFormScreen() {
 
   const save = async () => {
     if (!title.trim()) {
-      Alert.alert('Missing title', 'Please enter a title.');
+      Alert.alert(t('form.missingTitle'), t('form.missingTitleBody'));
       return;
     }
     setSaving(true);
@@ -82,7 +83,7 @@ export default function EntryFormScreen() {
         });
       } else {
         if (!date.trim()) {
-          Alert.alert('Missing date', 'Enter a date as YYYY-MM-DD.');
+          Alert.alert(t('form.missingDate'), t('form.missingDateBody'));
           setSaving(false);
           return;
         }
@@ -102,7 +103,7 @@ export default function EntryFormScreen() {
       Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
       navigation.goBack();
     } catch (e) {
-      Alert.alert('Couldn’t save', (e as Error).message);
+      Alert.alert(t('form.saveFailed'), (e as Error).message);
     } finally {
       setSaving(false);
     }
@@ -121,28 +122,28 @@ export default function EntryFormScreen() {
           <Pressable onPress={close} style={styles.circleWhite}>
             <X color={colors.text} size={20} />
           </Pressable>
-          <Text style={styles.headerTitle}>{isTask ? 'Add New Task' : 'Add New Event'}</Text>
+          <Text style={styles.headerTitle}>{isTask ? t('form.newTask') : t('form.newEvent')}</Text>
           <Pressable onPress={save} style={styles.circleWhite}>
             <Check color={colors.text} size={20} />
           </Pressable>
         </View>
 
         {/* ── Title ── */}
-        <Text style={styles.label}>{isTask ? 'Task Title' : 'Event Title'}</Text>
+        <Text style={styles.label}>{isTask ? t('form.taskTitle') : t('form.eventTitle')}</Text>
         <TextInput
           value={title}
           onChangeText={setTitle}
-          placeholder={isTask ? 'Finish landing page design' : 'Meeting with client'}
+          placeholder={isTask ? t('form.taskPlaceholder') : t('form.eventPlaceholder')}
           placeholderTextColor={colors.textMuted}
           style={styles.input}
         />
 
         {/* ── Description ── */}
-        <Text style={styles.label}>Description</Text>
+        <Text style={styles.label}>{t('form.description')}</Text>
         <TextInput
           value={body}
           onChangeText={setBody}
-          placeholder="Design the new landing page for the product launch."
+          placeholder={t('form.descriptionPlaceholder')}
 
           placeholderTextColor={colors.textMuted}
           style={[styles.input, styles.inputMultiline]}
@@ -153,7 +154,7 @@ export default function EntryFormScreen() {
         {(
           <>
             {/* ── Due Date & time — dueAt for tasks, startsAt for events ── */}
-            <Text style={styles.label}>Due Date {'&'} time</Text>
+            <Text style={styles.label}>{t('form.dueDate')}</Text>
             <View style={styles.rowGap}>
               <View style={{ flex: 1.4 }}>
                 <IconInput
@@ -178,7 +179,7 @@ export default function EntryFormScreen() {
             </View>
 
             {/* ── Priority ── */}
-            <Text style={styles.label}>Priority</Text>
+            <Text style={styles.label}>{t('form.priority')}</Text>
             <View style={styles.rowGap}>
               {(Object.keys(PRIORITY_COLORS) as Priority[]).map((p) => {
                 const pc = PRIORITY_COLORS[p];
@@ -203,7 +204,7 @@ export default function EntryFormScreen() {
             </View>
 
             {/* ── Project ── */}
-            <Text style={styles.label}>Project</Text>
+            <Text style={styles.label}>{t('form.project')}</Text>
             <Pressable
               onPress={() => {
                 Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
@@ -218,7 +219,7 @@ export default function EntryFormScreen() {
             </Pressable>
 
             {/* ── Tags ── */}
-            <Text style={styles.label}>Tags</Text>
+            <Text style={styles.label}>{t('form.tags')}</Text>
             <View style={styles.tagsRow}>
               {tags.map((t) => (
                 <Pressable
@@ -268,7 +269,7 @@ export default function EntryFormScreen() {
 
         <View style={{ height: spacing.lg }} />
         <Button
-          label={isTask ? 'Create Task' : 'Create Event'}
+          label={isTask ? t('form.createTask') : t('form.createEvent')}
           onPress={save}
           loading={saving}
         />

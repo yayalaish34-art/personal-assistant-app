@@ -22,6 +22,7 @@ import { api, uuid, type ChatMessage } from '../lib/api';
 import { respondTo, confirmationFor } from '../lib/assistant';
 import type { RootStackParamList } from '../navigation';
 import { colors, spacing, font, ACCENT_GRADIENT } from '../theme';
+import { t } from '../lib/i18n';
 
 type Nav = NativeStackNavigationProp<RootStackParamList, 'Assistant'>;
 
@@ -45,8 +46,8 @@ function describeAction(tool: string, args: Record<string, unknown>): string {
 }
 
 const ACTION_LABEL: Record<string, string> = {
-  create_event: 'Add this event?',
-  create_task: 'Add this task?',
+  create_event: 'assistant.addEvent',
+  create_task: 'assistant.addTask',
   update_event: 'Update this event?',
   update_task: 'Update this task?',
   delete_event: 'Delete this event?',
@@ -80,7 +81,7 @@ export default function AssistantScreen() {
   }, []);
 
   const failed = (e: unknown) => {
-    Alert.alert('Something went wrong', (e as Error).message);
+    Alert.alert(t('assistant.failed'), (e as Error).message);
   };
 
   const send = async (text: string) => {
@@ -176,9 +177,9 @@ export default function AssistantScreen() {
         <View style={styles.badge}>
           <Sparkles color={colors.primary} size={19} />
         </View>
-        <View style={{ flex: 1, marginLeft: 12 }}>
-          <Text style={styles.headerTitle}>Assistant</Text>
-          <Text style={styles.headerSub}>Ask for a task or an event</Text>
+        <View style={{ flex: 1, marginStart: 12 }}>
+          <Text style={styles.headerTitle}>{t('assistant.title')}</Text>
+          <Text style={styles.headerSub}>{t('assistant.subtitle')}</Text>
         </View>
         <Pressable
           onPress={() => {
@@ -200,11 +201,11 @@ export default function AssistantScreen() {
       >
         {messages.length === 0 ? (
           <View style={styles.emptyCard}>
-            <Text style={styles.emptyTitle}>Try saying</Text>
+            <Text style={styles.emptyTitle}>{t('assistant.trySaying')}</Text>
             {[
-              'Remind me to call the dentist tomorrow at 10',
-              'Meeting with Maya on Thursday at 2pm',
-              'Add a task to write the release notes',
+              t('assistant.example1'),
+              t('assistant.example2'),
+              t('assistant.example3'),
             ].map((s) => (
               <Pressable key={s} onPress={() => send(s)} style={styles.suggestion}>
                 <Text style={styles.suggestionText}>{s}</Text>
@@ -234,7 +235,7 @@ export default function AssistantScreen() {
             return (
               <View key={m.id} style={styles.toolRow}>
                 <Check color="#3EA06B" size={15} />
-                <Text style={styles.toolText}>Done</Text>
+                <Text style={styles.toolText}>{t('assistant.done')}</Text>
               </View>
             );
           }
@@ -250,7 +251,7 @@ export default function AssistantScreen() {
               {m.pendingAction ? (
                 <View style={styles.actionCard}>
                   <Text style={styles.actionLabel}>
-                    {ACTION_LABEL[m.pendingAction.tool] ?? 'Confirm this?'}
+                    {t(ACTION_LABEL[m.pendingAction.tool] ?? 'assistant.addTask')}
                   </Text>
                   <Text style={styles.actionBody}>
                     {describeAction(m.pendingAction.tool, m.pendingAction.arguments)}
@@ -264,7 +265,7 @@ export default function AssistantScreen() {
                       }
                       style={styles.dismissBtn}
                     >
-                      <Text style={styles.dismissText}>Not now</Text>
+                      <Text style={styles.dismissText}>{t('assistant.notNow')}</Text>
                     </Pressable>
                     <Pressable
                       onPress={() => confirm(m.id)}
@@ -278,7 +279,7 @@ export default function AssistantScreen() {
                         style={styles.confirmBtn}
                       >
                         <Check color="#fff" size={17} />
-                        <Text style={styles.confirmText}>Confirm</Text>
+                        <Text style={styles.confirmText}>{t('assistant.confirm')}</Text>
                       </LinearGradient>
                     </Pressable>
                   </View>
@@ -292,7 +293,7 @@ export default function AssistantScreen() {
           <View style={styles.thinkingRow}>
             <ActivityIndicator color={colors.primary} size="small" />
             <Text style={styles.thinkingText}>
-              {transcribing ? 'Transcribing…' : 'Thinking…'}
+              {transcribing ? t('assistant.transcribing') : t('assistant.thinking')}
             </Text>
           </View>
         ) : null}
@@ -304,7 +305,7 @@ export default function AssistantScreen() {
           ref={inputRef}
           value={draft}
           onChangeText={setDraft}
-          placeholder={isRecording ? 'Listening…' : 'Type a request…'}
+          placeholder={isRecording ? t('assistant.listening') : t('assistant.placeholder')}
           placeholderTextColor={colors.textMuted}
           style={styles.input}
           editable={!isRecording && !busy}
@@ -335,7 +336,7 @@ export default function AssistantScreen() {
       </View>
 
       {isRecording ? (
-        <Text style={styles.recordHint}>Tap the square when you’re done</Text>
+        <Text style={styles.recordHint}>{t('assistant.recordHint')}</Text>
       ) : Platform.OS === 'web' ? (
         <Text style={styles.recordHint}>
           Voice works best on a phone — typing works everywhere

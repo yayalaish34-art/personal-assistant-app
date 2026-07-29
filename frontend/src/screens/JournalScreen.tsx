@@ -11,6 +11,7 @@ import { api, type Task } from '../lib/api';
 import { parsePriority, isLive } from '../lib/tasks';
 import type { RootStackParamList } from '../navigation';
 import { colors, spacing, font, ACCENT_GRADIENT, PRIORITY_COLORS } from '../theme';
+import { t } from '../lib/i18n';
 
 type Nav = NativeStackNavigationProp<RootStackParamList>;
 
@@ -24,9 +25,9 @@ const PRIORITY_CHIP = {
 } as const;
 
 const FILTERS = [
-  { key: 'all', label: 'All' },
-  { key: 'open', label: 'Open' },
-  { key: 'done', label: 'Done' },
+  { key: 'all', labelKey: 'tasks.filter.all' },
+  { key: 'open', labelKey: 'tasks.filter.open' },
+  { key: 'done', labelKey: 'tasks.filter.done' },
 ] as const;
 
 type Filter = (typeof FILTERS)[number]['key'];
@@ -70,22 +71,22 @@ export default function JournalScreen() {
       });
       load();
     } catch (e) {
-      Alert.alert('Error', (e as Error).message);
+      Alert.alert(t('common.error'), (e as Error).message);
     }
   };
 
   const confirmDelete = (entry: Task) => {
-    Alert.alert('Delete task', `Delete "${entry.title}"?`, [
-      { text: 'Cancel', style: 'cancel' },
+    Alert.alert(t('common.deleteTitle'), t('common.deleteBody', { title: entry.title }), [
+      { text: t('common.cancel'), style: 'cancel' },
       {
-        text: 'Delete',
+        text: t('common.delete'),
         style: 'destructive',
         onPress: async () => {
           try {
             await api.deleteTask(entry.id);
             load();
           } catch (e) {
-            Alert.alert('Error', (e as Error).message);
+            Alert.alert(t('common.error'), (e as Error).message);
           }
         },
       },
@@ -107,7 +108,10 @@ export default function JournalScreen() {
           <>
             {/* ── Headline + add button ── */}
             <View style={styles.headerRow}>
-              <Text style={styles.headline}>My{'\n'}Journal</Text>
+              <Text style={styles.headline}>
+                {t('tasks.headline.line1')}{'\n'}
+                <Text style={styles.headlineStrong}>{t('tasks.headline.line2')}</Text>
+              </Text>
               <Pressable
                 onPress={() => {
                   Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
@@ -146,7 +150,7 @@ export default function JournalScreen() {
                     <View style={[styles.chipCount, active && styles.chipCountActive]}>
                       <Text style={styles.chipCountText}>{countOf(f.key)}</Text>
                     </View>
-                    <Text style={styles.chipLabel}>{f.label}</Text>
+                    <Text style={styles.chipLabel}>{t(f.labelKey)}</Text>
                   </Pressable>
                 );
               })}
@@ -156,10 +160,10 @@ export default function JournalScreen() {
         ListEmptyComponent={
           <View style={styles.card}>
             <Text style={styles.cardTitle}>
-              {error ? 'Couldn’t load tasks' : 'No tasks yet'}
+              {error ? t('tasks.error.title') : t('tasks.empty.title')}
             </Text>
             <Text style={styles.cardBody}>
-              {error ?? 'Tap + to add your first task.'}
+              {error ?? t('tasks.empty.body')}
             </Text>
           </View>
         }
@@ -206,7 +210,7 @@ export default function JournalScreen() {
                         hour: 'numeric',
                         minute: '2-digit',
                       })}`
-                    : 'No due date'}
+                    : t('tasks.noDue')}
                 </Text>
               </View>
             </Pressable>
@@ -248,8 +252,8 @@ const styles = StyleSheet.create({
     backgroundColor: '#FFFFFF',
     borderRadius: 50,
     paddingVertical: 10,
-    paddingLeft: 8,
-    paddingRight: 18,
+    paddingStart: 8,
+    paddingEnd: 18,
   },
   chipActive: { backgroundColor: colors.lime },
   chipCount: {

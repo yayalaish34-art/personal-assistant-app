@@ -12,8 +12,45 @@ import { uuid, type ChatMessage } from './api';
 // below. They handle the common phrasings so the feature degrades instead of
 // failing outright.
 
-/** Where the parsing endpoint lives. */
-const PARSE_URL = 'https://personal-assistant-api-production-618a.up.railway.app/parse';
+/** Where the AI endpoints live. */
+const API_BASE = 'https://personal-assistant-api-production-618a.up.railway.app';
+const PARSE_URL = `${API_BASE}/parse`;
+const TRANSCRIBE_URL = `${API_BASE}/transcribe`;
+
+/**
+ * Uploads a recording and returns what was said.
+ *
+ * Speech-to-text runs on the server because it needs the OpenAI key. The audio
+ * is streamed to the provider and not stored. Multipart is built by hand
+ * rather than through a JSON helper: setting Content-Type manually would drop
+ * the boundary fetch generates, and the upload would be rejected.
+ */
+export async function transcribe(uri: string): Promise<string> {
+  const form = new FormData();
+
+  if (uri.startsWith('blob:') || uri.startsWith('data:')) {
+    // Web: MediaRecorder hands back a blob URL.
+    const blob = await (await fetch(uri)).blob();
+    form.append('audio', blob, blob.type.includes('webm') ? 'recording.webm' : 'recording.m4a');
+  } else {
+    // Native: React Native's FormData takes a file descriptor object.
+    const name = uri.split('/').pop() || 'recording.m4a';
+    const ext = name.split('.').pop()?.toLowerCase() || 'm4a';
+    form.append('audio', {
+      uri,
+      name,
+      type: ext === 'webm' ? 'audio/webm' : 'audio/m4a',
+    } as unknown as Blob);
+  }
+
+  const res = await fetch(TRANSCRIBE_URL, { method: 'POST', body: form });
+  if (!res.ok) {
+    const body = await res.json().catch(() => null);
+    throw new Error(body?.error?.message ?? `Transcription failed (${res.status})`);
+  }
+  const { text } = (await res.json()) as { text: string };
+  return text;
+}
 
 type Proposal = {
   kind: 'task' | 'event' | 'clarify';

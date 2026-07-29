@@ -24,6 +24,7 @@ import {
   Pencil,
   Database,
   Trash2,
+  Languages,
 } from 'lucide-react-native';
 
 import { Screen } from '../components/ui';
@@ -31,6 +32,7 @@ import { storage, defaultSettings, Settings } from '../lib/storage';
 import { api, type Task, type Event } from '../lib/api';
 import { toDateStr, isLive } from '../lib/tasks';
 import { colors, spacing, font, ACCENT_GRADIENT } from '../theme';
+import { t, LANGUAGES, getLanguage, setLanguage, type Language } from '../lib/i18n';
 
 // Placeholder portrait, matching the Today header avatar.
 const PROFILE_PHOTO_URI = 'https://i.pravatar.cc/220?img=47';
@@ -103,6 +105,20 @@ export default function SettingsScreen() {
   const [tasks, setTasks] = useState<Task[]>([]);
   const [online, setOnline] = useState<boolean | null>(null);
   const [needsAuth, setNeedsAuth] = useState(false);
+  const [lang, setLang] = useState<Language>(getLanguage());
+
+  const pickLanguage = async (code: Language) => {
+    if (code === lang) return;
+    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+    const directionChanged = await setLanguage(code);
+    setLang(code);
+    if (directionChanged) {
+      // React Native reads the RTL flag once at startup, so an already-mounted
+      // tree keeps the old direction — the text would translate while the
+      // layout stayed mirrored the wrong way.
+      Alert.alert(t('profile.restartTitle'), t('profile.restartBody'));
+    }
+  };
 
   const load = useCallback(() => {
     let active = true;
@@ -166,16 +182,16 @@ export default function SettingsScreen() {
     if (settings.displayName.trim()) {
       await api.updateMe({ name: settings.displayName.trim() });
     }
-    Alert.alert('Saved', 'Your settings were updated.');
+    Alert.alert(t('profile.saved'), t('profile.savedBody'));
   };
 
 
   const clearData = () => {
     Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
-    Alert.alert('Clear all data', 'Deletes every task and event on this device. This cannot be undone.', [
-      { text: 'Cancel', style: 'cancel' },
+    Alert.alert(t('profile.clearConfirm'), t('profile.clearConfirmBody'), [
+      { text: t('common.cancel'), style: 'cancel' },
       {
-        text: 'Delete everything',
+        text: t('profile.deleteEverything'),
         style: 'destructive',
         onPress: async () => {
           await api.clearAll();
@@ -220,11 +236,11 @@ export default function SettingsScreen() {
                 <Image source={{ uri: PROFILE_PHOTO_URI }} style={styles.avatarPhoto} />
               </View>
             </View>
-            <View style={{ flex: 1, marginLeft: 14 }}>
+            <View style={{ flex: 1, marginStart: 14 }}>
               <Text style={styles.heroName} numberOfLines={1}>
-                {settings.displayName || 'Your name'}
+                {settings.displayName || t('profile.yourName')}
               </Text>
-              <Text style={styles.heroSub}>Personal workspace</Text>
+              <Text style={styles.heroSub}>{t('profile.workspace')}</Text>
               <View style={styles.statusPill}>
                 <View
                   style={[
@@ -242,7 +258,7 @@ export default function SettingsScreen() {
           {/* Completion bar */}
           <View style={styles.progressBlock}>
             <View style={styles.progressLabelRow}>
-              <Text style={styles.progressLabel}>Task completion</Text>
+              <Text style={styles.progressLabel}>{t('profile.completion')}</Text>
               <Text style={styles.progressPct}>{completion}%</Text>
             </View>
             <View style={styles.progressTrack}>
@@ -258,10 +274,10 @@ export default function SettingsScreen() {
           <View style={styles.heroDivider} />
 
           <View style={styles.heroStatsRow}>
-            <HeroStat Icon={ListTodo} value={stats.total} label="Tasks" />
-            <HeroStat Icon={CheckCircle2} value={stats.done} label="Done" />
-            <HeroStat Icon={Flame} value={stats.streak} label="Day streak" />
-            <HeroStat Icon={CalendarDays} value={stats.events} label="Events" />
+            <HeroStat Icon={ListTodo} value={stats.total} label={t('profile.stat.tasks')} />
+            <HeroStat Icon={CheckCircle2} value={stats.done} label={t('profile.stat.done')} />
+            <HeroStat Icon={Flame} value={stats.streak} label={t('profile.stat.streak')} />
+            <HeroStat Icon={CalendarDays} value={stats.events} label={t('profile.stat.events')} />
           </View>
         </LinearGradient>
 
@@ -272,14 +288,14 @@ export default function SettingsScreen() {
               <ListTodo color={colors.primary} size={17} />
             </View>
             <Text style={styles.tileValue}>{stats.open}</Text>
-            <Text style={styles.tileLabel}>Open tasks</Text>
+            <Text style={styles.tileLabel}>{t('profile.openTasks')}</Text>
           </GlassCard>
           <GlassCard style={styles.tile}>
             <View style={[styles.tileIcon, { backgroundColor: '#E5F6EC' }]}>
               <CheckCircle2 color="#3EA06B" size={17} />
             </View>
             <Text style={styles.tileValue}>{stats.done}</Text>
-            <Text style={styles.tileLabel}>Completed</Text>
+            <Text style={styles.tileLabel}>{t('profile.completed')}</Text>
           </GlassCard>
         </View>
 
@@ -289,13 +305,13 @@ export default function SettingsScreen() {
             <IconSquare>
               <User color={colors.primary} size={18} />
             </IconSquare>
-            <Text style={styles.cardTitle}>Display Name</Text>
+            <Text style={styles.cardTitle}>{t('profile.displayName')}</Text>
           </View>
           <View style={styles.inputWrap}>
             <TextInput
               value={settings.displayName}
               onChangeText={(displayName) => setSettings((s) => ({ ...s, displayName }))}
-              placeholder="Your name"
+              placeholder={t('profile.yourName')}
               placeholderTextColor={colors.textMuted}
               style={styles.input}
             />
@@ -310,8 +326,8 @@ export default function SettingsScreen() {
               <Bell color={colors.primary} size={18} />
             </IconSquare>
             <View style={{ flex: 1 }}>
-              <Text style={styles.cardTitle}>Notifications</Text>
-              <Text style={styles.mutedText}>Reminders for upcoming tasks</Text>
+              <Text style={styles.cardTitle}>{t('profile.notifications')}</Text>
+              <Text style={styles.mutedText}>{t('profile.notificationsBody')}</Text>
             </View>
             <Switch
               value={settings.notifications}
@@ -325,6 +341,35 @@ export default function SettingsScreen() {
           </View>
         </GlassCard>
 
+        {/* ── Language ── */}
+        <GlassCard>
+          <View style={styles.cardHeaderRow}>
+            <IconSquare>
+              <Languages color={colors.primary} size={18} />
+            </IconSquare>
+            <View style={{ flex: 1 }}>
+              <Text style={styles.cardTitle}>{t('profile.language')}</Text>
+              <Text style={styles.mutedText}>{t('profile.languageBody')}</Text>
+            </View>
+          </View>
+          <View style={styles.langGrid}>
+            {(Object.keys(LANGUAGES) as Language[]).map((code) => {
+              const active = code === lang;
+              return (
+                <Pressable
+                  key={code}
+                  onPress={() => pickLanguage(code)}
+                  style={[styles.langChip, active && styles.langChipActive]}
+                >
+                  <Text style={[styles.langChipText, active && { color: '#FFFFFF' }]}>
+                    {LANGUAGES[code].native}
+                  </Text>
+                </Pressable>
+              );
+            })}
+          </View>
+        </GlassCard>
+
         {/* ── Local data ── */}
         <GlassCard>
           <View style={styles.cardHeaderRow}>
@@ -332,16 +377,16 @@ export default function SettingsScreen() {
               <Database color={colors.primary} size={18} />
             </IconSquare>
             <View style={{ flex: 1 }}>
-              <Text style={styles.cardTitle}>Storage</Text>
+              <Text style={styles.cardTitle}>{t('profile.storage')}</Text>
               <Text style={styles.mutedText}>
-                Everything is kept on this device. Nothing is uploaded.
+                {t('profile.storageBody')}
               </Text>
             </View>
           </View>
           <Pressable onPress={clearData} style={styles.ghostBtn}>
             <Trash2 color={colors.danger} size={16} />
             <Text style={[styles.ghostBtnText, { color: colors.danger }]}>
-              Clear all data
+              {t('profile.clearData')}
             </Text>
           </Pressable>
         </GlassCard>
@@ -354,7 +399,7 @@ export default function SettingsScreen() {
             end={ACCENT_GRADIENT.end}
             style={styles.saveBtn}
           >
-            <Text style={styles.saveBtnText}>Save Settings</Text>
+            <Text style={styles.saveBtnText}>{t('profile.save')}</Text>
           </LinearGradient>
         </Pressable>
 
@@ -523,6 +568,18 @@ const styles = StyleSheet.create({
     borderColor: 'rgba(136,117,246,0.14)',
   },
   inputIcon: { position: 'absolute', right: 14 },
+
+  langGrid: { flexDirection: 'row', flexWrap: 'wrap', gap: 8 },
+  langChip: {
+    paddingHorizontal: 14,
+    paddingVertical: 9,
+    borderRadius: 50,
+    backgroundColor: 'rgba(255,255,255,0.8)',
+    borderWidth: 1,
+    borderColor: 'rgba(136,117,246,0.2)',
+  },
+  langChipActive: { backgroundColor: colors.primary, borderColor: colors.primary },
+  langChipText: { ...font(600), fontSize: 13.5, color: colors.primary },
 
   ghostBtn: {
     flexDirection: 'row',

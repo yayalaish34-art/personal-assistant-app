@@ -324,7 +324,13 @@ export default function AssistantScreen() {
             </LinearGradient>
           </Pressable>
         ) : (
-          <MicButton disabled={transcribing} />
+          <MicButton
+            disabled={transcribing}
+            onRecordingChange={setIsRecording}
+            onTranscribing={setTranscribing}
+            onTranscribed={send}
+            onError={failed}
+          />
         )}
       </View>
 

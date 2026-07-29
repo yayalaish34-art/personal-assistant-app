@@ -15,6 +15,7 @@ import { createNativeStackNavigator } from '@react-navigation/native-stack';
 import * as Haptics from 'expo-haptics';
 
 import { colors, font, NAV_BAR } from '../theme';
+import { t } from '../lib/i18n';
 import { TabIcon } from '../components/TabIcons';
 import TodayScreen from '../screens/TodayScreen';
 import JournalScreen from '../screens/JournalScreen';
@@ -160,13 +161,18 @@ function Tabs() {
       tabBar={(props) => <FloatingTabBar {...props} />}
       screenOptions={{ headerShown: false }}
     >
-      {/* The two views are swapped: Home shows the calendar/agenda, and the
-          Calendar tab shows the daily dashboard. Route names and icons stay
-          put so the tab bar and every navigate() call are unaffected. */}
-      <Tab.Screen name="Today" component={CalendarScreen} options={{ title: 'Home' }} />
-      <Tab.Screen name="Calendar" component={TodayScreen} options={{ title: 'Calendar' }} />
-      <Tab.Screen name="Journal" component={JournalScreen} options={{ title: 'Journal' }} />
-      <Tab.Screen name="Settings" component={SettingsScreen} options={{ title: 'Profile' }} />
+      <Tab.Screen name="Today" component={TodayScreen} options={{ title: t('tab.home') }} />
+      <Tab.Screen
+        name="Calendar"
+        component={CalendarScreen}
+        options={{ title: t('tab.calendar') }}
+      />
+      <Tab.Screen name="Journal" component={JournalScreen} options={{ title: t('tab.tasks') }} />
+      <Tab.Screen
+        name="Settings"
+        component={SettingsScreen}
+        options={{ title: t('tab.profile') }}
+      />
     </Tab.Navigator>
   );
 }

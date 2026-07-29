@@ -1,9 +1,11 @@
 import { Router } from 'express';
+import multer from 'multer';
+import { toFile } from 'openai/uploads';
 import { z } from 'zod';
 import { asyncHandler, parseBody } from '../../lib/http.js';
 import { config } from '../../config.js';
 import { ValidationError } from '../../lib/errors.js';
-import { chatLimiter } from '../../middleware/rateLimit.js';
+import { chatLimiter, speechLimiter } from '../../middleware/rateLimit.js';
 import { getOpenAI, CHAT_MODEL } from './llm.js';
 
 export const parseRouter = Router();
@@ -134,5 +136,54 @@ parseRouter.post(
     }
 
     res.json({ proposal });
+  }),
+);
+
+
+// ── POST /transcribe ────────────────────────────────────────────────────────
+//
+// Unauthenticated counterpart to /speech/transcribe, which is behind auth and
+// therefore needs the database. Same contract: multipart with an `audio`
+// field, JSON `{ text }` back. The upload is held in memory, streamed to the
+// provider, and dropped — it is never written to disk.
+
+const MAX_AUDIO_BYTES = 25 * 1024 * 1024;
+const ALLOWED_EXTENSIONS = new Set(['m4a', 'webm', 'mp3', 'wav', 'mp4']);
+
+const upload = multer({
+  storage: multer.memoryStorage(),
+  limits: { fileSize: MAX_AUDIO_BYTES },
+});
+
+parseRouter.post(
+  '/transcribe',
+  speechLimiter,
+  upload.single('audio'),
+  asyncHandler(async (req, res) => {
+    if (!config.OPENAI_API_KEY) {
+      throw new ValidationError('Transcription is not configured on this server');
+    }
+    if (!req.file) {
+      throw new ValidationError('Missing required field: audio');
+    }
+
+    const ext = req.file.originalname.split('.').pop()?.toLowerCase() ?? '';
+    if (!ALLOWED_EXTENSIONS.has(ext) && !req.file.mimetype.startsWith('audio/')) {
+      throw new ValidationError('Unsupported audio format. Accepted: m4a, webm, mp3, wav.');
+    }
+
+    const client = getOpenAI();
+    const file = await toFile(req.file.buffer, req.file.originalname, {
+      type: req.file.mimetype,
+    });
+    const transcription = await client.audio.transcriptions.create({
+      model: 'whisper-1',
+      file,
+    });
+
+    // Release the buffer as soon as it has been sent.
+    req.file.buffer = Buffer.alloc(0);
+
+    res.json({ text: transcription.text });
   }),
 );

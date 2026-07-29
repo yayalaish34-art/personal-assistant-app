@@ -23,6 +23,10 @@
     },
     "web": {
       "bundler": "metro"
-    }
+    },
+    "plugins": [
+      "expo-audio",
+      "expo-localization"
+    ]
   }
 }

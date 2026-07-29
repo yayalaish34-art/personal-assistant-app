@@ -60,6 +60,15 @@ export default function AssistantScreen() {
   const [sending, setSending] = useState(false);
   const [transcribing, setTranscribing] = useState(false);
   const scrollRef = useRef<ScrollView>(null);
+  const inputRef = useRef<TextInput>(null);
+
+  // The + button opens straight into this screen, so put the cursor in the
+  // composer rather than making the user tap again. The keyboard's own
+  // dictation key gives voice input without a native audio module.
+  useEffect(() => {
+    const t = setTimeout(() => inputRef.current?.focus(), 350);
+    return () => clearTimeout(t);
+  }, []);
 
   const [isRecording, setIsRecording] = useState(false);
 
@@ -292,6 +301,7 @@ export default function AssistantScreen() {
       {/* ── Composer: type, or hold the mic ── */}
       <View style={styles.composer}>
         <TextInput
+          ref={inputRef}
           value={draft}
           onChangeText={setDraft}
           placeholder={isRecording ? 'Listening…' : 'Type a request…'}

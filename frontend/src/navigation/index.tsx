@@ -160,8 +160,11 @@ function Tabs() {
       tabBar={(props) => <FloatingTabBar {...props} />}
       screenOptions={{ headerShown: false }}
     >
-      <Tab.Screen name="Today" component={TodayScreen} options={{ title: 'Home' }} />
-      <Tab.Screen name="Calendar" component={CalendarScreen} options={{ title: 'Calendar' }} />
+      {/* The two views are swapped: Home shows the calendar/agenda, and the
+          Calendar tab shows the daily dashboard. Route names and icons stay
+          put so the tab bar and every navigate() call are unaffected. */}
+      <Tab.Screen name="Today" component={CalendarScreen} options={{ title: 'Home' }} />
+      <Tab.Screen name="Calendar" component={TodayScreen} options={{ title: 'Calendar' }} />
       <Tab.Screen name="Journal" component={JournalScreen} options={{ title: 'Journal' }} />
       <Tab.Screen name="Settings" component={SettingsScreen} options={{ title: 'Profile' }} />
     </Tab.Navigator>

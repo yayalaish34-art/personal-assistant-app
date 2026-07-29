@@ -28,7 +28,6 @@ import {
 } from 'lucide-react-native';
 
 import { Screen } from '../components/ui';
-import { AddSheet } from '../components/AddSheet';
 import { api } from '../lib/api';
 import {
   parsePriority,
@@ -185,10 +184,9 @@ export default function CalendarScreen() {
     setVisibleMonth(new Date(d.getFullYear(), d.getMonth(), 1));
   };
 
-  const [addOpen, setAddOpen] = useState(false);
   const openAddTask = () => {
     Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
-    setAddOpen(true);
+    navigation.navigate('Assistant');
   };
 
   const confirmDelete = (evt: AgendaItem) => {
@@ -501,18 +499,6 @@ export default function CalendarScreen() {
         )}
       </ScrollView>
 
-      <AddSheet
-        visible={addOpen}
-        onClose={() => setAddOpen(false)}
-        onManual={() => {
-          setAddOpen(false);
-          navigation.navigate('EntryForm', { kind: 'event' });
-        }}
-        onAssistant={() => {
-          setAddOpen(false);
-          navigation.navigate('Assistant');
-        }}
-      />
     </Screen>
   );
 }

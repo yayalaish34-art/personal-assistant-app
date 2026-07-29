@@ -46,9 +46,16 @@ export async function startBoss(): Promise<PgBoss> {
   // parsing the host — anything other than localhost/127.0.0.1 or a plain
   // docker service name gets TLS. rejectUnauthorized:false accepts the
   // provider's cert without shipping their CA bundle.
+  // Callers gate on DATABASE_URL before reaching here; assert so the type
+  // narrows rather than threading an optional through the whole file.
+  const connectionString = config.DATABASE_URL;
+  if (!connectionString) {
+    throw new Error('startBoss called without DATABASE_URL');
+  }
+
   const boss = new PgBoss({
-    connectionString: config.DATABASE_URL,
-    ...(isRemoteHost(config.DATABASE_URL)
+    connectionString,
+    ...(isRemoteHost(connectionString)
       ? { ssl: { rejectUnauthorized: false } }
       : {}),
   });

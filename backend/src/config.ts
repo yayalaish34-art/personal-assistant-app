@@ -8,7 +8,9 @@ export const configSchema = z.object({
   LOG_LEVEL: z
     .enum(['fatal', 'error', 'warn', 'info', 'debug', 'trace'])
     .default('info'),
-  DATABASE_URL: z.string().min(1, 'DATABASE_URL is required'),
+  // Optional: the AI endpoints are stateless. Set it only to re-enable the
+  // database-backed routes and the pg-boss job queue.
+  DATABASE_URL: z.string().min(1).optional(),
   JWT_SECRET: z.string().min(32, 'JWT_SECRET must be at least 32 chars'),
   JWT_REFRESH_SECRET: z.string().min(32, 'JWT_REFRESH_SECRET must be at least 32 chars'),
   GOOGLE_CLIENT_ID: z.string().optional(),

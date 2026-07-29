@@ -7,7 +7,6 @@ import {
   Pressable,
   StyleSheet,
   Alert,
-  Animated,
   Platform,
   ActivityIndicator,
 } from 'react-native';
@@ -15,14 +14,8 @@ import { useNavigation } from '@react-navigation/native';
 import type { NativeStackNavigationProp } from '@react-navigation/native-stack';
 import { LinearGradient } from 'expo-linear-gradient';
 import * as Haptics from 'expo-haptics';
-import {
-  useAudioRecorder,
-  useAudioRecorderState,
-  AudioModule,
-  RecordingPresets,
-  setAudioModeAsync,
-} from 'expo-audio';
-import { X, Mic, Send, Check, Sparkles, Square } from 'lucide-react-native';
+import { MicButton } from '../components/MicButton';
+import { X, Send, Check, Sparkles } from 'lucide-react-native';
 
 import { Screen } from '../components/ui';
 import { api, ApiError, type ChatMessage } from '../lib/api';
@@ -67,35 +60,9 @@ export default function AssistantScreen() {
   const [transcribing, setTranscribing] = useState(false);
   const scrollRef = useRef<ScrollView>(null);
 
-  const recorder = useAudioRecorder(RecordingPresets.HIGH_QUALITY);
-  const recorderState = useAudioRecorderState(recorder);
-  const isRecording = recorderState.isRecording;
+  const [isRecording, setIsRecording] = useState(false);
 
-  // Pulsing ring while recording, so it's obvious the mic is live.
-  const pulse = useRef(new Animated.Value(0)).current;
-  useEffect(() => {
-    if (!isRecording) {
-      pulse.setValue(0);
-      return;
-    }
-    const loop = Animated.loop(
-      Animated.sequence([
-        Animated.timing(pulse, { toValue: 1, duration: 900, useNativeDriver: true }),
-        Animated.timing(pulse, { toValue: 0, duration: 900, useNativeDriver: true }),
-      ]),
-    );
-    loop.start();
-    return () => loop.stop();
-  }, [isRecording, pulse]);
 
-  useEffect(() => {
-    (async () => {
-      // Microphone permission has to be granted before the first record call.
-      const { granted } = await AudioModule.requestRecordingPermissionsAsync();
-      if (!granted) return;
-      await setAudioModeAsync({ allowsRecording: true, playsInSilentMode: true });
-    })();
-  }, []);
 
   const append = useCallback((incoming: ChatMessage[]) => {
     setMessages((prev) => [...prev, ...incoming]);
@@ -158,43 +125,7 @@ export default function AssistantScreen() {
     }
   };
 
-  const startRecording = async () => {
-    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
-    try {
-      const { granted } = await AudioModule.requestRecordingPermissionsAsync();
-      if (!granted) {
-        Alert.alert('Microphone needed', 'Allow microphone access to talk to your assistant.');
-        return;
-      }
-      await recorder.prepareToRecordAsync();
-      recorder.record();
-    } catch (e) {
-      Alert.alert('Couldn’t start recording', (e as Error).message);
-    }
-  };
 
-  const stopAndTranscribe = async () => {
-    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
-    setTranscribing(true);
-    try {
-      await recorder.stop();
-      const uri = recorder.uri;
-      if (!uri) throw new Error('No audio was captured.');
-
-      // The audio never touches our storage: it is posted straight through to
-      // the server, which streams it to the STT provider and discards it.
-      const { text } = await api.transcribe(uri);
-      if (!text.trim()) {
-        Alert.alert('Nothing heard', 'Try recording again and speak a little louder.');
-        return;
-      }
-      await send(text);
-    } catch (e) {
-      failed(e);
-    } finally {
-      setTranscribing(false);
-    }
-  };
 
   const busy = sending || transcribing;
 
@@ -352,43 +283,7 @@ export default function AssistantScreen() {
             </LinearGradient>
           </Pressable>
         ) : (
-          <Pressable
-            onPress={isRecording ? stopAndTranscribe : startRecording}
-            disabled={transcribing}
-          >
-            <View>
-              {isRecording ? (
-                <Animated.View
-                  pointerEvents="none"
-                  style={[
-                    styles.pulseRing,
-                    {
-                      opacity: pulse.interpolate({ inputRange: [0, 1], outputRange: [0.5, 0] }),
-                      transform: [
-                        { scale: pulse.interpolate({ inputRange: [0, 1], outputRange: [1, 1.7] }) },
-                      ],
-                    },
-                  ]}
-                />
-              ) : null}
-              <LinearGradient
-                colors={
-                  isRecording
-                    ? (['#F0797C', '#E5484D'] as const as unknown as [string, string])
-                    : (ACCENT_GRADIENT.colors as unknown as [string, string])
-                }
-                start={ACCENT_GRADIENT.start}
-                end={ACCENT_GRADIENT.end}
-                style={styles.micBtn}
-              >
-                {isRecording ? (
-                  <Square color="#fff" size={17} fill="#fff" />
-                ) : (
-                  <Mic color="#fff" size={21} />
-                )}
-              </LinearGradient>
-            </View>
-          </Pressable>
+          <MicButton disabled={transcribing} />
         )}
       </View>
 
@@ -548,15 +443,6 @@ const styles = StyleSheet.create({
     shadowOpacity: 0.3,
     shadowRadius: 10,
     elevation: 4,
-  },
-  pulseRing: {
-    position: 'absolute',
-    top: 0,
-    left: 0,
-    width: 54,
-    height: 54,
-    borderRadius: 27,
-    backgroundColor: '#E5484D',
   },
   recordHint: {
     ...font(400),

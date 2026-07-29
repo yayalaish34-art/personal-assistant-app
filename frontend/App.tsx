@@ -40,14 +40,35 @@ export default function App() {
 
   useEffect(() => {
     let active = true;
+
+    // Never let startup depend on the network completing. fetch has no default
+    // timeout in React Native, so an unreachable backend would hang here
+    // forever and the app would sit on a blank screen with nothing rendered.
+    const failsafe = setTimeout(() => {
+      if (active) setReady(true);
+    }, 4000);
+
     (async () => {
       // Every data endpoint is behind authMiddleware and scopes rows by the
       // token's user, so a session is required even with no sign-in screen.
       // Sign in silently as the local dev user; the refresh token lasts 30
       // days and the API client rotates it on 401.
       try {
+        // A stored token is not proof of a usable session: it may have been
+        // minted by a different server (the LAN address changes), or its
+        // refresh token may be spent. Verify against /me and re-authenticate
+        // if it fails, otherwise every screen 401s with no way to recover.
         const existing = await storage.getSession();
-        if (!existing?.accessToken) {
+        let usable = false;
+        if (existing?.accessToken) {
+          try {
+            await api.getMe();
+            usable = true;
+          } catch {
+            await storage.clearSession();
+          }
+        }
+        if (!usable) {
           const { user, accessToken, refreshToken } = await api.signInAsDevUser();
           await storage.saveSession({
             accessToken,
@@ -69,6 +90,7 @@ export default function App() {
     })();
     return () => {
       active = false;
+      clearTimeout(failsafe);
     };
   }, []);
 

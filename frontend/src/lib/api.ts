@@ -115,11 +115,21 @@ async function request<T>(path: string, opts: RequestOpts = {}): Promise<T> {
     }
   }
 
-  const res = await fetch(`${await baseUrl()}${path}`, {
-    method,
-    headers,
-    body: body === undefined ? undefined : JSON.stringify(body),
-  });
+  // React Native's fetch has no default timeout: against an unreachable host
+  // the promise never settles, so callers hang indefinitely.
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), 15000);
+  let res: Response;
+  try {
+    res = await fetch(`${await baseUrl()}${path}`, {
+      method,
+      headers,
+      body: body === undefined ? undefined : JSON.stringify(body),
+      signal: controller.signal,
+    });
+  } finally {
+    clearTimeout(timeout);
+  }
 
   // One transparent refresh attempt on 401, then surface the error.
   if (res.status === 401 && !anonymous && !isRetry) {

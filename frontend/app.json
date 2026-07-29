@@ -21,9 +21,6 @@
     },
     "web": {
       "bundler": "metro"
-    },
-    "plugins": [
-      "expo-audio"
-    ]
+    }
   }
 }

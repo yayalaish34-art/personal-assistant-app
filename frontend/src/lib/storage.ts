@@ -75,7 +75,25 @@ async function setJSON<T>(key: string, value: T): Promise<void> {
 }
 
 export const storage = {
-  getSettings: () => getJSON<Settings>(KEYS.settings, defaultSettings),
+  /**
+   * Saved settings, with one exception: a saved LAN `apiBaseUrl` is replaced by
+   * the freshly-derived one when the host no longer matches.
+   *
+   * DHCP hands the dev machine a new address regularly, and a URL frozen into
+   * storage by a previous "Save Settings" would keep pointing at the dead one —
+   * the app would look broken with no way to recover except retyping the IP on
+   * a phone keyboard. A remote (https) URL is always kept as-is; only private
+   * dev addresses are re-derived.
+   */
+  async getSettings(): Promise<Settings> {
+    const saved = await getJSON<Settings>(KEYS.settings, defaultSettings);
+    const fresh = defaultApiBaseUrl();
+    const isLanUrl = (u: string) => /^http:\/\/(\d{1,3}\.){3}\d{1,3}:/.test(u);
+    if (isLanUrl(saved.apiBaseUrl) && isLanUrl(fresh) && saved.apiBaseUrl !== fresh) {
+      return { ...saved, apiBaseUrl: fresh };
+    }
+    return saved;
+  },
   saveSettings: (s: Settings) => setJSON(KEYS.settings, s),
 
   getSession: () => getJSON<AuthSession | null>(KEYS.auth, null),

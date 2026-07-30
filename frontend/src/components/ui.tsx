@@ -1,4 +1,4 @@
-import { ReactNode, useState } from 'react';
+import { ReactNode, useMemo, useState } from 'react';
 import {
   Text,
   View,
@@ -15,21 +15,25 @@ import {
 import { LinearGradient } from 'expo-linear-gradient';
 import Svg, { Defs, RadialGradient, Stop, Rect } from 'react-native-svg';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
+
 import { isRTL } from '../lib/i18n';
+import { useTheme } from '../lib/theme';
 import {
-  colors,
   radius,
   spacing,
   font,
+  cardStyle,
   GRADIENT_BACKGROUND,
   BACKGROUND_BLOOMS,
   ACCENT_GRADIENT,
   TAB_BAR_CLEARANCE,
+  type Palette,
 } from '../theme';
 
-// Soft-edged radial color blooms painted over the base ramp. Each bloom fades
-// to fully transparent at its edge so overlapping circles read as one wash
-// rather than as distinct discs.
+// Soft-edged radial colour blooms painted over the light base ramp. Each bloom
+// fades to fully transparent at its edge so overlapping circles read as one
+// wash rather than as distinct discs. The dark theme does not use these — a
+// bloom over near-black reads as a smudge, and the reference ground is flat.
 function BackgroundBlooms({ width, height }: { width: number; height: number }) {
   return (
     <Svg
@@ -73,7 +77,9 @@ export function Screen({
   // Modals (no tab bar) pass false to skip the extra bottom clearance.
   clearTabBar?: boolean;
 }) {
+  const { palette: c } = useTheme();
   const insets = useSafeAreaInsets();
+
   // Blooms are painted in absolute pixels, so they need the measured box.
   const [size, setSize] = useState({ width: 0, height: 0 });
   const onLayout = (e: LayoutChangeEvent) => {
@@ -82,6 +88,27 @@ export function Screen({
       prev.width === width && prev.height === height ? prev : { width, height },
     );
   };
+
+  const inner = [
+    styles.screenInner,
+    {
+      paddingTop: Math.max(insets.top, spacing.md) + spacing.xs,
+      paddingBottom: clearTabBar ? TAB_BAR_CLEARANCE : spacing.lg,
+      // Declared explicitly rather than left to inherit: on web
+      // react-native-web's I18nManager is a no-op, so this is what makes rows,
+      // text alignment, and logical margins mirror. Native reads I18nManager,
+      // and this agrees with it.
+      direction: (isRTL() ? 'rtl' : 'ltr') as 'rtl' | 'ltr',
+    },
+  ];
+
+  if (c.mode === 'dark') {
+    return (
+      <View style={[styles.screen, { backgroundColor: c.bg }]} onLayout={onLayout}>
+        <View style={inner}>{children}</View>
+      </View>
+    );
+  }
 
   return (
     <LinearGradient
@@ -93,36 +120,38 @@ export function Screen({
       onLayout={onLayout}
     >
       {size.width > 0 ? <BackgroundBlooms width={size.width} height={size.height} /> : null}
-      <View
-        style={[
-          styles.screenInner,
-          {
-            paddingTop: Math.max(insets.top, spacing.md) + spacing.xs,
-            paddingBottom: clearTabBar ? TAB_BAR_CLEARANCE : spacing.lg,
-            // Declared explicitly rather than left to inherit: on web
-            // react-native-web's I18nManager is a no-op, so this is what makes
-            // rows, text alignment, and logical margins mirror. Native reads
-            // I18nManager, and this agrees with it.
-            direction: isRTL() ? 'rtl' : 'ltr',
-          },
-        ]}
-      >
-        {children}
-      </View>
+      <View style={inner}>{children}</View>
     </LinearGradient>
   );
 }
 
 export function Card({ children, style }: { children: ReactNode; style?: StyleProp<ViewStyle> }) {
-  return <View style={[styles.card, style]}>{children}</View>;
+  const { palette: c } = useTheme();
+  return <View style={[cardStyle(c), style]}>{children}</View>;
 }
 
 export function Title({ children, style }: { children: ReactNode; style?: StyleProp<TextStyle> }) {
-  return <Text style={[styles.title, style]}>{children}</Text>;
+  const { palette: c } = useTheme();
+  return (
+    <Text
+      style={[
+        { color: c.text, fontSize: 18, marginBottom: spacing.sm, textAlign: 'auto' },
+        font(600),
+        style,
+      ]}
+    >
+      {children}
+    </Text>
+  );
 }
 
 export function Muted({ children, style }: { children: ReactNode; style?: StyleProp<TextStyle> }) {
-  return <Text style={[styles.muted, style]}>{children}</Text>;
+  const { palette: c } = useTheme();
+  return (
+    <Text style={[{ color: c.textMuted, fontSize: 14, textAlign: 'auto' }, font(400), style]}>
+      {children}
+    </Text>
+  );
 }
 
 export function Button({
@@ -136,10 +165,13 @@ export function Button({
   loading?: boolean;
   variant?: 'primary' | 'ghost' | 'danger';
 }) {
+  const { palette: c } = useTheme();
+  const styles = useMemo(() => makeButtonStyles(c), [c]);
+
   const content = loading ? (
-    <ActivityIndicator color={variant === 'ghost' ? colors.text : colors.primaryText} />
+    <ActivityIndicator color={variant === 'ghost' ? c.text : c.onAccent} />
   ) : (
-    <Text style={[styles.buttonText, variant === 'ghost' && { color: colors.text }]}>{label}</Text>
+    <Text style={[styles.buttonText, variant === 'ghost' && { color: c.text }]}>{label}</Text>
   );
 
   if (variant === 'ghost') {
@@ -159,7 +191,7 @@ export function Button({
   }
 
   const gradientColors =
-    variant === 'danger' ? (['#F08A8D', '#E5484D'] as const) : ACCENT_GRADIENT.colors;
+    variant === 'danger' ? ([c.danger, '#D93B45'] as const) : ACCENT_GRADIENT.colors;
 
   return (
     <Pressable
@@ -180,11 +212,13 @@ export function Button({
 }
 
 export function Field(props: TextInputProps & { label?: string }) {
+  const { palette: c } = useTheme();
+  const styles = useMemo(() => makeButtonStyles(c), [c]);
   const { label, style, ...rest } = props;
   return (
     <View style={{ marginBottom: spacing.md }}>
       {label ? <Text style={styles.label}>{label}</Text> : null}
-      <TextInput placeholderTextColor={colors.textMuted} style={[styles.input, style]} {...rest} />
+      <TextInput placeholderTextColor={c.textMuted} style={[styles.input, style]} {...rest} />
     </View>
   );
 }
@@ -192,55 +226,43 @@ export function Field(props: TextInputProps & { label?: string }) {
 const styles = StyleSheet.create({
   screen: { flex: 1 },
   screenInner: { flex: 1, paddingHorizontal: spacing.md + 4 },
-  card: {
-    backgroundColor: colors.surface,
-    borderRadius: radius.lg - 4,
-    padding: spacing.md + 4,
-    marginBottom: spacing.md,
-    shadowColor: '#3F2E64',
-    shadowOffset: { width: 0, height: 8 },
-    shadowOpacity: 0.06,
-    shadowRadius: 20,
-    elevation: 3,
-  },
-  title: { color: colors.text, fontSize: 18, ...font(600), marginBottom: spacing.sm },
-  muted: { color: colors.textMuted, fontSize: 14, ...font(400) },
-  buttonWrap: { borderRadius: 50 },
-  button: {
-    borderRadius: 50,
-    paddingVertical: 18,
-    paddingHorizontal: spacing.md,
-    alignItems: 'center',
-    justifyContent: 'center',
-    minHeight: 58,
-  },
-  ghost: {
-    backgroundColor: colors.surface,
-    shadowColor: '#3F2E64',
-    shadowOffset: { width: 0, height: 4 },
-    shadowOpacity: 0.05,
-    shadowRadius: 10,
-    elevation: 2,
-  },
-  buttonText: { color: colors.primaryText, ...font(600), fontSize: 15 },
-  label: {
-    color: colors.text,
-    marginBottom: spacing.sm,
-    fontSize: 15,
-    ...font(500),
-  },
-  input: {
-    backgroundColor: colors.surface,
-    color: colors.text,
-    borderRadius: radius.sm + 2,
-    paddingHorizontal: spacing.md,
-    paddingVertical: 16,
-    fontSize: 15,
-    ...font(400),
-    shadowColor: '#3F2E64',
-    shadowOffset: { width: 0, height: 3 },
-    shadowOpacity: 0.04,
-    shadowRadius: 8,
-    elevation: 1,
-  },
 });
+
+function makeButtonStyles(c: Palette) {
+  return StyleSheet.create({
+    buttonWrap: { borderRadius: radius.pill },
+    button: {
+      borderRadius: radius.pill,
+      paddingVertical: 18,
+      paddingHorizontal: spacing.md,
+      alignItems: 'center',
+      justifyContent: 'center',
+      minHeight: 58,
+    },
+    ghost: {
+      backgroundColor: c.surfaceAlt,
+      borderWidth: 1,
+      borderColor: c.border,
+    },
+    buttonText: { color: c.onAccent, ...font(600), fontSize: 15 },
+    label: {
+      color: c.text,
+      marginBottom: spacing.sm,
+      fontSize: 15,
+      textAlign: 'auto',
+      ...font(500),
+    },
+    input: {
+      backgroundColor: c.surfaceAlt,
+      color: c.text,
+      borderRadius: radius.md,
+      paddingHorizontal: spacing.md,
+      paddingVertical: 16,
+      fontSize: 15,
+      textAlign: 'auto',
+      borderWidth: 1,
+      borderColor: c.border,
+      ...font(400),
+    },
+  });
+}

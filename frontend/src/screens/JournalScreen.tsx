@@ -1,16 +1,16 @@
-import { useCallback, useState } from 'react';
+import { useCallback, useMemo, useState } from 'react';
 import { FlatList, ScrollView, View, Text, Pressable, StyleSheet, Alert } from 'react-native';
 import { useFocusEffect, useNavigation } from '@react-navigation/native';
 import type { NativeStackNavigationProp } from '@react-navigation/native-stack';
-import { LinearGradient } from 'expo-linear-gradient';
 import * as Haptics from 'expo-haptics';
 import { Plus, ArrowUpRight, Clock, Check } from 'lucide-react-native';
 
 import { Screen } from '../components/ui';
+import { useTheme } from '../lib/theme';
 import { api, type Task } from '../lib/api';
 import { parsePriority, isLive } from '../lib/tasks';
 import type { RootStackParamList } from '../navigation';
-import { colors, spacing, font, ACCENT_GRADIENT, PRIORITY_COLORS } from '../theme';
+import { spacing, radius, font, cardStyle, chipStyle, priorityColors, type Palette } from '../theme';
 import { t, isRTL } from '../lib/i18n';
 
 type Nav = NativeStackNavigationProp<RootStackParamList>;
@@ -18,11 +18,6 @@ type Nav = NativeStackNavigationProp<RootStackParamList>;
 // The backend has no journal resource, so this screen is the task list —
 // GET/PATCH/DELETE /tasks. Priority still rides in the notes field as a
 // "[High] " prefix, since the schema has no priority column.
-const PRIORITY_CHIP = {
-  High: { label: 'High', ...PRIORITY_COLORS.High },
-  Medium: { label: 'Medium', ...PRIORITY_COLORS.Medium },
-  Low: { label: 'Low', ...PRIORITY_COLORS.Low },
-} as const;
 
 const FILTERS = [
   { key: 'all', labelKey: 'tasks.filter.all' },
@@ -34,6 +29,10 @@ type Filter = (typeof FILTERS)[number]['key'];
 
 export default function JournalScreen() {
   const navigation = useNavigation<Nav>();
+  const { palette: c } = useTheme();
+  const styles = useMemo(() => makeStyles(c), [c]);
+  const priorities = useMemo(() => priorityColors(c), [c]);
+
   const [entries, setEntries] = useState<Task[]>([]);
   const [error, setError] = useState<string | null>(null);
   const [filter, setFilter] = useState<Filter>('all');
@@ -93,8 +92,8 @@ export default function JournalScreen() {
     ]);
   };
 
-  const matches = (t: Task, f: Filter) =>
-    f === 'all' ? true : f === 'done' ? t.isDone : !t.isDone;
+  const matches = (task: Task, f: Filter) =>
+    f === 'all' ? true : f === 'done' ? task.isDone : !task.isDone;
   const countOf = (f: Filter) => entries.filter((e) => matches(e, f)).length;
   const visible = entries.filter((e) => matches(e, filter));
 
@@ -117,15 +116,9 @@ export default function JournalScreen() {
                   Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
                   navigation.navigate('Assistant');
                 }}
+                style={styles.circleBtn}
               >
-                <LinearGradient
-                  colors={ACCENT_GRADIENT.colors as unknown as [string, string]}
-                  start={ACCENT_GRADIENT.start}
-                  end={ACCENT_GRADIENT.end}
-                  style={styles.circleBtn}
-                >
-                  <Plus color="#fff" size={24} />
-                </LinearGradient>
+                <Plus color={c.onAccent} size={24} />
               </Pressable>
             </View>
 
@@ -148,9 +141,13 @@ export default function JournalScreen() {
                     style={[styles.chip, active && styles.chipActive]}
                   >
                     <View style={[styles.chipCount, active && styles.chipCountActive]}>
-                      <Text style={styles.chipCountText}>{countOf(f.key)}</Text>
+                      <Text style={[styles.chipCountText, active && styles.chipCountTextActive]}>
+                        {countOf(f.key)}
+                      </Text>
                     </View>
-                    <Text style={styles.chipLabel}>{t(f.labelKey)}</Text>
+                    <Text style={[styles.chipLabel, active && styles.chipLabelActive]}>
+                      {t(f.labelKey)}
+                    </Text>
                   </Pressable>
                 );
               })}
@@ -169,7 +166,7 @@ export default function JournalScreen() {
         }
         renderItem={({ item }) => {
           const { priority, text } = parsePriority(item.notes);
-          const chip = PRIORITY_CHIP[priority ?? 'Medium'];
+          const pc = priorities[priority ?? 'Medium'];
           const due = item.dueAt ? new Date(item.dueAt) : null;
           return (
             <Pressable
@@ -178,15 +175,16 @@ export default function JournalScreen() {
               style={styles.card}
             >
               <View style={styles.cardTopRow}>
-                <View style={[styles.moodChip, { backgroundColor: chip.bg }]}>
-                  <View style={[styles.moodDot, { backgroundColor: chip.color }]} />
-                  <Text style={[styles.moodText, { color: chip.color }]}>{chip.label}</Text>
+                <View style={[styles.priorityPill, { backgroundColor: pc.bg }]}>
+                  <Text style={[styles.priorityText, { color: pc.color }]}>
+                    {t('today.priority', { level: priority ?? 'Medium' })}
+                  </Text>
                 </View>
                 <View style={styles.arrowBtn}>
                   {item.isDone ? (
-                    <Check color="#3EA06B" size={18} />
+                    <Check color={c.success} size={18} />
                   ) : (
-                    <ArrowUpRight color={colors.text} size={18} />
+                    <ArrowUpRight color={c.textMuted} size={18} />
                   )}
                 </View>
               </View>
@@ -199,7 +197,7 @@ export default function JournalScreen() {
                 </Text>
               ) : null}
               <View style={styles.cardBottomRow}>
-                <Clock color={colors.textMuted} size={15} />
+                <Clock color={c.textMuted} size={15} />
                 <Text style={styles.cardDate}>
                   {due
                     ? `${due.toLocaleDateString('en-US', {
@@ -222,98 +220,87 @@ export default function JournalScreen() {
   );
 }
 
-const styles = StyleSheet.create({
-  headerRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    marginBottom: spacing.lg,
-  },
-  headline: {
-    ...font(400),
-    fontSize: 34,
-    lineHeight: 42,
-    color: colors.text,
-    letterSpacing: -0.6,
-    // 'auto' follows the writing direction: left in English, right in Hebrew.
-    textAlign: 'auto',
-  },
-  headlineStrong: { ...font(600) },
-  circleBtn: {
-    width: 48,
-    height: 48,
-    borderRadius: 24,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
+function makeStyles(c: Palette) {
+  return StyleSheet.create({
+    headerRow: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      justifyContent: 'space-between',
+      marginBottom: spacing.lg,
+    },
+    headline: {
+      ...font(400),
+      fontSize: 30,
+      lineHeight: 36,
+      color: c.text,
+      letterSpacing: -0.5,
+      flex: 1,
+    },
+    headlineStrong: { ...font(600) },
+    circleBtn: {
+      width: 48,
+      height: 48,
+      borderRadius: 24,
+      backgroundColor: c.primary,
+      alignItems: 'center',
+      justifyContent: 'center',
+      marginStart: spacing.md,
+    },
 
-  chip: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 8,
-    backgroundColor: '#FFFFFF',
-    borderRadius: 50,
-    paddingVertical: 10,
-    paddingStart: 8,
-    paddingEnd: 18,
-  },
-  chipActive: { backgroundColor: colors.lime },
-  chipCount: {
-    width: 32,
-    height: 32,
-    borderRadius: 16,
-    backgroundColor: '#F1F1F4',
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  chipCountActive: { backgroundColor: '#FFFFFF' },
-  chipCountText: { ...font(600), fontSize: 14, color: colors.text },
-  chipLabel: { ...font(500), fontSize: 14, color: colors.text },
+    chip: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      gap: 8,
+      backgroundColor: c.surfaceAlt,
+      borderRadius: radius.pill,
+      paddingVertical: 10,
+      paddingStart: 8,
+      paddingEnd: 18,
+    },
+    chipActive: { backgroundColor: c.primary },
+    chipCount: {
+      width: 28,
+      height: 28,
+      borderRadius: radius.sm - 4,
+      backgroundColor: c.surface,
+      alignItems: 'center',
+      justifyContent: 'center',
+    },
+    chipCountActive: { backgroundColor: `${c.onAccent}33` },
+    chipCountText: { ...font(600), fontSize: 13, color: c.text },
+    chipCountTextActive: { color: c.onAccent },
+    chipLabel: { ...font(500), fontSize: 14, color: c.textMuted },
+    chipLabelActive: { color: c.onAccent },
 
-  card: {
-    backgroundColor: '#FFFFFF',
-    borderRadius: 24,
-    padding: spacing.md + 4,
-    marginBottom: 14,
-    shadowColor: '#3F2E64',
-    shadowOffset: { width: 0, height: 6 },
-    shadowOpacity: 0.05,
-    shadowRadius: 16,
-    elevation: 2,
-  },
-  cardTopRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    marginBottom: 10,
-  },
-  moodChip: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 6,
-    borderRadius: 50,
-    paddingVertical: 6,
-    paddingHorizontal: 12,
-  },
-  moodDot: { width: 7, height: 7, borderRadius: 4 },
-  moodText: { ...font(500), fontSize: 12 },
-  arrowBtn: {
-    width: 36,
-    height: 36,
-    borderRadius: 18,
-    backgroundColor: '#F4F2F7',
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  cardTitle: { ...font(600), fontSize: 17, color: colors.text, marginBottom: 6 },
-  cardTitleDone: { textDecorationLine: 'line-through', color: colors.textMuted },
-  cardBody: {
-    ...font(400),
-    fontSize: 14,
-    color: colors.textMuted,
-    lineHeight: 20,
-    marginBottom: 12,
-  },
-  cardBottomRow: { flexDirection: 'row', alignItems: 'center', gap: 6 },
-  cardDate: { ...font(400), fontSize: 13, color: colors.textMuted },
-});
+    card: { ...cardStyle(c), marginBottom: 14 },
+    cardTopRow: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      justifyContent: 'space-between',
+      marginBottom: 10,
+    },
+    priorityPill: {
+      ...chipStyle(),
+    },
+    priorityText: { ...font(500), fontSize: 12 },
+    arrowBtn: {
+      width: 36,
+      height: 36,
+      borderRadius: 18,
+      backgroundColor: c.surfaceAlt,
+      alignItems: 'center',
+      justifyContent: 'center',
+    },
+    cardTitle: { ...font(600), fontSize: 16.5, color: c.text, marginBottom: 6 },
+    cardTitleDone: { textDecorationLine: 'line-through', color: c.textMuted },
+    cardBody: {
+      ...font(400),
+      fontSize: 14,
+      color: c.textMuted,
+      lineHeight: 20,
+      marginBottom: 12,
+    },
+    cardBottomRow: { flexDirection: 'row', alignItems: 'center', gap: 6 },
+    cardDate: { ...font(400), fontSize: 12.5, color: c.textMuted },
+  });
+}

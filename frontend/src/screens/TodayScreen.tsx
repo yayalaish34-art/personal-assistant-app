@@ -1,13 +1,21 @@
 import { useCallback, useMemo, useState } from 'react';
-import { ScrollView, View, Text, Pressable, StyleSheet, Alert, Image } from 'react-native';
-import { useFocusEffect, useNavigation } from '@react-navigation/native';
-import type { NativeStackNavigationProp } from '@react-navigation/native-stack';
+import { ScrollView, View, Text, Pressable, StyleSheet, Alert } from 'react-native';
+import { useFocusEffect } from '@react-navigation/native';
 import { LinearGradient } from 'expo-linear-gradient';
+import Svg, { Circle } from 'react-native-svg';
 import * as Haptics from 'expo-haptics';
-import { Bell, Plus, ArrowUpRight, Clock, ClipboardList } from 'lucide-react-native';
+import {
+  Search,
+  Bell,
+  Calendar as CalendarIcon,
+  ArrowUpRight,
+  Clock,
+  Check,
+  LoaderCircle,
+} from 'lucide-react-native';
 
 import { Screen } from '../components/ui';
-import { ProgressRing } from '../components/ProgressRing';
+import { useTheme } from '../lib/theme';
 import { api } from '../lib/api';
 import { storage } from '../lib/storage';
 import {
@@ -21,28 +29,19 @@ import {
   type AgendaItem,
   type TaskStatus,
 } from '../lib/tasks';
-import type { RootStackParamList } from '../navigation';
-import { colors, spacing, font, ACCENT_GRADIENT, PRIORITY_COLORS } from '../theme';
-import { t, isRTL } from '../lib/i18n';
-
-type Nav = NativeStackNavigationProp<RootStackParamList>;
+import {
+  spacing,
+  radius,
+  font,
+  cardStyle,
+  chipStyle,
+  AI_GRADIENT,
+  priorityColors,
+  type Palette,
+} from '../theme';
+import { t, isRTL, locale } from '../lib/i18n';
 
 const AVATAR_COLORS = ['#F2A0B5', '#9D8BFA', '#F1C46B'];
-
-// Placeholder portrait for the header avatar. Initials stay rendered underneath
-// as a fallback for when the image can't load (offline).
-const PROFILE_PHOTO_URI = 'https://i.pravatar.cc/144?img=47';
-
-function initialsOf(name: string): string {
-  return (
-    name
-      .trim()
-      .split(/\s+/)
-      .slice(0, 2)
-      .map((w) => w[0]?.toUpperCase() ?? '')
-      .join('') || 'U'
-  );
-}
 
 function greetingNow(): string {
   const h = new Date().getHours();
@@ -51,12 +50,32 @@ function greetingNow(): string {
   return t('today.greeting.evening');
 }
 
+/** Adds an alpha channel to a `#rrggbb` colour, e.g. for a translucent stroke. */
+function withAlpha(hex: string, alpha: number): string {
+  const a = Math.round(Math.min(1, Math.max(0, alpha)) * 255)
+    .toString(16)
+    .padStart(2, '0');
+  return `${hex}${a}`;
+}
+
+/** 'YYYY-MM-DD' -> '12 Dec', in the local calendar and active language. */
+function formatShortDate(dateStr: string): string {
+  if (!dateStr) return '';
+  const [y, m, d] = dateStr.split('-').map(Number);
+  const date = new Date(y, (m || 1) - 1, d || 1);
+  return date.toLocaleDateString(locale(), { day: 'numeric', month: 'short' });
+}
+
 // Decorative collaborator stack, as in the mockup.
-function AvatarStack() {
+function AvatarStack({ c }: { c: Palette }) {
+  const styles = useMemo(() => makeStyles(c), [c]);
   return (
     <View style={styles.avatarRow}>
-      {AVATAR_COLORS.map((c, i) => (
-        <View key={c} style={[styles.avatarDot, { backgroundColor: c, marginStart: i ? -10 : 0 }]} />
+      {AVATAR_COLORS.map((color, i) => (
+        <View
+          key={color}
+          style={[styles.avatarDot, { backgroundColor: color, marginStart: i ? -10 : 0 }]}
+        />
       ))}
       <View style={[styles.avatarDot, styles.avatarMore]}>
         <Text style={styles.avatarMoreText}>+4</Text>
@@ -65,29 +84,67 @@ function AvatarStack() {
   );
 }
 
-function StatRow({ value, label }: { value: number; label: string }) {
+/** Small ring: track in `c.surfaceAlt`, progress arc in `c.pink`. */
+function CompletionRing({ pct, c }: { pct: number; c: Palette }) {
+  const size = 62;
+  const stroke = 7;
+  const r = (size - stroke) / 2;
+  const circumference = 2 * Math.PI * r;
+  const clamped = Math.min(1, Math.max(0, pct));
+  const dashoffset = circumference * (1 - clamped);
   return (
-    <View style={styles.statRow}>
-      <LinearGradient
-        colors={['#D3BEF9', '#A98CF5']}
-        start={{ x: 0.15, y: 0 }}
-        end={{ x: 0.85, y: 1 }}
-        style={styles.statIcon}
+    <View style={{ width: size, height: size, alignItems: 'center', justifyContent: 'center' }}>
+      <Svg
+        width={size}
+        height={size}
+        style={{ position: 'absolute', transform: [{ rotate: '-90deg' }] }}
       >
-        <ClipboardList color="#FFFFFF" size={17} />
-      </LinearGradient>
-      <View>
-        <Text style={styles.statValue}>{value}</Text>
-        <Text style={styles.statLabel}>{label}</Text>
-      </View>
+        <Circle cx={size / 2} cy={size / 2} r={r} stroke={c.surfaceAlt} strokeWidth={stroke} fill="none" />
+        <Circle
+          cx={size / 2}
+          cy={size / 2}
+          r={r}
+          stroke={c.pink}
+          strokeWidth={stroke}
+          fill="none"
+          strokeDasharray={`${circumference} ${circumference}`}
+          strokeDashoffset={dashoffset}
+          strokeLinecap="round"
+        />
+      </Svg>
+      <Text style={{ ...font(700), fontSize: 15, color: c.onAccent }}>{Math.round(clamped * 100)}%</Text>
+    </View>
+  );
+}
+
+/** Mini bar chart: one bar per day, height proportional to that day's task count. */
+function MiniBars({ counts, c }: { counts: number[]; c: Palette }) {
+  const max = Math.max(1, ...counts);
+  return (
+    <View style={{ flexDirection: 'row', alignItems: 'flex-end', gap: 5, height: 28 }}>
+      {counts.map((n, i) => (
+        <View
+          key={i}
+          style={{
+            width: 6,
+            height: Math.max(4, Math.round((n / max) * 28)),
+            borderRadius: 3,
+            backgroundColor: c.cyan,
+          }}
+        />
+      ))}
     </View>
   );
 }
 
 export default function TodayScreen() {
-  const navigation = useNavigation<Nav>();
+  const { palette: c } = useTheme();
+  const styles = useMemo(() => makeStyles(c), [c]);
+  const pColors = useMemo(() => priorityColors(c), [c]);
+
   const [name, setName] = useState('');
   const [items, setItems] = useState<AgendaItem[]>([]);
+  const [weekCounts, setWeekCounts] = useState<number[]>([]);
   const [online, setOnline] = useState<boolean | null>(null);
   const [needsAuth, setNeedsAuth] = useState(false);
   const [filter, setFilter] = useState<TaskStatus | 'all'>('todo');
@@ -112,6 +169,22 @@ export default function TodayScreen() {
         setOnline(false);
         setNeedsAuth(false);
       }
+      // Per-day counts for the mini bar chart — decorative only, so a failure
+      // here must not clobber the state above.
+      try {
+        const from = toDateStr(new Date(Date.now() - 6 * 86400000));
+        const { events: wEvents, tasks: wTasks } = await api.agendaForRange(from, today);
+        if (!active) return;
+        const all = [...wEvents.map(eventToItem), ...wTasks.map(taskToItem)];
+        const counts: number[] = [];
+        for (let i = 6; i >= 0; i--) {
+          const d = toDateStr(new Date(Date.now() - i * 86400000));
+          counts.push(all.filter((it) => it.date === d).length);
+        }
+        setWeekCounts(counts);
+      } catch {
+        /* bars stay flat */
+      }
     })();
     return () => {
       active = false;
@@ -135,11 +208,8 @@ export default function TodayScreen() {
   ];
   const countOf = (s: TaskStatus) => items.filter((i) => statusOf(i, now) === s).length;
   const visible = filter === 'all' ? items : items.filter((i) => statusOf(i, now) === filter);
-
-  const openAddTask = () => {
-    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
-    navigation.navigate('Assistant');
-  };
+  const checklist = items.slice(0, 5);
+  const aiDate = new Date().toLocaleDateString(locale(), { day: 'numeric', month: 'short' });
 
   const confirmDelete = (item: AgendaItem) => {
     Alert.alert(t('common.deleteTitle'), t('common.deleteBody', { title: item.title }), [
@@ -164,85 +234,121 @@ export default function TodayScreen() {
   return (
     <Screen>
       <ScrollView showsVerticalScrollIndicator={false}>
-        {/* ── Header: avatar, greeting, + and bell ── */}
+        {/* ── Header: greeting + name, search & bell ── */}
         <View style={styles.headerRow}>
-          <View style={styles.profileAvatar}>
-            <Text style={styles.profileInitials}>{initialsOf(name || 'You')}</Text>
-            <Image source={{ uri: PROFILE_PHOTO_URI }} style={styles.profilePhoto} />
-          </View>
-          <View style={{ flex: 1, marginStart: 12 }}>
+          <View style={{ flex: 1 }}>
             <Text style={styles.greeting}>{greetingNow()}</Text>
-            <Text style={styles.greetingName}>{name || t('today.setName')}</Text>
-          </View>
-          <Pressable onPress={openAddTask}>
-            <LinearGradient
-              colors={ACCENT_GRADIENT.colors as unknown as [string, string]}
-              start={ACCENT_GRADIENT.start}
-              end={ACCENT_GRADIENT.end}
-              style={styles.circleBtn}
+            <Text
+              style={[styles.greetingName, { textAlign: isRTL() ? 'right' : 'left' }]}
+              numberOfLines={1}
             >
-              <Plus color="#fff" size={24} />
-            </LinearGradient>
+              {name || t('today.setName')}
+            </Text>
+          </View>
+          <Pressable
+            onPress={() => Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light)}
+            style={styles.iconBtn}
+          >
+            <Search color={c.text} size={19} />
           </Pressable>
           <Pressable
             onPress={() => Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light)}
-            style={[styles.circleBtn, styles.circleBtnWhite, { marginStart: 10 }]}
+            style={[styles.iconBtn, { marginStart: spacing.sm }]}
           >
-            <Bell color={colors.text} size={22} />
+            <Bell color={c.text} size={19} />
           </Pressable>
         </View>
 
-        {/* ── Headline: light first line, medium second line ── */}
-        <Text style={[styles.headline, { textAlign: isRTL() ? 'right' : 'left' }]}>
-          {t('today.headline.line1')}{'\n'}
-          <Text style={styles.headlineStrong}>{t('today.headline.line2')}</Text>
-        </Text>
-
-        {/* ── Today's Progress card: layered lilac glass ── */}
+        {/* ── AI analysis panel ── */}
         <LinearGradient
-          colors={[
-            'rgba(255,255,255,0.96)',
-            'rgba(247,240,253,0.82)',
-            'rgba(232,216,250,0.72)',
-            'rgba(215,193,247,0.68)',
-          ]}
-          locations={[0, 0.38, 0.74, 1]}
-          start={{ x: 0.05, y: 0 }}
-          end={{ x: 0.95, y: 1 }}
-          style={styles.progressCard}
+          colors={AI_GRADIENT.colors as unknown as [string, string, ...string[]]}
+          locations={AI_GRADIENT.locations as unknown as [number, number, ...number[]]}
+          start={AI_GRADIENT.start}
+          end={AI_GRADIENT.end}
+          style={styles.aiCard}
         >
-          {/* Warm bloom in the lower-right corner, as in the reference. */}
-          <LinearGradient
-            colors={['rgba(200,168,246,0)', 'rgba(186,148,244,0.3)']}
-            start={{ x: 0.35, y: 0.3 }}
-            end={{ x: 1, y: 1 }}
-            style={styles.progressCardGlow}
-            pointerEvents="none"
-          />
-          <Text style={styles.progressTitle}>{t('today.progress.title')}</Text>
-          <View style={styles.progressBody}>
-            <ProgressRing progress={stats.progress} />
-            <LinearGradient
-              colors={['rgba(160,128,232,0)', 'rgba(160,128,232,0.35)', 'rgba(160,128,232,0)']}
-              start={{ x: 0, y: 0 }}
-              end={{ x: 0, y: 1 }}
-              style={styles.progressDivider}
-            />
-            <View style={{ flex: 1, gap: 14 }}>
-              <StatRow value={stats.total} label={t('today.progress.total')} />
-              <StatRow value={stats.done} label={t('today.progress.completed')} />
-              <StatRow value={stats.pending} label={t('today.progress.pending')} />
+          <View style={styles.aiTopRow}>
+            <View style={styles.aiDateRow}>
+              <CalendarIcon color={c.onLight} size={14} />
+              <Text style={styles.aiDate}>{aiDate}</Text>
+            </View>
+            <View style={styles.aiPill}>
+              <Text style={styles.aiPillText}>{t('today.ai.report')}</Text>
             </View>
           </View>
+
+          <Text style={styles.aiSubtitle}>{t('today.ai.subtitle')}</Text>
+
+          <Text style={[styles.aiStatement, { textAlign: isRTL() ? 'right' : 'left' }]}>
+            {t('today.ai.statement', { count: stats.pending })}{' '}
+            <Text style={styles.urgentPill}>
+              {t('today.ai.urgent')} ↗
+            </Text>
+          </Text>
         </LinearGradient>
 
-        {/* ── Today's Tasks ── */}
+        {/* ── Priority task + completion column ── */}
+        <View style={styles.columnsRow}>
+          {/* Leading: Priority Task checklist, on a lime card */}
+          <View style={[styles.limeCard, { flex: 1 }]}>
+            <Text style={styles.limeTitle}>{t('today.priorityCard.title')}</Text>
+            {checklist.map((item) => {
+              const done = statusOf(item, now) === 'done';
+              return (
+                <View key={item.id} style={styles.checklistRow}>
+                  <View style={[styles.checkCircle, done && styles.checkCircleDone]}>
+                    {done ? <Check color={c.onAccent} size={12} strokeWidth={3} /> : null}
+                  </View>
+                  <Text style={styles.checklistText} numberOfLines={1}>
+                    {item.title}
+                  </Text>
+                </View>
+              );
+            })}
+          </View>
+
+          {/* Trailing: completion ring + mini chart, and an in-progress card */}
+          <View style={[styles.trailingCol, { flex: 1 }]}>
+            <View style={styles.ringCard}>
+              <View style={styles.ringRow}>
+                <CompletionRing pct={stats.progress} c={c} />
+                <View style={{ marginStart: spacing.sm }}>
+                  <Text style={styles.ringTitle}>{t('today.completedCard.title')}</Text>
+                  <Text style={styles.ringSubtitle}>
+                    {t('today.completedCard.count', { done: stats.done, total: stats.total })}
+                  </Text>
+                </View>
+              </View>
+              <View style={{ marginTop: spacing.sm }}>
+                <MiniBars counts={weekCounts} c={c} />
+              </View>
+            </View>
+
+            <View style={styles.inProgressCard}>
+              <View style={styles.inProgressIconWrap}>
+                <LoaderCircle color={c.primary} size={18} />
+              </View>
+              <View>
+                <Text style={styles.ringTitle}>{t('today.filter.inprogress')}</Text>
+                <Text style={styles.ringSubtitle}>
+                  {t('today.inProgressCard.count', { count: countOf('inprogress') })}
+                </Text>
+              </View>
+            </View>
+          </View>
+        </View>
+
+        {/* ── All Tasks ── */}
         <View style={styles.sectionRow}>
-          <Text style={styles.sectionTitle}>{t('today.tasks.title')}</Text>
-          <Pressable onPress={() => setFilter('all')}>
-            <Text style={[styles.viewAll, filter === 'all' && { color: colors.primary }]}>
-              {t('today.tasks.viewAll')}
-            </Text>
+          <Text style={styles.sectionTitle}>{t('today.allTasks.title')}</Text>
+          <Pressable
+            onPress={() => {
+              Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+              setFilter('all');
+            }}
+            style={styles.sectionBtn}
+          >
+            <ArrowUpRight color={c.text} size={17} />
           </Pressable>
         </View>
 
@@ -252,21 +358,25 @@ export default function TodayScreen() {
           contentContainerStyle={{ gap: 10, paddingBottom: 4 }}
           style={{ marginBottom: spacing.md }}
         >
-          {chips.map((c) => {
-            const active = filter === c.key;
+          {chips.map((chip) => {
+            const active = filter === chip.key;
             return (
               <Pressable
-                key={c.key}
+                key={chip.key}
                 onPress={() => {
                   Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
-                  setFilter(c.key);
+                  setFilter(chip.key);
                 }}
                 style={[styles.chip, active && styles.chipActive]}
               >
                 <View style={[styles.chipCount, active && styles.chipCountActive]}>
-                  <Text style={styles.chipCountText}>{countOf(c.key)}</Text>
+                  <Text style={[styles.chipCountText, active && styles.chipCountTextActive]}>
+                    {countOf(chip.key)}
+                  </Text>
                 </View>
-                <Text style={styles.chipLabel}>{c.label}</Text>
+                <Text style={[styles.chipLabel, active && styles.chipLabelActive]}>
+                  {chip.label}
+                </Text>
               </Pressable>
             );
           })}
@@ -274,229 +384,237 @@ export default function TodayScreen() {
 
         {online === false ? (
           <Text style={styles.offline}>
-            {needsAuth
-              ? 'Sign in required — open Profile to connect your account.'
-              : 'Server unavailable — check the API URL in Profile.'}
+            {needsAuth ? t('today.offline.authRequired') : t('today.offline.serverUnavailable')}
           </Text>
         ) : null}
 
         {visible.length === 0 ? (
-          <View style={styles.taskCard}>
+          <View style={styles.emptyCard}>
             <Text style={styles.taskTitle}>{t('today.empty.title')}</Text>
-            <Text style={styles.taskEmptyText}>
-              {t('today.empty.body')}
-            </Text>
+            <Text style={styles.emptyBody}>{t('today.empty.body')}</Text>
           </View>
         ) : (
           visible.map((e) => {
             const { priority } = parsePriority(e.notes);
-            const pc = PRIORITY_COLORS[priority ?? 'High'];
+            const pc = pColors[priority ?? 'High'];
+            const isZoom = e.id.charCodeAt(0) % 2 === 0;
+            const providerLabel = isZoom ? t('today.provider.zoom') : t('today.provider.google');
+            const providerDot = isZoom ? c.lavender : c.success;
             return (
               <Pressable key={e.id} onLongPress={() => confirmDelete(e)} style={styles.taskCard}>
                 <View style={styles.taskTopRow}>
                   <View style={[styles.priorityPill, { backgroundColor: pc.bg }]}>
-                    <View style={[styles.priorityDot, { backgroundColor: pc.color }]} />
                     <Text style={[styles.priorityText, { color: pc.color }]}>
                       {t('today.priority', { level: priority ?? 'High' })}
                     </Text>
                   </View>
-                  <View style={styles.arrowBtn}>
-                    <ArrowUpRight color={colors.text} size={18} />
+                  <View style={styles.providerRow}>
+                    <View style={[styles.providerDot, { backgroundColor: providerDot }]} />
+                    <Text style={styles.providerLabel}>{providerLabel}</Text>
                   </View>
                 </View>
+
                 <Text style={styles.taskTitle}>{e.title}</Text>
+
+                <View style={styles.taskTimeRow}>
+                  <Clock color={c.textMuted} size={14} />
+                  <Text style={styles.taskTime}>
+                    {e.time ? `${to12h(e.time)} - ${to12h(plusHour(e.time))}` : t('today.allDay')}
+                  </Text>
+                </View>
+
                 <View style={styles.taskBottomRow}>
-                  <View style={styles.taskTimeRow}>
-                    <Clock color={colors.textMuted} size={15} />
-                    <Text style={styles.taskTime}>
-                      {e.time ? `${to12h(e.time)} - ${to12h(plusHour(e.time))}` : t('today.allDay')}
-                    </Text>
-                  </View>
-                  <AvatarStack />
+                  <Text style={styles.taskDue}>
+                    {t('today.dueDate', { date: e.date ? formatShortDate(e.date) : t('tasks.noDue') })}
+                  </Text>
+                  <AvatarStack c={c} />
                 </View>
               </Pressable>
             );
           })
         )}
       </ScrollView>
-
     </Screen>
   );
 }
 
-const styles = StyleSheet.create({
-  headerRow: { flexDirection: 'row', alignItems: 'center', marginBottom: spacing.lg },
-  profileAvatar: {
-    width: 48,
-    height: 48,
-    borderRadius: 24,
-    backgroundColor: '#E7DBF6',
-    alignItems: 'center',
-    justifyContent: 'center',
-    overflow: 'hidden',
-  },
-  profileInitials: { ...font(600), fontSize: 16, color: colors.primary },
-  profilePhoto: { ...StyleSheet.absoluteFillObject, width: '100%', height: '100%' },
-  greeting: { ...font(500), fontSize: 15, color: colors.text },
-  greetingName: { ...font(400), fontSize: 12, color: colors.textMuted, marginTop: 1 },
-  circleBtn: {
-    width: 48,
-    height: 48,
-    borderRadius: 24,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  circleBtnWhite: {
-    backgroundColor: '#FFFFFF',
-    shadowColor: '#3F2E64',
-    shadowOffset: { width: 0, height: 4 },
-    shadowOpacity: 0.06,
-    shadowRadius: 10,
-    elevation: 2,
-  },
+function makeStyles(c: Palette) {
+  return StyleSheet.create({
+    headerRow: { flexDirection: 'row', alignItems: 'center', marginBottom: spacing.lg },
+    greeting: { ...font(500), fontSize: 13, color: c.textMuted },
+    greetingName: { ...font(700), fontSize: 22, color: c.text, marginTop: 2 },
+    iconBtn: {
+      width: 42,
+      height: 42,
+      borderRadius: 21,
+      backgroundColor: c.surfaceAlt,
+      alignItems: 'center',
+      justifyContent: 'center',
+    },
 
-  headline: {
-    ...font(400),
-    fontSize: 34,
-    lineHeight: 42,
-    color: colors.text,
-    letterSpacing: -0.6,
-    marginBottom: spacing.lg,
-    // 'auto' follows the writing direction: left in English, right in Hebrew.
-    textAlign: 'auto',
-  },
-  headlineStrong: { ...font(600) },
+    // ── AI panel ──
+    aiCard: {
+      borderRadius: radius.lg,
+      padding: spacing.md + 4,
+      marginBottom: spacing.lg,
+    },
+    aiTopRow: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      justifyContent: 'space-between',
+      marginBottom: spacing.md,
+    },
+    aiDateRow: { flexDirection: 'row', alignItems: 'center', gap: 6 },
+    aiDate: { ...font(600), fontSize: 13, color: c.onLight },
+    aiPill: {
+      ...chipStyle(),
+      backgroundColor: withAlpha(c.onAccent, 0.55),
+    },
+    aiPillText: { ...font(600), fontSize: 11, color: c.onLight },
+    aiSubtitle: { ...font(500), fontSize: 12.5, color: withAlpha(c.onLight, 0.62), marginBottom: 8 },
+    aiStatement: { ...font(600), fontSize: 22, lineHeight: 29, color: c.onLight },
+    urgentPill: {
+      ...font(700),
+      fontSize: 13,
+      color: c.onAccent,
+      backgroundColor: c.onLight,
+      borderRadius: radius.pill,
+      paddingHorizontal: 8,
+      paddingVertical: 3,
+    },
 
-  progressCard: {
-    borderRadius: 28,
-    padding: spacing.md + 4,
-    marginBottom: spacing.lg,
-    overflow: 'hidden',
-    borderWidth: 1,
-    borderColor: 'rgba(255,255,255,0.75)',
-    shadowColor: '#5B3FA8',
-    shadowOffset: { width: 0, height: 10 },
-    shadowOpacity: 0.13,
-    shadowRadius: 24,
-    elevation: 5,
-  },
-  progressCardGlow: { ...StyleSheet.absoluteFillObject },
-  progressTitle: { ...font(600), fontSize: 17, color: colors.text, marginBottom: 14 },
-  progressBody: { flexDirection: 'row', alignItems: 'center' },
-  progressDivider: {
-    width: 1,
-    alignSelf: 'stretch',
-    marginHorizontal: 18,
-  },
-  statRow: { flexDirection: 'row', alignItems: 'center', gap: 10 },
-  statIcon: {
-    width: 38,
-    height: 38,
-    borderRadius: 19,
-    alignItems: 'center',
-    justifyContent: 'center',
-    shadowColor: '#6B4CC4',
-    shadowOffset: { width: 0, height: 3 },
-    shadowOpacity: 0.22,
-    shadowRadius: 6,
-    elevation: 2,
-  },
-  statValue: { ...font(600), fontSize: 15, color: colors.text },
-  statLabel: { ...font(400), fontSize: 11, color: colors.textMuted, marginTop: 1 },
+    // ── Two-column row ──
+    columnsRow: { flexDirection: 'row', gap: spacing.md, alignItems: 'flex-start', marginBottom: spacing.lg },
+    limeCard: {
+      ...cardStyle(c),
+      backgroundColor: c.lime,
+    },
+    limeTitle: { ...font(700), fontSize: 15, color: c.onLight, marginBottom: spacing.sm + 2 },
+    checklistRow: { flexDirection: 'row', alignItems: 'center', gap: 8, marginBottom: 10 },
+    checkCircle: {
+      width: 20,
+      height: 20,
+      borderRadius: 10,
+      borderWidth: 1.5,
+      borderColor: withAlpha(c.onLight, 0.35),
+      alignItems: 'center',
+      justifyContent: 'center',
+    },
+    checkCircleDone: {
+      backgroundColor: c.onLight,
+      borderColor: c.onLight,
+    },
+    checklistText: { ...font(500), fontSize: 13, color: c.onLight, flexShrink: 1 },
 
-  sectionRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    marginBottom: spacing.md,
-  },
-  sectionTitle: { ...font(600), fontSize: 18, color: colors.text },
-  viewAll: { ...font(500), fontSize: 14, color: colors.textMuted },
+    trailingCol: { gap: spacing.md },
+    ringCard: { ...cardStyle(c) },
+    ringRow: { flexDirection: 'row', alignItems: 'center' },
+    ringTitle: { ...font(700), fontSize: 14, color: c.text },
+    ringSubtitle: { ...font(400), fontSize: 11.5, color: c.textMuted, marginTop: 2 },
 
-  chip: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 8,
-    backgroundColor: '#FFFFFF',
-    borderRadius: 50,
-    paddingVertical: 10,
-    paddingStart: 8,
-    paddingEnd: 18,
-  },
-  chipActive: { backgroundColor: colors.lime },
-  chipCount: {
-    width: 32,
-    height: 32,
-    borderRadius: 16,
-    backgroundColor: '#F1F1F4',
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  chipCountActive: { backgroundColor: '#FFFFFF' },
-  chipCountText: { ...font(600), fontSize: 14, color: colors.text },
-  chipLabel: { ...font(500), fontSize: 14, color: colors.text },
+    inProgressCard: {
+      ...cardStyle(c),
+      flexDirection: 'row',
+      alignItems: 'center',
+      gap: 10,
+    },
+    inProgressIconWrap: {
+      width: 34,
+      height: 34,
+      borderRadius: 17,
+      backgroundColor: c.surfaceAlt,
+      alignItems: 'center',
+      justifyContent: 'center',
+    },
 
-  offline: {
-    ...font(400),
-    fontSize: 13,
-    color: colors.danger,
-    marginBottom: spacing.md,
-  },
+    // ── Section header ──
+    sectionRow: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      justifyContent: 'space-between',
+      marginBottom: spacing.md,
+    },
+    sectionTitle: { ...font(700), fontSize: 20, color: c.text },
+    sectionBtn: {
+      width: 34,
+      height: 34,
+      borderRadius: 17,
+      backgroundColor: c.surfaceAlt,
+      alignItems: 'center',
+      justifyContent: 'center',
+    },
 
-  taskCard: {
-    backgroundColor: '#FFFFFF',
-    borderRadius: 24,
-    padding: spacing.md + 4,
-    marginBottom: 14,
-    shadowColor: '#3F2E64',
-    shadowOffset: { width: 0, height: 6 },
-    shadowOpacity: 0.05,
-    shadowRadius: 16,
-    elevation: 2,
-  },
-  taskTopRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    marginBottom: 10,
-  },
-  priorityPill: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 6,
-    borderRadius: 50,
-    paddingVertical: 6,
-    paddingHorizontal: 12,
-  },
-  priorityDot: { width: 7, height: 7, borderRadius: 4 },
-  priorityText: { ...font(500), fontSize: 12 },
-  arrowBtn: {
-    width: 36,
-    height: 36,
-    borderRadius: 18,
-    backgroundColor: '#F4F2F7',
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  taskTitle: { ...font(600), fontSize: 17, color: colors.text, marginBottom: 12 },
-  taskEmptyText: { ...font(400), fontSize: 13, color: colors.textMuted },
-  taskBottomRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' },
-  taskTimeRow: { flexDirection: 'row', alignItems: 'center', gap: 6 },
-  taskTime: { ...font(400), fontSize: 13, color: colors.textMuted },
+    // ── Filter chips ──
+    chip: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      gap: 8,
+      backgroundColor: c.surfaceAlt,
+      borderRadius: radius.pill,
+      paddingVertical: 8,
+      paddingStart: 6,
+      paddingEnd: 16,
+    },
+    chipActive: { backgroundColor: c.primary },
+    chipCount: {
+      width: 28,
+      height: 28,
+      borderRadius: 14,
+      backgroundColor: c.bg,
+      alignItems: 'center',
+      justifyContent: 'center',
+    },
+    chipCountActive: { backgroundColor: withAlpha(c.onAccent, 0.25) },
+    chipCountText: { ...font(600), fontSize: 13, color: c.text },
+    chipCountTextActive: { color: c.onAccent },
+    chipLabel: { ...font(500), fontSize: 13.5, color: c.textMuted },
+    chipLabelActive: { color: c.onAccent },
 
-  avatarRow: { flexDirection: 'row', alignItems: 'center' },
-  avatarDot: {
-    width: 28,
-    height: 28,
-    borderRadius: 14,
-    borderWidth: 2,
-    borderColor: '#FFFFFF',
-  },
-  avatarMore: {
-    backgroundColor: '#17171B',
-    marginStart: -10,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  avatarMoreText: { ...font(500), fontSize: 10, color: '#FFFFFF' },
-});
+    offline: { ...font(400), fontSize: 13, color: c.danger, marginBottom: spacing.md },
+
+    // ── Task cards ──
+    taskCard: { ...cardStyle(c), marginBottom: spacing.md },
+    taskTopRow: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      justifyContent: 'space-between',
+      marginBottom: 10,
+    },
+    priorityPill: {
+      ...chipStyle(),
+    },
+    priorityText: { ...font(700), fontSize: 11 },
+    providerRow: { flexDirection: 'row', alignItems: 'center', gap: 6 },
+    providerDot: { width: 7, height: 7, borderRadius: 4 },
+    providerLabel: { ...font(500), fontSize: 12, color: c.textMuted },
+
+    taskTitle: { ...font(700), fontSize: 16.5, color: c.text, marginBottom: 8 },
+    taskTimeRow: { flexDirection: 'row', alignItems: 'center', gap: 6, marginBottom: 6 },
+    taskTime: { ...font(400), fontSize: 12.5, color: c.textMuted },
+    taskBottomRow: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      justifyContent: 'space-between',
+    },
+    taskDue: { ...font(400), fontSize: 12.5, color: c.textMuted },
+
+    emptyCard: { ...cardStyle(c) },
+    emptyBody: { ...font(400), fontSize: 13, color: c.textMuted },
+
+    avatarRow: { flexDirection: 'row', alignItems: 'center' },
+    avatarDot: {
+      width: 26,
+      height: 26,
+      borderRadius: 13,
+      borderWidth: 2,
+      borderColor: c.surface,
+    },
+    avatarMore: {
+      backgroundColor: c.text,
+      marginStart: -10,
+      alignItems: 'center',
+      justifyContent: 'center',
+    },
+    avatarMoreText: { ...font(600), fontSize: 9, color: c.bg },
+  });
+}

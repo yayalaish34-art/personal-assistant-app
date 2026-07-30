@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   ScrollView,
   View,
@@ -12,7 +12,6 @@ import {
 } from 'react-native';
 import { useNavigation } from '@react-navigation/native';
 import type { NativeStackNavigationProp } from '@react-navigation/native-stack';
-import { LinearGradient } from 'expo-linear-gradient';
 import * as Haptics from 'expo-haptics';
 import { MicButton } from '../components/MicButton';
 import { X, Send, Check, Sparkles } from 'lucide-react-native';
@@ -21,8 +20,9 @@ import { Screen } from '../components/ui';
 import { api, uuid, type ChatMessage } from '../lib/api';
 import { respondTo, confirmationFor } from '../lib/assistant';
 import type { RootStackParamList } from '../navigation';
-import { colors, spacing, font, ACCENT_GRADIENT } from '../theme';
-import { t } from '../lib/i18n';
+import { useTheme } from '../lib/theme';
+import { spacing, radius, font, cardStyle, type Palette } from '../theme';
+import { t, isRTL } from '../lib/i18n';
 
 type Nav = NativeStackNavigationProp<RootStackParamList, 'Assistant'>;
 
@@ -48,14 +48,25 @@ function describeAction(tool: string, args: Record<string, unknown>): string {
 const ACTION_LABEL: Record<string, string> = {
   create_event: 'assistant.addEvent',
   create_task: 'assistant.addTask',
-  update_event: 'Update this event?',
-  update_task: 'Update this task?',
-  delete_event: 'Delete this event?',
-  delete_task: 'Delete this task?',
+  update_event: 'assistant.updateEvent',
+  update_task: 'assistant.updateTask',
+  delete_event: 'assistant.deleteEvent',
+  delete_task: 'assistant.deleteTask',
 };
+
+/** Adds alpha to a `#rrggbb` palette colour for a low-opacity border/fill. */
+function withAlpha(hex: string, alpha: number): string {
+  const h = hex.replace('#', '');
+  const r = parseInt(h.substring(0, 2), 16);
+  const g = parseInt(h.substring(2, 4), 16);
+  const b = parseInt(h.substring(4, 6), 16);
+  return `rgba(${r}, ${g}, ${b}, ${alpha})`;
+}
 
 export default function AssistantScreen() {
   const navigation = useNavigation<Nav>();
+  const { palette: c } = useTheme();
+  const styles = useMemo(() => makeStyles(c), [c]);
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [draft, setDraft] = useState('');
   const [sending, setSending] = useState(false);
@@ -67,8 +78,8 @@ export default function AssistantScreen() {
   // composer rather than making the user tap again. The keyboard's own
   // dictation key gives voice input without a native audio module.
   useEffect(() => {
-    const t = setTimeout(() => inputRef.current?.focus(), 350);
-    return () => clearTimeout(t);
+    const timer = setTimeout(() => inputRef.current?.focus(), 350);
+    return () => clearTimeout(timer);
   }, []);
 
   const [isRecording, setIsRecording] = useState(false);
@@ -175,10 +186,12 @@ export default function AssistantScreen() {
       {/* ── Header ── */}
       <View style={styles.headerRow}>
         <View style={styles.badge}>
-          <Sparkles color={colors.primary} size={19} />
+          <Sparkles color={c.primary} size={19} />
         </View>
         <View style={{ flex: 1, marginStart: 12 }}>
-          <Text style={styles.headerTitle}>{t('assistant.title')}</Text>
+          <Text style={[styles.headerTitle, { textAlign: isRTL() ? 'right' : 'left' }]}>
+            {t('assistant.title')}
+          </Text>
           <Text style={styles.headerSub}>{t('assistant.subtitle')}</Text>
         </View>
         <Pressable
@@ -186,9 +199,9 @@ export default function AssistantScreen() {
             Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
             navigation.goBack();
           }}
-          style={styles.circleWhite}
+          style={styles.closeBtn}
         >
-          <X color={colors.text} size={20} />
+          <X color={c.text} size={20} />
         </Pressable>
       </View>
 
@@ -218,14 +231,14 @@ export default function AssistantScreen() {
           if (m.role === 'user') {
             return (
               <View key={m.id} style={styles.userRow}>
-                <LinearGradient
-                  colors={ACCENT_GRADIENT.colors as unknown as [string, string]}
-                  start={ACCENT_GRADIENT.start}
-                  end={ACCENT_GRADIENT.end}
-                  style={styles.userBubble}
+                <View
+                  style={[
+                    styles.userBubble,
+                    isRTL() ? { borderBottomLeftRadius: 7 } : { borderBottomRightRadius: 7 },
+                  ]}
                 >
                   <Text style={styles.userText}>{m.content}</Text>
-                </LinearGradient>
+                </View>
               </View>
             );
           }
@@ -234,7 +247,7 @@ export default function AssistantScreen() {
           if (m.role === 'tool') {
             return (
               <View key={m.id} style={styles.toolRow}>
-                <Check color="#3EA06B" size={15} />
+                <Check color={c.success} size={15} />
                 <Text style={styles.toolText}>{t('assistant.done')}</Text>
               </View>
             );
@@ -243,7 +256,12 @@ export default function AssistantScreen() {
           return (
             <View key={m.id} style={styles.assistantRow}>
               {m.content ? (
-                <View style={styles.assistantBubble}>
+                <View
+                  style={[
+                    styles.assistantBubble,
+                    isRTL() ? { borderBottomRightRadius: 7 } : { borderBottomLeftRadius: 7 },
+                  ]}
+                >
                   <Text style={styles.assistantText}>{m.content}</Text>
                 </View>
               ) : null}
@@ -270,17 +288,13 @@ export default function AssistantScreen() {
                     <Pressable
                       onPress={() => confirm(m.id)}
                       disabled={busy}
-                      style={({ pressed }) => [{ flex: 1, opacity: pressed || busy ? 0.85 : 1 }]}
+                      style={({ pressed }) => [
+                        styles.confirmBtn,
+                        { opacity: pressed || busy ? 0.85 : 1 },
+                      ]}
                     >
-                      <LinearGradient
-                        colors={ACCENT_GRADIENT.colors as unknown as [string, string]}
-                        start={ACCENT_GRADIENT.start}
-                        end={ACCENT_GRADIENT.end}
-                        style={styles.confirmBtn}
-                      >
-                        <Check color="#fff" size={17} />
-                        <Text style={styles.confirmText}>{t('assistant.confirm')}</Text>
-                      </LinearGradient>
+                      <Check color={c.onAccent} size={17} />
+                      <Text style={styles.confirmText}>{t('assistant.confirm')}</Text>
                     </Pressable>
                   </View>
                 </View>
@@ -291,7 +305,7 @@ export default function AssistantScreen() {
 
         {busy ? (
           <View style={styles.thinkingRow}>
-            <ActivityIndicator color={colors.primary} size="small" />
+            <ActivityIndicator color={c.primary} size="small" />
             <Text style={styles.thinkingText}>
               {transcribing ? t('assistant.transcribing') : t('assistant.thinking')}
             </Text>
@@ -306,7 +320,7 @@ export default function AssistantScreen() {
           value={draft}
           onChangeText={setDraft}
           placeholder={isRecording ? t('assistant.listening') : t('assistant.placeholder')}
-          placeholderTextColor={colors.textMuted}
+          placeholderTextColor={c.textMuted}
           style={styles.input}
           editable={!isRecording && !busy}
           onSubmitEditing={() => send(draft)}
@@ -314,15 +328,12 @@ export default function AssistantScreen() {
         />
 
         {draft.trim() ? (
-          <Pressable onPress={() => send(draft)} disabled={busy}>
-            <LinearGradient
-              colors={ACCENT_GRADIENT.colors as unknown as [string, string]}
-              start={ACCENT_GRADIENT.start}
-              end={ACCENT_GRADIENT.end}
-              style={styles.micBtn}
-            >
-              <Send color="#fff" size={20} />
-            </LinearGradient>
+          <Pressable
+            onPress={() => send(draft)}
+            disabled={busy}
+            style={({ pressed }) => [styles.sendBtn, { opacity: pressed || busy ? 0.85 : 1 }]}
+          >
+            <Send color={c.onAccent} size={20} />
           </Pressable>
         ) : (
           <MicButton
@@ -338,165 +349,156 @@ export default function AssistantScreen() {
       {isRecording ? (
         <Text style={styles.recordHint}>{t('assistant.recordHint')}</Text>
       ) : Platform.OS === 'web' ? (
-        <Text style={styles.recordHint}>
-          Voice works best on a phone — typing works everywhere
-        </Text>
+        <Text style={styles.recordHint}>{t('assistant.voiceWebHint')}</Text>
       ) : null}
     </Screen>
   );
 }
 
-const styles = StyleSheet.create({
-  headerRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    marginBottom: spacing.md,
-  },
-  badge: {
-    width: 42,
-    height: 42,
-    borderRadius: 15,
-    backgroundColor: '#EFE7FD',
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  headerTitle: { ...font(600), fontSize: 19, color: colors.text, letterSpacing: -0.3 },
-  headerSub: { ...font(400), fontSize: 12.5, color: colors.textMuted, marginTop: 1 },
-  circleWhite: {
-    width: 44,
-    height: 44,
-    borderRadius: 22,
-    backgroundColor: '#FFFFFF',
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
+function makeStyles(c: Palette) {
+  return StyleSheet.create({
+    headerRow: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      marginBottom: spacing.md,
+    },
+    badge: {
+      width: 42,
+      height: 42,
+      borderRadius: radius.md,
+      backgroundColor: c.surfaceAlt,
+      alignItems: 'center',
+      justifyContent: 'center',
+    },
+    headerTitle: { ...font(600), fontSize: 19, color: c.text, letterSpacing: -0.3 },
+    headerSub: { ...font(400), fontSize: 12.5, color: c.textMuted, marginTop: 1 },
+    closeBtn: {
+      width: 44,
+      height: 44,
+      borderRadius: 22,
+      backgroundColor: c.surfaceAlt,
+      alignItems: 'center',
+      justifyContent: 'center',
+    },
 
-  emptyCard: {
-    backgroundColor: 'rgba(255,255,255,0.72)',
-    borderRadius: 24,
-    padding: spacing.md + 2,
-    gap: 9,
-    borderWidth: 1,
-    borderColor: 'rgba(136,117,246,0.14)',
-  },
-  emptyTitle: {
-    ...font(500),
-    fontSize: 12,
-    letterSpacing: 0.05,
-    textTransform: 'uppercase',
-    color: colors.textMuted,
-    marginBottom: 2,
-  },
-  suggestion: {
-    backgroundColor: '#FFFFFF',
-    borderRadius: 15,
-    paddingVertical: 13,
-    paddingHorizontal: 14,
-  },
-  suggestionText: { ...font(400), fontSize: 14, color: colors.text, lineHeight: 20 },
+    emptyCard: {
+      ...cardStyle(c),
+      gap: 9,
+    },
+    emptyTitle: {
+      ...font(500),
+      fontSize: 12,
+      letterSpacing: 0.05,
+      textTransform: 'uppercase',
+      color: c.textMuted,
+      marginBottom: 2,
+    },
+    suggestion: {
+      backgroundColor: c.surfaceAlt,
+      borderRadius: radius.md,
+      paddingVertical: 13,
+      paddingHorizontal: 14,
+    },
+    suggestionText: { ...font(400), fontSize: 14, color: c.text, lineHeight: 20 },
 
-  userRow: { alignItems: 'flex-end', marginBottom: 10 },
-  userBubble: {
-    maxWidth: '86%',
-    borderRadius: 20,
-    borderBottomRightRadius: 7,
-    paddingVertical: 12,
-    paddingHorizontal: 15,
-  },
-  userText: { ...font(400), fontSize: 14.5, color: '#FFFFFF', lineHeight: 20 },
+    userRow: { alignItems: 'flex-end', marginBottom: 10 },
+    userBubble: {
+      maxWidth: '86%',
+      backgroundColor: c.primary,
+      borderRadius: 20,
+      paddingVertical: 12,
+      paddingHorizontal: 15,
+    },
+    userText: { ...font(400), fontSize: 14.5, color: c.onAccent, lineHeight: 20 },
 
-  assistantRow: { alignItems: 'flex-start', marginBottom: 10, width: '100%' },
-  assistantBubble: {
-    maxWidth: '90%',
-    backgroundColor: '#FFFFFF',
-    borderRadius: 20,
-    borderBottomLeftRadius: 7,
-    paddingVertical: 12,
-    paddingHorizontal: 15,
-  },
-  assistantText: { ...font(400), fontSize: 14.5, color: colors.text, lineHeight: 20 },
+    assistantRow: { alignItems: 'flex-start', marginBottom: 10, width: '100%' },
+    assistantBubble: {
+      maxWidth: '90%',
+      backgroundColor: c.surface,
+      borderRadius: 20,
+      paddingVertical: 12,
+      paddingHorizontal: 15,
+    },
+    assistantText: { ...font(400), fontSize: 14.5, color: c.text, lineHeight: 20 },
 
-  toolRow: { flexDirection: 'row', alignItems: 'center', gap: 6, marginBottom: 10 },
-  toolText: { ...font(500), fontSize: 12.5, color: '#3EA06B' },
+    toolRow: { flexDirection: 'row', alignItems: 'center', gap: 6, marginBottom: 10 },
+    toolText: { ...font(500), fontSize: 12.5, color: c.textMuted },
 
-  actionCard: {
-    marginTop: 8,
-    width: '100%',
-    backgroundColor: '#FFFFFF',
-    borderRadius: 22,
-    padding: spacing.md,
-    borderWidth: 1,
-    borderColor: 'rgba(136,117,246,0.22)',
-    shadowColor: '#5B3FA8',
-    shadowOffset: { width: 0, height: 6 },
-    shadowOpacity: 0.09,
-    shadowRadius: 14,
-    elevation: 3,
-  },
-  actionLabel: { ...font(500), fontSize: 12.5, color: colors.textMuted, marginBottom: 6 },
-  actionBody: {
-    ...font(600),
-    fontSize: 16,
-    color: colors.text,
-    lineHeight: 23,
-    marginBottom: spacing.md,
-  },
-  actionRow: { flexDirection: 'row', gap: 10, alignItems: 'center' },
-  dismissBtn: {
-    paddingVertical: 14,
-    paddingHorizontal: 18,
-    borderRadius: 50,
-    backgroundColor: '#F4F1F9',
-  },
-  dismissText: { ...font(500), fontSize: 14, color: colors.textMuted },
-  confirmBtn: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'center',
-    gap: 7,
-    borderRadius: 50,
-    paddingVertical: 14,
-  },
-  confirmText: { ...font(600), fontSize: 14.5, color: '#FFFFFF' },
+    actionCard: {
+      ...cardStyle(c),
+      marginTop: 8,
+      width: '100%',
+      borderWidth: 1,
+      borderColor: withAlpha(c.primary, 0.3),
+    },
+    actionLabel: { ...font(500), fontSize: 12.5, color: c.textMuted, marginBottom: 6 },
+    actionBody: {
+      ...font(600),
+      fontSize: 16,
+      color: c.text,
+      lineHeight: 23,
+      marginBottom: spacing.md,
+    },
+    actionRow: { flexDirection: 'row', gap: 10, alignItems: 'center' },
+    dismissBtn: {
+      paddingVertical: 14,
+      paddingHorizontal: 18,
+      borderRadius: radius.pill,
+      backgroundColor: c.surfaceAlt,
+    },
+    dismissText: { ...font(500), fontSize: 14, color: c.textMuted },
+    confirmBtn: {
+      flex: 1,
+      flexDirection: 'row',
+      alignItems: 'center',
+      justifyContent: 'center',
+      gap: 7,
+      borderRadius: radius.pill,
+      paddingVertical: 14,
+      backgroundColor: c.primary,
+    },
+    confirmText: { ...font(600), fontSize: 14.5, color: c.onAccent },
 
-  thinkingRow: { flexDirection: 'row', alignItems: 'center', gap: 9, paddingVertical: 8 },
-  thinkingText: { ...font(400), fontSize: 13, color: colors.textMuted },
+    thinkingRow: { flexDirection: 'row', alignItems: 'center', gap: 9, paddingVertical: 8 },
+    thinkingText: { ...font(400), fontSize: 13, color: c.textMuted },
 
-  composer: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 10,
-    paddingTop: spacing.sm,
-  },
-  input: {
-    flex: 1,
-    backgroundColor: '#FFFFFF',
-    borderRadius: 50,
-    paddingHorizontal: 18,
-    paddingVertical: 16,
-    fontSize: 15,
-    ...font(400),
-    color: colors.text,
-    borderWidth: 1,
-    borderColor: 'rgba(136,117,246,0.14)',
-  },
-  micBtn: {
-    width: 54,
-    height: 54,
-    borderRadius: 27,
-    alignItems: 'center',
-    justifyContent: 'center',
-    shadowColor: colors.primary,
-    shadowOffset: { width: 0, height: 4 },
-    shadowOpacity: 0.3,
-    shadowRadius: 10,
-    elevation: 4,
-  },
-  recordHint: {
-    ...font(400),
-    fontSize: 11.5,
-    color: colors.textMuted,
-    textAlign: 'center',
-    marginTop: 8,
-  },
-});
+    composer: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      gap: 10,
+      paddingTop: spacing.sm,
+    },
+    input: {
+      flex: 1,
+      backgroundColor: c.surfaceAlt,
+      borderRadius: radius.pill,
+      paddingHorizontal: 18,
+      paddingVertical: 16,
+      fontSize: 15,
+      ...font(400),
+      color: c.text,
+      borderWidth: 1,
+      borderColor: c.border,
+    },
+    sendBtn: {
+      width: 54,
+      height: 54,
+      borderRadius: 27,
+      backgroundColor: c.primary,
+      alignItems: 'center',
+      justifyContent: 'center',
+      shadowColor: c.shadow,
+      shadowOffset: { width: 0, height: 4 },
+      shadowOpacity: c.shadowOpacity,
+      shadowRadius: 10,
+      elevation: 4,
+    },
+    recordHint: {
+      ...font(400),
+      fontSize: 11.5,
+      color: c.textMuted,
+      textAlign: 'center',
+      marginTop: 8,
+    },
+  });
+}

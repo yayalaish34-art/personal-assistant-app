@@ -5,7 +5,7 @@ import * as Haptics from 'expo-haptics';
 import { Mic, Square } from 'lucide-react-native';
 
 import { transcribe } from '../lib/assistant';
-import { colors, ACCENT_GRADIENT } from '../theme';
+import { ACCENT_GRADIENT } from '../theme';
 
 /**
  * Record → transcribe button.
@@ -182,7 +182,7 @@ const styles = StyleSheet.create({
     borderRadius: 27,
     alignItems: 'center',
     justifyContent: 'center',
-    shadowColor: colors.primary,
+    shadowColor: ACCENT_GRADIENT.colors[1],
     shadowOffset: { width: 0, height: 4 },
     shadowOpacity: 0.3,
     shadowRadius: 10,

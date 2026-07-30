@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useMemo, useState } from 'react';
 import { ScrollView, View, Text, TextInput, Pressable, StyleSheet, Alert } from 'react-native';
 import { useNavigation, useRoute, type RouteProp } from '@react-navigation/native';
 import type { NativeStackNavigationProp } from '@react-navigation/native-stack';
@@ -14,31 +14,36 @@ import {
 } from 'lucide-react-native';
 
 import { Screen, Button } from '../components/ui';
+import { useTheme } from '../lib/theme';
 import { api, uuid } from '../lib/api';
 import { storage } from '../lib/storage';
 import { withPriority, toDateStr, toUtcIso, nowIso, plusHour } from '../lib/tasks';
 import type { RootStackParamList } from '../navigation';
-import { colors, spacing, font, PRIORITY_COLORS, type Priority } from '../theme';
-import { t } from '../lib/i18n';
+import { spacing, radius, font, priorityColors, type Priority, type Palette } from '../theme';
+import { t, isRTL } from '../lib/i18n';
 
 type Nav = NativeStackNavigationProp<RootStackParamList, 'EntryForm'>;
 type Route = RouteProp<RootStackParamList, 'EntryForm'>;
+
+type Styles = ReturnType<typeof makeStyles>;
 
 const PROJECTS = ['Personal', 'Work', 'Website Redesign'];
 
 // Input with a leading icon, matching the mockup's date/time fields.
 function IconInput({
   icon,
+  c,
+  styles,
   ...rest
-}: { icon: React.ReactNode } & React.ComponentProps<typeof TextInput>) {
+}: {
+  icon: React.ReactNode;
+  c: Palette;
+  styles: Styles;
+} & React.ComponentProps<typeof TextInput>) {
   return (
     <View style={styles.iconInput}>
       {icon}
-      <TextInput
-        placeholderTextColor={colors.textMuted}
-        style={styles.iconInputText}
-        {...rest}
-      />
+      <TextInput placeholderTextColor={c.textMuted} style={styles.iconInputText} {...rest} />
     </View>
   );
 }
@@ -47,6 +52,9 @@ export default function EntryFormScreen() {
   const navigation = useNavigation<Nav>();
   const { kind } = useRoute<Route>().params;
   const isTask = kind === 'task';
+  const { palette: c } = useTheme();
+  const styles = useMemo(() => makeStyles(c), [c]);
+  const pColors = useMemo(() => priorityColors(c), [c]);
 
   const [title, setTitle] = useState('');
   const [body, setBody] = useState('');
@@ -119,33 +127,36 @@ export default function EntryFormScreen() {
       <ScrollView showsVerticalScrollIndicator={false} keyboardShouldPersistTaps="handled">
         {/* ── Header: X, title, ✓ ── */}
         <View style={styles.headerRow}>
-          <Pressable onPress={close} style={styles.circleWhite}>
-            <X color={colors.text} size={20} />
+          <Pressable onPress={close} style={styles.circleMuted}>
+            <X color={c.text} size={20} />
           </Pressable>
           <Text style={styles.headerTitle}>{isTask ? t('form.newTask') : t('form.newEvent')}</Text>
-          <Pressable onPress={save} style={styles.circleWhite}>
-            <Check color={colors.text} size={20} />
+          <Pressable onPress={save} style={styles.circleAccent}>
+            <Check color={c.onAccent} size={20} />
           </Pressable>
         </View>
 
         {/* ── Title ── */}
-        <Text style={styles.label}>{isTask ? t('form.taskTitle') : t('form.eventTitle')}</Text>
+        <Text style={[styles.label, { textAlign: isRTL() ? 'right' : 'left' }]}>
+          {isTask ? t('form.taskTitle') : t('form.eventTitle')}
+        </Text>
         <TextInput
           value={title}
           onChangeText={setTitle}
           placeholder={isTask ? t('form.taskPlaceholder') : t('form.eventPlaceholder')}
-          placeholderTextColor={colors.textMuted}
+          placeholderTextColor={c.textMuted}
           style={styles.input}
         />
 
         {/* ── Description ── */}
-        <Text style={styles.label}>{t('form.description')}</Text>
+        <Text style={[styles.label, { textAlign: isRTL() ? 'right' : 'left' }]}>
+          {t('form.description')}
+        </Text>
         <TextInput
           value={body}
           onChangeText={setBody}
           placeholder={t('form.descriptionPlaceholder')}
-
-          placeholderTextColor={colors.textMuted}
+          placeholderTextColor={c.textMuted}
           style={[styles.input, styles.inputMultiline]}
           multiline
           numberOfLines={4}
@@ -154,11 +165,15 @@ export default function EntryFormScreen() {
         {(
           <>
             {/* ── Due Date & time — dueAt for tasks, startsAt for events ── */}
-            <Text style={styles.label}>{t('form.dueDate')}</Text>
+            <Text style={[styles.label, { textAlign: isRTL() ? 'right' : 'left' }]}>
+              {t('form.dueDate')}
+            </Text>
             <View style={styles.rowGap}>
               <View style={{ flex: 1.4 }}>
                 <IconInput
-                  icon={<CalendarIcon color={colors.text} size={17} />}
+                  icon={<CalendarIcon color={c.textMuted} size={17} />}
+                  c={c}
+                  styles={styles}
                   value={date}
                   onChangeText={setDate}
                   placeholder="2026-07-25"
@@ -168,7 +183,9 @@ export default function EntryFormScreen() {
               </View>
               <View style={{ flex: 1 }}>
                 <IconInput
-                  icon={<Clock color={colors.text} size={17} />}
+                  icon={<Clock color={c.textMuted} size={17} />}
+                  c={c}
+                  styles={styles}
                   value={time}
                   onChangeText={setTime}
                   placeholder="10:00"
@@ -179,10 +196,12 @@ export default function EntryFormScreen() {
             </View>
 
             {/* ── Priority ── */}
-            <Text style={styles.label}>{t('form.priority')}</Text>
+            <Text style={[styles.label, { textAlign: isRTL() ? 'right' : 'left' }]}>
+              {t('form.priority')}
+            </Text>
             <View style={styles.rowGap}>
-              {(Object.keys(PRIORITY_COLORS) as Priority[]).map((p) => {
-                const pc = PRIORITY_COLORS[p];
+              {(Object.keys(pColors) as Priority[]).map((p) => {
+                const pc = pColors[p];
                 const active = priority === p;
                 return (
                   <Pressable
@@ -193,18 +212,22 @@ export default function EntryFormScreen() {
                     }}
                     style={[
                       styles.priorityPill,
-                      { borderColor: pc.color },
-                      active && { backgroundColor: pc.bg },
+                      { borderColor: pc.bg },
+                      active ? { backgroundColor: pc.bg } : { backgroundColor: 'transparent' },
                     ]}
                   >
-                    <Text style={[styles.priorityText, { color: pc.color }]}>{p}</Text>
+                    <Text style={[styles.priorityText, { color: active ? pc.color : pc.bg }]}>
+                      {t(`form.priority.${p.toLowerCase()}`)}
+                    </Text>
                   </Pressable>
                 );
               })}
             </View>
 
             {/* ── Project ── */}
-            <Text style={styles.label}>{t('form.project')}</Text>
+            <Text style={[styles.label, { textAlign: isRTL() ? 'right' : 'left' }]}>
+              {t('form.project')}
+            </Text>
             <Pressable
               onPress={() => {
                 Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
@@ -212,26 +235,28 @@ export default function EntryFormScreen() {
               }}
               style={styles.projectRow}
             >
-              <Folder color={colors.text} size={18} />
+              <Folder color={c.text} size={18} />
               <Text style={styles.projectText}>{PROJECTS[project]}</Text>
               <View style={{ flex: 1 }} />
-              <ChevronDown color={colors.textMuted} size={18} />
+              <ChevronDown color={c.textMuted} size={18} />
             </Pressable>
 
             {/* ── Tags ── */}
-            <Text style={styles.label}>{t('form.tags')}</Text>
+            <Text style={[styles.label, { textAlign: isRTL() ? 'right' : 'left' }]}>
+              {t('form.tags')}
+            </Text>
             <View style={styles.tagsRow}>
-              {tags.map((t) => (
+              {tags.map((tag) => (
                 <Pressable
-                  key={t}
+                  key={tag}
                   onPress={() => {
                     Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
-                    setTags((prev) => prev.filter((x) => x !== t));
+                    setTags((prev) => prev.filter((x) => x !== tag));
                   }}
                   style={styles.tagChip}
                 >
-                  <Text style={styles.tagText}>{t}</Text>
-                  <X color={colors.primary} size={13} />
+                  <Text style={styles.tagText}>{tag}</Text>
+                  <X color={c.textMuted} size={13} />
                 </Pressable>
               ))}
               {addingTag ? (
@@ -239,12 +264,12 @@ export default function EntryFormScreen() {
                   value={newTag}
                   onChangeText={setNewTag}
                   autoFocus
-                  placeholder="Tag"
-                  placeholderTextColor={colors.textMuted}
+                  placeholder={t('form.tagPlaceholder')}
+                  placeholderTextColor={c.textMuted}
                   style={styles.tagInput}
                   onSubmitEditing={() => {
-                    const t = newTag.trim();
-                    if (t && !tags.includes(t)) setTags((prev) => [...prev, t]);
+                    const tag = newTag.trim();
+                    if (tag && !tags.includes(tag)) setTags((prev) => [...prev, tag]);
                     setNewTag('');
                     setAddingTag(false);
                   }}
@@ -258,14 +283,13 @@ export default function EntryFormScreen() {
                   }}
                   style={[styles.tagChip, styles.tagAdd]}
                 >
-                  <Plus color={colors.text} size={13} />
-                  <Text style={[styles.tagText, { color: colors.text }]}>Add</Text>
+                  <Plus color={c.primary} size={13} />
+                  <Text style={[styles.tagText, { color: c.primary }]}>{t('form.addTag')}</Text>
                 </Pressable>
               )}
             </View>
           </>
         )}
-
 
         <View style={{ height: spacing.lg }} />
         <Button
@@ -278,109 +302,128 @@ export default function EntryFormScreen() {
   );
 }
 
-const styles = StyleSheet.create({
-  headerRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    marginBottom: spacing.lg,
-  },
-  headerTitle: { ...font(600), fontSize: 16, color: colors.text },
-  circleWhite: {
-    width: 44,
-    height: 44,
-    borderRadius: 22,
-    backgroundColor: '#FFFFFF',
-    alignItems: 'center',
-    justifyContent: 'center',
-    shadowColor: '#3F2E64',
-    shadowOffset: { width: 0, height: 4 },
-    shadowOpacity: 0.06,
-    shadowRadius: 10,
-    elevation: 2,
-  },
+function makeStyles(c: Palette) {
+  return StyleSheet.create({
+    headerRow: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      justifyContent: 'space-between',
+      marginBottom: spacing.lg,
+    },
+    headerTitle: {
+      ...font(700),
+      fontSize: 17,
+      color: c.text,
+      flex: 1,
+      textAlign: 'center',
+    },
+    circleMuted: {
+      width: 44,
+      height: 44,
+      borderRadius: 22,
+      backgroundColor: c.surfaceAlt,
+      alignItems: 'center',
+      justifyContent: 'center',
+    },
+    circleAccent: {
+      width: 44,
+      height: 44,
+      borderRadius: 22,
+      backgroundColor: c.primary,
+      alignItems: 'center',
+      justifyContent: 'center',
+    },
 
-  label: {
-    ...font(500),
-    fontSize: 14,
-    color: colors.text,
-    marginBottom: spacing.sm,
-  },
-  input: {
-    backgroundColor: '#FFFFFF',
-    borderRadius: 16,
-    paddingHorizontal: spacing.md,
-    paddingVertical: 17,
-    fontSize: 15,
-    ...font(400),
-    color: colors.text,
-    marginBottom: spacing.md + 2,
-  },
-  inputMultiline: { minHeight: 104, textAlignVertical: 'top' },
+    label: {
+      ...font(500),
+      fontSize: 14,
+      color: c.text,
+      marginBottom: spacing.sm,
+    },
+    input: {
+      backgroundColor: c.surfaceAlt,
+      borderRadius: radius.md,
+      borderWidth: 1,
+      borderColor: c.border,
+      paddingHorizontal: spacing.md,
+      paddingVertical: 17,
+      fontSize: 15,
+      ...font(400),
+      color: c.text,
+      textAlign: 'auto',
+      marginBottom: spacing.md + 2,
+    },
+    inputMultiline: { minHeight: 104, textAlignVertical: 'top' },
 
-  rowGap: { flexDirection: 'row', gap: 10, marginBottom: spacing.md + 2 },
-  iconInput: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 9,
-    backgroundColor: '#FFFFFF',
-    borderRadius: 16,
-    paddingHorizontal: 14,
-  },
-  iconInputText: {
-    flex: 1,
-    paddingVertical: 17,
-    fontSize: 14,
-    ...font(400),
-    color: colors.text,
-  },
+    rowGap: { flexDirection: 'row', gap: 10, marginBottom: spacing.md + 2 },
+    iconInput: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      gap: 9,
+      backgroundColor: c.surfaceAlt,
+      borderRadius: radius.md,
+      borderWidth: 1,
+      borderColor: c.border,
+      paddingHorizontal: 14,
+    },
+    iconInputText: {
+      flex: 1,
+      paddingVertical: 17,
+      fontSize: 14,
+      ...font(400),
+      color: c.text,
+      textAlign: 'auto',
+    },
 
-  priorityPill: {
-    flex: 1,
-    borderWidth: 1.4,
-    borderRadius: 50,
-    paddingVertical: 14,
-    alignItems: 'center',
-    backgroundColor: '#FFFFFF',
-  },
-  priorityText: { ...font(500), fontSize: 14 },
+    priorityPill: {
+      flex: 1,
+      borderWidth: 1.4,
+      borderRadius: radius.pill,
+      paddingVertical: 14,
+      alignItems: 'center',
+    },
+    priorityText: { ...font(500), fontSize: 14 },
 
-  projectRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 10,
-    backgroundColor: '#FFFFFF',
-    borderRadius: 16,
-    paddingHorizontal: 14,
-    paddingVertical: 17,
-    marginBottom: spacing.md + 2,
-  },
-  projectText: { ...font(500), fontSize: 14, color: colors.text },
+    projectRow: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      gap: 10,
+      backgroundColor: c.surfaceAlt,
+      borderRadius: radius.md,
+      borderWidth: 1,
+      borderColor: c.border,
+      paddingHorizontal: 14,
+      paddingVertical: 17,
+      marginBottom: spacing.md + 2,
+    },
+    projectText: { ...font(500), fontSize: 14, color: c.text },
 
-  tagsRow: { flexDirection: 'row', flexWrap: 'wrap', gap: 9, alignItems: 'center' },
-  tagChip: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 6,
-    borderWidth: 1.2,
-    borderColor: '#C9BCF7',
-    backgroundColor: '#FFFFFF',
-    borderRadius: 50,
-    paddingHorizontal: 13,
-    paddingVertical: 9,
-  },
-  tagText: { ...font(500), fontSize: 13, color: colors.primary },
-  tagAdd: { borderColor: '#DDD6E4' },
-  tagInput: {
-    minWidth: 70,
-    borderWidth: 1.2,
-    borderColor: '#C9BCF7',
-    backgroundColor: '#FFFFFF',
-    borderRadius: 50,
-    paddingHorizontal: 13,
-    paddingVertical: 9,
-    ...font(400),
-    fontSize: 13,
-    color: colors.text,
-  },
-});
+    tagsRow: { flexDirection: 'row', flexWrap: 'wrap', gap: 9, alignItems: 'center' },
+    tagChip: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      gap: 6,
+      borderWidth: 1,
+      borderColor: c.border,
+      backgroundColor: c.surfaceAlt,
+      borderRadius: radius.pill,
+      paddingHorizontal: 13,
+      paddingVertical: 9,
+    },
+    tagText: { ...font(500), fontSize: 13, color: c.text },
+    tagAdd: { borderColor: c.primary },
+    tagInput: {
+      minWidth: 70,
+      borderWidth: 1,
+      borderColor: c.border,
+      backgroundColor: c.surfaceAlt,
+      borderRadius: radius.pill,
+      paddingHorizontal: 13,
+      paddingVertical: 9,
+      ...font(400),
+      fontSize: 13,
+      color: c.text,
+      textAlign: 'auto',
+    },
+  });
+}

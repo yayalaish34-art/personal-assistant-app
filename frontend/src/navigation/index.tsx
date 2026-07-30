@@ -1,22 +1,17 @@
-import { useEffect, useRef, useState } from 'react';
+import { useMemo } from 'react';
+import { View, Pressable, StyleSheet } from 'react-native';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import {
-  View,
-  Text,
-  Pressable,
-  Animated,
-  StyleSheet,
-  Platform,
-  LayoutAnimation,
-  UIManager,
-  type LayoutRectangle,
-} from 'react-native';
-import { createBottomTabNavigator, type BottomTabBarProps } from '@react-navigation/bottom-tabs';
+  createBottomTabNavigator,
+  type BottomTabBarProps,
+} from '@react-navigation/bottom-tabs';
 import { createNativeStackNavigator } from '@react-navigation/native-stack';
 import * as Haptics from 'expo-haptics';
+import { House, Calendar, ChartNoAxesColumn, User, Plus } from 'lucide-react-native';
 
-import { colors, font, NAV_BAR } from '../theme';
-import { t, isRTL } from '../lib/i18n';
-import { TabIcon } from '../components/TabIcons';
+import { isRTL } from '../lib/i18n';
+import { useTheme } from '../lib/theme';
+import { navBar, radius, type Palette } from '../theme';
 import TodayScreen from '../screens/TodayScreen';
 import JournalScreen from '../screens/JournalScreen';
 import CalendarScreen from '../screens/CalendarScreen';
@@ -26,7 +21,7 @@ import AssistantScreen from '../screens/AssistantScreen';
 
 export type RootStackParamList = {
   Tabs: undefined;
-  // 'task' → POST /tasks, 'event' → POST /events. Two separate resources.
+  // 'task' → a task, 'event' → a calendar entry. Two separate resources.
   EntryForm: { kind: 'task' | 'event' };
   Assistant: undefined;
 };
@@ -34,123 +29,101 @@ export type RootStackParamList = {
 const Tab = createBottomTabNavigator();
 const Stack = createNativeStackNavigator<RootStackParamList>();
 
-// Enable smooth layout transitions (pill expand) on Android.
-if (
-  Platform.OS === 'android' &&
-  UIManager.setLayoutAnimationEnabledExperimental
-) {
-  UIManager.setLayoutAnimationEnabledExperimental(true);
-}
+/** Outline icons, matching the reference. Active is filled with the accent. */
+const ICONS = {
+  Today: House,
+  Calendar: Calendar,
+  Journal: ChartNoAxesColumn,
+  Settings: User,
+} as const;
 
-const SPRING = { stiffness: 200, damping: 22, mass: 1 } as const;
+const BAR_HEIGHT = 64;
+const FAB_SIZE = 58;
 
-// ── Floating white tab bar with a purple pill that slides + expands to the
-//    active tab. The active icon and label sit on the purple fill in white. ──
-function FloatingTabBar({ state, descriptors, navigation }: BottomTabBarProps) {
-  const [layouts, setLayouts] = useState<Record<number, LayoutRectangle>>({});
-  const pillX = useRef(new Animated.Value(0)).current;
-  const pillW = useRef(new Animated.Value(0)).current;
-  const pillOpacity = useRef(new Animated.Value(0)).current;
-  const iconScales = useRef(
-    state.routes.map((_, i) => new Animated.Value(i === state.index ? 1.08 : 1)),
-  ).current;
-  const focused = state.index;
+/**
+ * Flat bottom bar with a raised centre action.
+ *
+ * The reference has no floating card and no sliding pill: a flush bar, four
+ * outline icons, and a large accent circle straddling the bar's top edge. The
+ * circle sits in the middle of the row — two tabs, the button, two tabs — so
+ * it occupies a layout slot rather than being absolutely positioned, which
+ * keeps it centred on any width without measuring.
+ */
+function BottomBar({ state, navigation }: BottomTabBarProps) {
+  const { palette: c } = useTheme();
+  const insets = useSafeAreaInsets();
+  const nav = useMemo(() => navBar(c), [c]);
+  const styles = useMemo(() => makeStyles(c), [c]);
 
-  useEffect(() => {
-    const l = layouts[focused];
-    if (!l) return;
-    // Animate the sibling tabs' width change (label appearing) alongside the pill.
-    LayoutAnimation.configureNext(LayoutAnimation.Presets.easeInEaseOut);
-    Animated.parallel([
-      Animated.spring(pillX, { toValue: l.x, useNativeDriver: false, ...SPRING }),
-      Animated.spring(pillW, { toValue: l.width, useNativeDriver: false, ...SPRING }),
-      Animated.timing(pillOpacity, { toValue: 1, duration: 160, useNativeDriver: false }),
-    ]).start();
-  }, [focused, layouts, pillX, pillW, pillOpacity]);
+  const go = (index: number) => {
+    const route = state.routes[index];
+    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+    const event = navigation.emit({
+      type: 'tabPress',
+      target: route.key,
+      canPreventDefault: true,
+    });
+    if (state.index !== index && !event.defaultPrevented) {
+      navigation.navigate(route.name);
+    }
+  };
 
-  useEffect(() => {
-    // Gently pop the active icon and settle the rest.
-    Animated.parallel(
-      iconScales.map((v, i) =>
-        Animated.spring(v, {
-          toValue: i === focused ? 1.08 : 1,
-          useNativeDriver: true,
-          ...SPRING,
-        }),
-      ),
-    ).start();
-  }, [focused, iconScales]);
+  const openAssistant = () => {
+    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
+    navigation.navigate('Assistant' as never);
+  };
+
+  const tab = (index: number) => {
+    const route = state.routes[index];
+    if (!route) return null;
+    const Icon = ICONS[route.name as keyof typeof ICONS] ?? House;
+    const active = state.index === index;
+    return (
+      <Pressable
+        key={route.key}
+        onPress={() => go(index)}
+        style={styles.tab}
+        hitSlop={8}
+        accessibilityRole="tab"
+        accessibilityState={{ selected: active }}
+      >
+        <Icon
+          color={active ? nav.activeIcon : nav.inactiveIcon}
+          size={25}
+          strokeWidth={active ? 2.4 : 1.9}
+        />
+      </Pressable>
+    );
+  };
+
+  // Mirror the tab order under RTL so the first tab stays on the leading edge.
+  const order = isRTL() ? [3, 2, 1, 0] : [0, 1, 2, 3];
+  const [a, b, d, e] = order;
 
   return (
-    <View style={styles.tabWrapper} pointerEvents="box-none">
-      <View style={[styles.barContainer, { direction: isRTL() ? 'rtl' : 'ltr' }]}>
-        <Animated.View
-          style={[
-            styles.activePill,
-            { width: pillW, opacity: pillOpacity, transform: [{ translateX: pillX }] },
-          ]}
-        />
+    <View
+      style={[
+        styles.bar,
+        { paddingBottom: insets.bottom, height: BAR_HEIGHT + insets.bottom },
+      ]}
+    >
+      {tab(a)}
+      {tab(b)}
 
-        {state.routes.map((route, index) => {
-          const { options } = descriptors[route.key];
-          const label =
-            typeof options.title === 'string' ? options.title : route.name;
-          const isFocused = state.index === index;
-          // The purple pill is hidden until the first onLayout measures it, so
-          // tie the white icon to the pill actually being there — otherwise the
-          // active icon renders white on the white bar and looks missing.
-          const onPill = isFocused && layouts[index] !== undefined;
-
-          const onPress = () => {
-            Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
-            const event = navigation.emit({
-              type: 'tabPress',
-              target: route.key,
-              canPreventDefault: true,
-            });
-            if (!isFocused && !event.defaultPrevented) {
-              navigation.navigate(route.name);
-            }
-          };
-
-          return (
-            <Pressable
-              key={route.key}
-              onPress={onPress}
-              onLayout={(e) => {
-                const layout = e.nativeEvent.layout;
-                setLayouts((prev) => ({ ...prev, [index]: layout }));
-              }}
-              style={styles.tab}
-            >
-              {/* One icon, colour picked from focus state. An earlier version
-                  cross-faded two stacked copies, but that drove opacity from a
-                  natively-driven Animated.Value — both as a raw value and via
-                  .interpolate() — and a native value read from a JS-evaluated
-                  style doesn't update, so the icon could settle at opacity 0
-                  and disappear. Colour is not animatable on an SVG fill prop
-                  anyway, so there is nothing to gain from the extra layer. */}
-              <Animated.View
-                style={[styles.iconBox, { transform: [{ scale: iconScales[index] }] }]}
-              >
-                <TabIcon
-                  name={route.name}
-                  color={onPill ? NAV_BAR.activeIcon : NAV_BAR.inactiveIcon}
-                  size={26}
-                />
-              </Animated.View>
-              {isFocused ? (
-                <Text
-                  style={[styles.tabLabel, !onPill && { color: NAV_BAR.inactiveIcon }]}
-                  numberOfLines={1}
-                >
-                  {label}
-                </Text>
-              ) : null}
-            </Pressable>
-          );
-        })}
+      {/* Layout slot for the raised button: reserves the gap so the four icons
+          stay evenly distributed around it. */}
+      <View style={styles.fabSlot}>
+        <Pressable
+          onPress={openAssistant}
+          style={({ pressed }) => [styles.fab, pressed && { opacity: 0.85 }]}
+          accessibilityRole="button"
+        >
+          <Plus color={nav.fabIcon} size={28} strokeWidth={2.6} />
+        </Pressable>
       </View>
+
+      {tab(d)}
+      {tab(e)}
     </View>
   );
 }
@@ -158,35 +131,27 @@ function FloatingTabBar({ state, descriptors, navigation }: BottomTabBarProps) {
 function Tabs() {
   return (
     <Tab.Navigator
-      tabBar={(props) => <FloatingTabBar {...props} />}
+      tabBar={(props) => <BottomBar {...props} />}
       screenOptions={{ headerShown: false }}
     >
-      <Tab.Screen name="Today" component={TodayScreen} options={{ title: t('tab.home') }} />
-      <Tab.Screen
-        name="Calendar"
-        component={CalendarScreen}
-        options={{ title: t('tab.calendar') }}
-      />
-      <Tab.Screen name="Journal" component={JournalScreen} options={{ title: t('tab.tasks') }} />
-      <Tab.Screen
-        name="Settings"
-        component={SettingsScreen}
-        options={{ title: t('tab.profile') }}
-      />
+      <Tab.Screen name="Today" component={TodayScreen} />
+      <Tab.Screen name="Calendar" component={CalendarScreen} />
+      <Tab.Screen name="Journal" component={JournalScreen} />
+      <Tab.Screen name="Settings" component={SettingsScreen} />
     </Tab.Navigator>
   );
 }
 
 export default function RootNavigator() {
+  const { palette: c } = useTheme();
   return (
     <Stack.Navigator
       screenOptions={{
         headerShown: false,
-        contentStyle: { backgroundColor: colors.bg },
+        contentStyle: { backgroundColor: c.bg },
       }}
     >
       <Stack.Screen name="Tabs" component={Tabs} />
-      {/* The Add New Task screen renders its own X / ✓ header. */}
       <Stack.Screen
         name="EntryForm"
         component={EntryFormScreen}
@@ -201,50 +166,47 @@ export default function RootNavigator() {
   );
 }
 
-const styles = StyleSheet.create({
-  tabWrapper: {
-    position: 'absolute',
-    bottom: 14,
-    left: 0,
-    right: 0,
-    alignItems: 'center',
-  },
-  barContainer: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    borderRadius: 100,
-    paddingHorizontal: 11,
-    paddingVertical: 11,
-    gap: 6,
-    backgroundColor: NAV_BAR.background,
-    shadowColor: '#3F2E64',
-    shadowOpacity: 0.14,
-    shadowRadius: 20,
-    shadowOffset: { width: 0, height: 8 },
-    elevation: 8,
-  },
-  activePill: {
-    position: 'absolute',
-    height: 56,
-    backgroundColor: NAV_BAR.activeFill,
-    borderRadius: 100,
-    // Must equal barContainer's paddingVertical, or the pill sits off-centre.
-    top: 11,
-    left: 0,
-    shadowColor: NAV_BAR.activeFill,
-    shadowOpacity: 0.4,
-    shadowRadius: 12,
-    shadowOffset: { width: 0, height: 4 },
-  },
-  tab: {
-    height: 56,
-    justifyContent: 'center',
-    alignItems: 'center',
-    borderRadius: 100,
-    flexDirection: 'row',
-    gap: 7,
-    paddingHorizontal: 18,
-  },
-  iconBox: { width: 26, height: 26, alignItems: 'center', justifyContent: 'center' },
-  tabLabel: { fontSize: 16, ...font(600), color: NAV_BAR.activeIcon },
-});
+function makeStyles(c: Palette) {
+  const nav = navBar(c);
+  return StyleSheet.create({
+    bar: {
+      position: 'absolute',
+      bottom: 0,
+      left: 0,
+      right: 0,
+      flexDirection: 'row',
+      alignItems: 'center',
+      backgroundColor: nav.background,
+      // A hairline above the bar separates it from content scrolling beneath.
+      borderTopWidth: c.mode === 'dark' ? 0 : 1,
+      borderTopColor: c.border,
+    },
+    tab: {
+      flex: 1,
+      height: BAR_HEIGHT,
+      alignItems: 'center',
+      justifyContent: 'center',
+    },
+    fabSlot: {
+      width: FAB_SIZE + 16,
+      alignItems: 'center',
+      justifyContent: 'center',
+    },
+    fab: {
+      width: FAB_SIZE,
+      height: FAB_SIZE,
+      borderRadius: FAB_SIZE / 2,
+      backgroundColor: nav.fabFill,
+      alignItems: 'center',
+      justifyContent: 'center',
+      // Lifted so it straddles the bar's top edge, as in the reference.
+      marginBottom: FAB_SIZE * 0.55,
+      shadowColor: nav.fabFill,
+      shadowOffset: { width: 0, height: 6 },
+      shadowOpacity: 0.45,
+      shadowRadius: 14,
+      elevation: 10,
+    },
+    radiusRef: { borderRadius: radius.pill },
+  });
+}

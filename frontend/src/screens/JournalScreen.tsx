@@ -11,7 +11,7 @@ import { api, type Task } from '../lib/api';
 import { parsePriority, isLive } from '../lib/tasks';
 import type { RootStackParamList } from '../navigation';
 import { colors, spacing, font, ACCENT_GRADIENT, PRIORITY_COLORS } from '../theme';
-import { t } from '../lib/i18n';
+import { t, isRTL } from '../lib/i18n';
 
 type Nav = NativeStackNavigationProp<RootStackParamList>;
 
@@ -108,7 +108,7 @@ export default function JournalScreen() {
           <>
             {/* ── Headline + add button ── */}
             <View style={styles.headerRow}>
-              <Text style={styles.headline}>
+              <Text style={[styles.headline, { textAlign: isRTL() ? 'right' : 'left' }]}>
                 {t('tasks.headline.line1')}{'\n'}
                 <Text style={styles.headlineStrong}>{t('tasks.headline.line2')}</Text>
               </Text>
@@ -235,6 +235,8 @@ const styles = StyleSheet.create({
     lineHeight: 42,
     color: colors.text,
     letterSpacing: -0.6,
+    // 'auto' follows the writing direction: left in English, right in Hebrew.
+    textAlign: 'auto',
   },
   headlineStrong: { ...font(600) },
   circleBtn: {

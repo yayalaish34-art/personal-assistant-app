@@ -32,7 +32,7 @@ import { storage, defaultSettings, Settings } from '../lib/storage';
 import { api, type Task, type Event } from '../lib/api';
 import { toDateStr, isLive } from '../lib/tasks';
 import { colors, spacing, font, ACCENT_GRADIENT } from '../theme';
-import { t, LANGUAGES, getLanguage, setLanguage, type Language } from '../lib/i18n';
+import { t, isRTL, LANGUAGES, getLanguage, setLanguage, type Language } from '../lib/i18n';
 
 // Placeholder portrait, matching the Today header avatar.
 const PROFILE_PHOTO_URI = 'https://i.pravatar.cc/220?img=47';
@@ -205,9 +205,9 @@ export default function SettingsScreen() {
     <Screen>
       <ScrollView showsVerticalScrollIndicator={false}>
         {/* ── Headline: light first line, heavier second ── */}
-        <Text style={styles.headline}>
-          Your{'\n'}
-          <Text style={styles.headlineStrong}>Profile</Text>
+        <Text style={[styles.headline, { textAlign: isRTL() ? 'right' : 'left' }]}>
+          {t('profile.headline.line1')}{'\n'}
+          <Text style={styles.headlineStrong}>{t('profile.headline.line2')}</Text>
         </Text>
 
         {/* ── Hero: purple gradient identity card ── */}
@@ -416,6 +416,8 @@ const styles = StyleSheet.create({
     color: colors.text,
     letterSpacing: -0.6,
     marginBottom: spacing.lg,
+    // 'auto' follows the writing direction: left in English, right in Hebrew.
+    textAlign: 'auto',
   },
   headlineStrong: { ...font(600) },
 

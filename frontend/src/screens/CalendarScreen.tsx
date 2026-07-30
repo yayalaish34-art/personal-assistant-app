@@ -40,7 +40,7 @@ import {
 } from '../lib/tasks';
 import type { RootStackParamList } from '../navigation';
 import { colors, spacing, font, ACCENT_GRADIENT } from '../theme';
-import { t } from '../lib/i18n';
+import { t, isRTL } from '../lib/i18n';
 
 type Nav = NativeStackNavigationProp<RootStackParamList>;
 
@@ -262,7 +262,7 @@ export default function CalendarScreen() {
         <View style={styles.headlineRow}>
           {/* Light first line, heavier second — same treatment as
               "Let's Make / Today Productive" on the Today screen. */}
-          <Text style={styles.headline}>
+          <Text style={[styles.headline, { textAlign: isRTL() ? 'right' : 'left' }]}>
             Task{'\n'}
             <Text style={styles.headlineStrong}>Schedule</Text>
           </Text>
@@ -549,6 +549,8 @@ const styles = StyleSheet.create({
     lineHeight: 42,
     color: colors.text,
     letterSpacing: -0.6,
+    // 'auto' follows the writing direction: left in English, right in Hebrew.
+    textAlign: 'auto',
   },
   headlineStrong: { ...font(600) },
   calendarPill: {

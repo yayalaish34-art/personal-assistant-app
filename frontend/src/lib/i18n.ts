@@ -1,4 +1,4 @@
-import { I18nManager, Platform } from 'react-native';
+import { DevSettings, I18nManager, Platform } from 'react-native';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import * as Localization from 'expo-localization';
 
@@ -40,14 +40,29 @@ const en: Dict = {
   'today.greeting.morning': 'Good Morning',
   'today.greeting.afternoon': 'Good Afternoon',
   'today.greeting.evening': 'Good Evening',
-  'today.headline.line1': 'Let’s Make',
-  'today.headline.line2': 'Today Productive',
+  'today.headline.line1': 'Plan your day,',
+  'today.headline.line2': 'get things done',
   'today.progress.title': 'Today’s Progress',
   'today.progress.total': 'Total Task',
   'today.progress.completed': 'Completed Task',
   'today.progress.pending': 'Pending Task',
   'today.tasks.title': 'Today’s Tasks',
   'today.tasks.viewAll': 'View All',
+  'today.ai.label': 'Today’s AI Analysis',
+  'today.ai.report': 'AI-Report',
+  'today.ai.prefix': 'You Have {{count}} Tasks',
+  'today.ai.suffix': 'for Today.',
+  'today.ai.urgent': 'Urgent',
+  'today.priorityTask': 'Priority Task',
+  'today.priorityEmpty': 'Nothing on the list yet.',
+  'today.completed': 'Completed',
+  'today.completedCount': '{{done}}/{{total}} task',
+  'today.inProgress': 'In Progress',
+  'today.taskCount': '{{count}} task',
+  'today.allTasks': 'All Tasks',
+  'today.dueDate': 'Due Date: {{date}}',
+  'today.type.event': 'Meeting',
+  'today.type.task': 'Task',
   'today.filter.todo': 'To Do',
   'today.filter.inprogress': 'In Progress',
   'today.filter.done': 'Done',
@@ -56,20 +71,23 @@ const en: Dict = {
   'today.setName': 'Set your name in Profile',
   'today.priority': '{{level}} Priority',
   'today.allDay': 'All day',
-  'today.ai.subtitle': 'Today’s AI Analysis',
-  'today.ai.report': 'AI-Report',
-  'today.ai.statement': 'You have {{count}} tasks to complete today',
-  'today.ai.urgent': 'Urgent',
-  'today.priorityCard.title': 'Priority Task',
-  'today.completedCard.title': 'Completed',
-  'today.completedCard.count': '{{done}}/{{total}} task',
-  'today.inProgressCard.count': '{{count}} task',
-  'today.allTasks.title': 'All Tasks',
-  'today.provider.zoom': 'Zoom Meet',
-  'today.provider.google': 'Google Meet',
-  'today.dueDate': 'Due Date: {{date}}',
-  'today.offline.authRequired': 'Sign in required — open Profile to connect your account.',
-  'today.offline.serverUnavailable': 'Server unavailable — check the API URL in Profile.',
+  'today.hello': 'Hello, {{name}}!',
+  'today.friend': 'there',
+  'today.tile.tasks': 'Tasks',
+  'today.tile.events': 'Events',
+  'today.tile.today': 'Today',
+  'today.tile.productivity': 'Productivity',
+  'today.upcomingEvent': 'Upcoming Event',
+  'today.noEvents': 'Nothing scheduled',
+  'today.addNewTask': 'Add New Task',
+  'today.completedDone': '{{count}} completed',
+  'calendar.view.day': 'Day',
+  'calendar.view.week': 'Week',
+  'calendar.view.month': 'Month',
+  'tasks.title': 'My Tasks',
+  'tasks.filter.upcoming': 'Upcoming',
+  'tasks.completed': 'Completed',
+  'tasks.countTasks': '{{count}} tasks',
 
   // Calendar
   'calendar.headline.line1': 'Task',
@@ -86,11 +104,6 @@ const en: Dict = {
   'calendar.status.todo': 'Upcoming',
   'calendar.status.done': 'Done',
   'calendar.today': 'Today',
-  'calendar.summary': '{{meetings}} Meetings • {{tasks}} Task',
-  'calendar.dueDate': 'Due Date: {{date}}',
-  'calendar.spareTime': 'You have a spare time: {{from}} - {{to}}',
-  'calendar.empty.title': 'Nothing scheduled',
-  'calendar.empty.body': 'Tap + to plan something for this day.',
 
   // Tasks
   'tasks.headline.line1': 'My',
@@ -102,6 +115,7 @@ const en: Dict = {
   'tasks.empty.body': 'Tap + to add your first task.',
   'tasks.error.title': 'Couldn’t load tasks',
   'tasks.noDue': 'No due date',
+  'tasks.tomorrow': 'Tomorrow',
 
   // Add / edit
   'form.newTask': 'Add New Task',
@@ -119,7 +133,6 @@ const en: Dict = {
   'form.priority.high': 'High',
   'form.project': 'Project',
   'form.tags': 'Tags',
-  'form.tagPlaceholder': 'Tag',
   'form.addTag': 'Add',
   'form.createTask': 'Create Task',
   'form.createEvent': 'Create Event',
@@ -144,14 +157,24 @@ const en: Dict = {
   'assistant.notNow': 'Not now',
   'assistant.addEvent': 'Add this event?',
   'assistant.addTask': 'Add this task?',
-  'assistant.updateEvent': 'Update this event?',
-  'assistant.updateTask': 'Update this task?',
-  'assistant.deleteEvent': 'Delete this event?',
-  'assistant.deleteTask': 'Delete this task?',
   'assistant.done': 'Done',
   'assistant.recordHint': 'Tap the square when you’re done',
-  'assistant.voiceWebHint': 'Voice works best on a phone — typing works everywhere',
   'assistant.failed': 'Something went wrong',
+
+  // Voice assistant
+  'voice.title': 'Your assistant',
+  'voice.starting': 'One moment…',
+  'voice.listening': 'Listening',
+  'voice.thinking': 'Thinking…',
+  'voice.speaking': 'Speaking',
+  'voice.tapToStop': 'Tap when you’re done',
+  'voice.tapToInterrupt': 'Tap to cut in',
+  'voice.hint': 'Just talk — she’ll do the rest',
+  'voice.ended': 'We’re done for now',
+  'voice.restart': 'Talk again',
+  'voice.undo': 'Undo that',
+  'voice.micDenied': 'She needs the microphone to hear you.',
+  'voice.unavailable': 'This build has no microphone support — run a development build to talk to her.',
 
   // Profile
   'profile.headline.line1': 'Your',
@@ -184,20 +207,6 @@ const en: Dict = {
   'profile.restartTitle': 'Restart needed',
   'profile.restartBody':
     'The layout direction changed. Close and reopen the app to apply it.',
-  'profile.pro': 'Pro',
-  'profile.analytics': 'Analytics',
-  'profile.thisMonth': 'This Month',
-  'profile.appearance': 'Appearance',
-  'profile.darkMode': 'Dark mode',
-  'profile.darkModeBody': 'Switch between the dark and light theme',
-  'profile.accountSettings': 'Account settings',
-  'profile.personalInfo': 'Personal information',
-  'profile.subscribe': 'Subscribe',
-  'profile.security': 'Security',
-  'profile.projectSetting': 'Project setting',
-  'profile.friends': 'Friends',
-  'profile.invitations': 'Invitations',
-  'profile.attachments': 'Attachments',
 
   // Shared
   'common.cancel': 'Cancel',
@@ -216,14 +225,29 @@ const he: Dict = {
   'today.greeting.morning': 'בוקר טוב',
   'today.greeting.afternoon': 'צהריים טובים',
   'today.greeting.evening': 'ערב טוב',
-  'today.headline.line1': 'בוא נהפוך את',
-  'today.headline.line2': 'היום לפרודוקטיבי',
+  'today.headline.line1': 'לתכנן את היום,',
+  'today.headline.line2': 'ולסיים את המשימות',
   'today.progress.title': 'ההתקדמות היום',
   'today.progress.total': 'סה״כ משימות',
   'today.progress.completed': 'הושלמו',
   'today.progress.pending': 'ממתינות',
   'today.tasks.title': 'המשימות של היום',
   'today.tasks.viewAll': 'הצג הכל',
+  'today.ai.label': 'ניתוח ה-AI של היום',
+  'today.ai.report': 'דוח AI',
+  'today.ai.prefix': 'יש לך {{count}} משימות',
+  'today.ai.suffix': 'להיום.',
+  'today.ai.urgent': 'דחוף',
+  'today.priorityTask': 'משימות בעדיפות',
+  'today.priorityEmpty': 'עדיין אין כלום ברשימה.',
+  'today.completed': 'הושלמו',
+  'today.completedCount': '{{done}}/{{total}} משימות',
+  'today.inProgress': 'בתהליך',
+  'today.taskCount': '{{count}} משימות',
+  'today.allTasks': 'כל המשימות',
+  'today.dueDate': 'תאריך יעד: {{date}}',
+  'today.type.event': 'פגישה',
+  'today.type.task': 'משימה',
   'today.filter.todo': 'לביצוע',
   'today.filter.inprogress': 'בתהליך',
   'today.filter.done': 'הושלמו',
@@ -232,20 +256,23 @@ const he: Dict = {
   'today.setName': 'הגדר את שמך בפרופיל',
   'today.priority': 'עדיפות {{level}}',
   'today.allDay': 'כל היום',
-  'today.ai.subtitle': 'ניתוח ה-AI של היום',
-  'today.ai.report': 'דו״ח AI',
-  'today.ai.statement': 'יש לך {{count}} משימות להשלים היום',
-  'today.ai.urgent': 'דחוף',
-  'today.priorityCard.title': 'משימה בעדיפות',
-  'today.completedCard.title': 'הושלמו',
-  'today.completedCard.count': '{{done}}/{{total}} משימות',
-  'today.inProgressCard.count': '{{count}} משימות',
-  'today.allTasks.title': 'כל המשימות',
-  'today.provider.zoom': 'זום',
-  'today.provider.google': 'גוגל מיט',
-  'today.dueDate': 'תאריך יעד: {{date}}',
-  'today.offline.authRequired': 'נדרשת התחברות — פתח את הפרופיל כדי לחבר את החשבון.',
-  'today.offline.serverUnavailable': 'השרת אינו זמין — בדוק את כתובת ה-API בפרופיל.',
+  'today.hello': 'שלום, {{name}}!',
+  'today.friend': 'אורח',
+  'today.tile.tasks': 'משימות',
+  'today.tile.events': 'אירועים',
+  'today.tile.today': 'היום',
+  'today.tile.productivity': 'פרודוקטיביות',
+  'today.upcomingEvent': 'האירוע הבא',
+  'today.noEvents': 'אין אירועים',
+  'today.addNewTask': 'משימה חדשה',
+  'today.completedDone': '{{count}} הושלמו',
+  'calendar.view.day': 'יום',
+  'calendar.view.week': 'שבוע',
+  'calendar.view.month': 'חודש',
+  'tasks.title': 'המשימות שלי',
+  'tasks.filter.upcoming': 'קרובות',
+  'tasks.completed': 'הושלמו',
+  'tasks.countTasks': '{{count}} משימות',
 
   'calendar.headline.line1': 'לוח',
   'calendar.headline.line2': 'המשימות',
@@ -261,11 +288,6 @@ const he: Dict = {
   'calendar.status.todo': 'מתוכנן',
   'calendar.status.done': 'הושלם',
   'calendar.today': 'היום',
-  'calendar.summary': '{{meetings}} פגישות • {{tasks}} משימה',
-  'calendar.dueDate': 'תאריך יעד: {{date}}',
-  'calendar.spareTime': 'יש לך זמן פנוי: {{from}} - {{to}}',
-  'calendar.empty.title': 'אין תוכניות',
-  'calendar.empty.body': 'לחץ על + כדי לתכנן משהו ליום הזה.',
 
   'tasks.headline.line1': 'המשימות',
   'tasks.headline.line2': 'שלי',
@@ -276,6 +298,7 @@ const he: Dict = {
   'tasks.empty.body': 'לחץ על + כדי להוסיף משימה ראשונה.',
   'tasks.error.title': 'טעינת המשימות נכשלה',
   'tasks.noDue': 'ללא תאריך יעד',
+  'tasks.tomorrow': 'מחר',
 
   'form.newTask': 'משימה חדשה',
   'form.newEvent': 'אירוע חדש',
@@ -292,7 +315,6 @@ const he: Dict = {
   'form.priority.high': 'גבוהה',
   'form.project': 'פרויקט',
   'form.tags': 'תגיות',
-  'form.tagPlaceholder': 'תגית',
   'form.addTag': 'הוסף',
   'form.createTask': 'צור משימה',
   'form.createEvent': 'צור אירוע',
@@ -316,14 +338,24 @@ const he: Dict = {
   'assistant.notNow': 'לא עכשיו',
   'assistant.addEvent': 'להוסיף את האירוע?',
   'assistant.addTask': 'להוסיף את המשימה?',
-  'assistant.updateEvent': 'לעדכן את האירוע?',
-  'assistant.updateTask': 'לעדכן את המשימה?',
-  'assistant.deleteEvent': 'למחוק את האירוע?',
-  'assistant.deleteTask': 'למחוק את המשימה?',
   'assistant.done': 'בוצע',
   'assistant.recordHint': 'לחץ על הריבוע כשתסיים',
-  'assistant.voiceWebHint': 'קול עובד הכי טוב בטלפון — הקלדה עובדת בכל מקום',
   'assistant.failed': 'משהו השתבש',
+
+  // Voice assistant
+  'voice.title': 'העוזרת שלך',
+  'voice.starting': 'רגע אחד…',
+  'voice.listening': 'מקשיבה',
+  'voice.thinking': 'חושבת…',
+  'voice.speaking': 'מדברת',
+  'voice.tapToStop': 'לחצי כשסיימת',
+  'voice.tapToInterrupt': 'לחצי כדי להתערב',
+  'voice.hint': 'פשוט תדברי — היא תעשה את השאר',
+  'voice.ended': 'סיימנו לבינתיים',
+  'voice.restart': 'לדבר שוב',
+  'voice.undo': 'לבטל את זה',
+  'voice.micDenied': 'היא צריכה מיקרופון כדי לשמוע אותך.',
+  'voice.unavailable': 'בגרסה הזו אין תמיכה במיקרופון — צריך dev build כדי לדבר איתה.',
 
   'profile.headline.line1': 'הפרופיל',
   'profile.headline.line2': 'שלי',
@@ -353,20 +385,6 @@ const he: Dict = {
   'profile.savedBody': 'ההגדרות עודכנו.',
   'profile.restartTitle': 'נדרשת הפעלה מחדש',
   'profile.restartBody': 'כיוון התצוגה השתנה. סגור ופתח מחדש את האפליקציה.',
-  'profile.pro': 'פרו',
-  'profile.analytics': 'אנליטיקה',
-  'profile.thisMonth': 'החודש',
-  'profile.appearance': 'מראה',
-  'profile.darkMode': 'מצב כהה',
-  'profile.darkModeBody': 'עבור בין ערכת נושא כהה לבהירה',
-  'profile.accountSettings': 'הגדרות חשבון',
-  'profile.personalInfo': 'פרטים אישיים',
-  'profile.subscribe': 'הרשמה',
-  'profile.security': 'אבטחה',
-  'profile.projectSetting': 'הגדרות פרויקט',
-  'profile.friends': 'חברים',
-  'profile.invitations': 'הזמנות',
-  'profile.attachments': 'קבצים מצורפים',
 
   'common.cancel': 'ביטול',
   'common.delete': 'מחק',
@@ -384,14 +402,29 @@ const it: Dict = {
   'today.greeting.morning': 'Buongiorno',
   'today.greeting.afternoon': 'Buon pomeriggio',
   'today.greeting.evening': 'Buonasera',
-  'today.headline.line1': 'Rendiamo',
-  'today.headline.line2': 'Oggi Produttivo',
+  'today.headline.line1': 'Pianifica la giornata,',
+  'today.headline.line2': 'e porta a termine',
   'today.progress.title': 'Progressi di oggi',
   'today.progress.total': 'Attività totali',
   'today.progress.completed': 'Completate',
   'today.progress.pending': 'In sospeso',
   'today.tasks.title': 'Attività di oggi',
   'today.tasks.viewAll': 'Vedi tutto',
+  'today.ai.label': 'Analisi AI di oggi',
+  'today.ai.report': 'Report AI',
+  'today.ai.prefix': 'Hai {{count}} attività',
+  'today.ai.suffix': 'per oggi.',
+  'today.ai.urgent': 'Urgente',
+  'today.priorityTask': 'Attività prioritarie',
+  'today.priorityEmpty': 'Ancora niente in elenco.',
+  'today.completed': 'Completate',
+  'today.completedCount': '{{done}}/{{total}} attività',
+  'today.inProgress': 'In corso',
+  'today.taskCount': '{{count}} attività',
+  'today.allTasks': 'Tutte le attività',
+  'today.dueDate': 'Scadenza: {{date}}',
+  'today.type.event': 'Riunione',
+  'today.type.task': 'Attività',
   'today.filter.todo': 'Da fare',
   'today.filter.inprogress': 'In corso',
   'today.filter.done': 'Completate',
@@ -400,20 +433,23 @@ const it: Dict = {
   'today.setName': 'Imposta il tuo nome nel profilo',
   'today.priority': 'Priorità {{level}}',
   'today.allDay': 'Tutto il giorno',
-  'today.ai.subtitle': 'Analisi AI di oggi',
-  'today.ai.report': 'Rapporto AI',
-  'today.ai.statement': 'Hai {{count}} attività da completare oggi',
-  'today.ai.urgent': 'Urgente',
-  'today.priorityCard.title': 'Attività prioritaria',
-  'today.completedCard.title': 'Completate',
-  'today.completedCard.count': '{{done}}/{{total}} attività',
-  'today.inProgressCard.count': '{{count}} attività',
-  'today.allTasks.title': 'Tutte le attività',
-  'today.provider.zoom': 'Zoom Meet',
-  'today.provider.google': 'Google Meet',
-  'today.dueDate': 'Scadenza: {{date}}',
-  'today.offline.authRequired': 'Accesso richiesto: apri Profilo per collegare il tuo account.',
-  'today.offline.serverUnavailable': 'Server non disponibile: controlla l’URL API nel profilo.',
+  'today.hello': 'Ciao, {{name}}!',
+  'today.friend': 'ospite',
+  'today.tile.tasks': 'Attività',
+  'today.tile.events': 'Eventi',
+  'today.tile.today': 'Oggi',
+  'today.tile.productivity': 'Produttività',
+  'today.upcomingEvent': 'Prossimo evento',
+  'today.noEvents': 'Niente in agenda',
+  'today.addNewTask': 'Nuova attività',
+  'today.completedDone': '{{count}} completate',
+  'calendar.view.day': 'Giorno',
+  'calendar.view.week': 'Settimana',
+  'calendar.view.month': 'Mese',
+  'tasks.title': 'Le mie attività',
+  'tasks.filter.upcoming': 'In arrivo',
+  'tasks.completed': 'Completate',
+  'tasks.countTasks': '{{count}} attività',
 
   'calendar.headline.line1': 'Programma',
   'calendar.headline.line2': 'Attività',
@@ -429,11 +465,6 @@ const it: Dict = {
   'calendar.status.todo': 'In arrivo',
   'calendar.status.done': 'Completato',
   'calendar.today': 'Oggi',
-  'calendar.summary': '{{meetings}} Riunioni • {{tasks}} Attività',
-  'calendar.dueDate': 'Scadenza: {{date}}',
-  'calendar.spareTime': 'Hai del tempo libero: {{from}} - {{to}}',
-  'calendar.empty.title': 'Niente in programma',
-  'calendar.empty.body': 'Tocca + per pianificare qualcosa per questo giorno.',
 
   'tasks.headline.line1': 'Le mie',
   'tasks.headline.line2': 'Attività',
@@ -444,6 +475,7 @@ const it: Dict = {
   'tasks.empty.body': 'Tocca + per aggiungere la prima attività.',
   'tasks.error.title': 'Impossibile caricare le attività',
   'tasks.noDue': 'Nessuna scadenza',
+  'tasks.tomorrow': 'Domani',
 
   'form.newTask': 'Nuova attività',
   'form.newEvent': 'Nuovo evento',
@@ -460,7 +492,6 @@ const it: Dict = {
   'form.priority.high': 'Alta',
   'form.project': 'Progetto',
   'form.tags': 'Tag',
-  'form.tagPlaceholder': 'Tag',
   'form.addTag': 'Aggiungi',
   'form.createTask': 'Crea attività',
   'form.createEvent': 'Crea evento',
@@ -484,14 +515,24 @@ const it: Dict = {
   'assistant.notNow': 'Non ora',
   'assistant.addEvent': 'Aggiungere questo evento?',
   'assistant.addTask': 'Aggiungere questa attività?',
-  'assistant.updateEvent': 'Aggiornare questo evento?',
-  'assistant.updateTask': 'Aggiornare questa attività?',
-  'assistant.deleteEvent': 'Eliminare questo evento?',
-  'assistant.deleteTask': 'Eliminare questa attività?',
   'assistant.done': 'Fatto',
   'assistant.recordHint': 'Tocca il quadrato quando hai finito',
-  'assistant.voiceWebHint': 'La voce funziona meglio su un telefono — la scrittura funziona ovunque',
   'assistant.failed': 'Qualcosa è andato storto',
+
+  // Voice assistant
+  'voice.title': 'La tua assistente',
+  'voice.starting': 'Un attimo…',
+  'voice.listening': 'Ti ascolto',
+  'voice.thinking': 'Ci penso…',
+  'voice.speaking': 'Sta parlando',
+  'voice.tapToStop': 'Tocca quando hai finito',
+  'voice.tapToInterrupt': 'Tocca per interromperla',
+  'voice.hint': 'Parla pure — al resto pensa lei',
+  'voice.ended': 'Per ora abbiamo finito',
+  'voice.restart': 'Parla di nuovo',
+  'voice.undo': 'Annulla',
+  'voice.micDenied': 'Le serve il microfono per sentirti.',
+  'voice.unavailable': 'Questa build non supporta il microfono: serve una development build per parlarle.',
 
   'profile.headline.line1': 'Il tuo',
   'profile.headline.line2': 'Profilo',
@@ -523,20 +564,6 @@ const it: Dict = {
   'profile.restartTitle': 'Riavvio necessario',
   'profile.restartBody':
     'La direzione del layout è cambiata. Chiudi e riapri l’app per applicarla.',
-  'profile.pro': 'Pro',
-  'profile.analytics': 'Analisi',
-  'profile.thisMonth': 'Questo mese',
-  'profile.appearance': 'Aspetto',
-  'profile.darkMode': 'Modalità scura',
-  'profile.darkModeBody': 'Passa dal tema scuro a quello chiaro',
-  'profile.accountSettings': 'Impostazioni account',
-  'profile.personalInfo': 'Informazioni personali',
-  'profile.subscribe': 'Abbonati',
-  'profile.security': 'Sicurezza',
-  'profile.projectSetting': 'Impostazioni progetto',
-  'profile.friends': 'Amici',
-  'profile.invitations': 'Inviti',
-  'profile.attachments': 'Allegati',
 
   'common.cancel': 'Annulla',
   'common.delete': 'Elimina',
@@ -554,14 +581,29 @@ const es: Dict = {
   'today.greeting.morning': 'Buenos días',
   'today.greeting.afternoon': 'Buenas tardes',
   'today.greeting.evening': 'Buenas noches',
-  'today.headline.line1': 'Hagamos',
-  'today.headline.line2': 'Hoy Productivo',
+  'today.headline.line1': 'Planifica tu día,',
+  'today.headline.line2': 'y cumple tus metas',
   'today.progress.title': 'Progreso de hoy',
   'today.progress.total': 'Tareas totales',
   'today.progress.completed': 'Completadas',
   'today.progress.pending': 'Pendientes',
   'today.tasks.title': 'Tareas de hoy',
   'today.tasks.viewAll': 'Ver todo',
+  'today.ai.label': 'Análisis de IA de hoy',
+  'today.ai.report': 'Informe IA',
+  'today.ai.prefix': 'Tienes {{count}} tareas',
+  'today.ai.suffix': 'para hoy.',
+  'today.ai.urgent': 'Urgente',
+  'today.priorityTask': 'Tareas prioritarias',
+  'today.priorityEmpty': 'Aún no hay nada en la lista.',
+  'today.completed': 'Completadas',
+  'today.completedCount': '{{done}}/{{total}} tareas',
+  'today.inProgress': 'En curso',
+  'today.taskCount': '{{count}} tareas',
+  'today.allTasks': 'Todas las tareas',
+  'today.dueDate': 'Fecha límite: {{date}}',
+  'today.type.event': 'Reunión',
+  'today.type.task': 'Tarea',
   'today.filter.todo': 'Por hacer',
   'today.filter.inprogress': 'En curso',
   'today.filter.done': 'Hechas',
@@ -570,20 +612,23 @@ const es: Dict = {
   'today.setName': 'Escribe tu nombre en el perfil',
   'today.priority': 'Prioridad {{level}}',
   'today.allDay': 'Todo el día',
-  'today.ai.subtitle': 'Análisis de IA de hoy',
-  'today.ai.report': 'Informe IA',
-  'today.ai.statement': 'Tienes {{count}} tareas por completar hoy',
-  'today.ai.urgent': 'Urgente',
-  'today.priorityCard.title': 'Tarea prioritaria',
-  'today.completedCard.title': 'Completadas',
-  'today.completedCard.count': '{{done}}/{{total}} tareas',
-  'today.inProgressCard.count': '{{count}} tareas',
-  'today.allTasks.title': 'Todas las tareas',
-  'today.provider.zoom': 'Zoom Meet',
-  'today.provider.google': 'Google Meet',
-  'today.dueDate': 'Fecha límite: {{date}}',
-  'today.offline.authRequired': 'Inicio de sesión requerido: abre Perfil para conectar tu cuenta.',
-  'today.offline.serverUnavailable': 'Servidor no disponible: revisa la URL de la API en Perfil.',
+  'today.hello': '¡Hola, {{name}}!',
+  'today.friend': 'invitado',
+  'today.tile.tasks': 'Tareas',
+  'today.tile.events': 'Eventos',
+  'today.tile.today': 'Hoy',
+  'today.tile.productivity': 'Productividad',
+  'today.upcomingEvent': 'Próximo evento',
+  'today.noEvents': 'Nada en la agenda',
+  'today.addNewTask': 'Nueva tarea',
+  'today.completedDone': '{{count}} completadas',
+  'calendar.view.day': 'Día',
+  'calendar.view.week': 'Semana',
+  'calendar.view.month': 'Mes',
+  'tasks.title': 'Mis tareas',
+  'tasks.filter.upcoming': 'Próximas',
+  'tasks.completed': 'Completadas',
+  'tasks.countTasks': '{{count}} tareas',
 
   'calendar.headline.line1': 'Agenda de',
   'calendar.headline.line2': 'Tareas',
@@ -599,11 +644,6 @@ const es: Dict = {
   'calendar.status.todo': 'Próximo',
   'calendar.status.done': 'Hecho',
   'calendar.today': 'Hoy',
-  'calendar.summary': '{{meetings}} Reuniones • {{tasks}} Tarea',
-  'calendar.dueDate': 'Fecha límite: {{date}}',
-  'calendar.spareTime': 'Tienes tiempo libre: {{from}} - {{to}}',
-  'calendar.empty.title': 'Nada programado',
-  'calendar.empty.body': 'Toca + para planear algo para este día.',
 
   'tasks.headline.line1': 'Mis',
   'tasks.headline.line2': 'Tareas',
@@ -614,6 +654,7 @@ const es: Dict = {
   'tasks.empty.body': 'Toca + para añadir tu primera tarea.',
   'tasks.error.title': 'No se pudieron cargar las tareas',
   'tasks.noDue': 'Sin fecha límite',
+  'tasks.tomorrow': 'Mañana',
 
   'form.newTask': 'Nueva tarea',
   'form.newEvent': 'Nuevo evento',
@@ -630,7 +671,6 @@ const es: Dict = {
   'form.priority.high': 'Alta',
   'form.project': 'Proyecto',
   'form.tags': 'Etiquetas',
-  'form.tagPlaceholder': 'Etiqueta',
   'form.addTag': 'Añadir',
   'form.createTask': 'Crear tarea',
   'form.createEvent': 'Crear evento',
@@ -654,14 +694,24 @@ const es: Dict = {
   'assistant.notNow': 'Ahora no',
   'assistant.addEvent': '¿Añadir este evento?',
   'assistant.addTask': '¿Añadir esta tarea?',
-  'assistant.updateEvent': '¿Actualizar este evento?',
-  'assistant.updateTask': '¿Actualizar esta tarea?',
-  'assistant.deleteEvent': '¿Eliminar este evento?',
-  'assistant.deleteTask': '¿Eliminar esta tarea?',
   'assistant.done': 'Hecho',
   'assistant.recordHint': 'Toca el cuadrado cuando termines',
-  'assistant.voiceWebHint': 'La voz funciona mejor en un teléfono — escribir funciona en todas partes',
   'assistant.failed': 'Algo salió mal',
+
+  // Voice assistant
+  'voice.title': 'Tu asistente',
+  'voice.starting': 'Un momento…',
+  'voice.listening': 'Te escucho',
+  'voice.thinking': 'Pensando…',
+  'voice.speaking': 'Hablando',
+  'voice.tapToStop': 'Toca cuando termines',
+  'voice.tapToInterrupt': 'Toca para interrumpir',
+  'voice.hint': 'Solo habla: ella se encarga',
+  'voice.ended': 'Por ahora hemos terminado',
+  'voice.restart': 'Hablar otra vez',
+  'voice.undo': 'Deshacer',
+  'voice.micDenied': 'Necesita el micrófono para oírte.',
+  'voice.unavailable': 'Esta versión no admite micrófono: necesitas una development build para hablar con ella.',
 
   'profile.headline.line1': 'Tu',
   'profile.headline.line2': 'Perfil',
@@ -693,20 +743,6 @@ const es: Dict = {
   'profile.restartTitle': 'Se necesita reiniciar',
   'profile.restartBody':
     'La dirección del diseño cambió. Cierra y vuelve a abrir la app.',
-  'profile.pro': 'Pro',
-  'profile.analytics': 'Analítica',
-  'profile.thisMonth': 'Este mes',
-  'profile.appearance': 'Apariencia',
-  'profile.darkMode': 'Modo oscuro',
-  'profile.darkModeBody': 'Cambia entre el tema oscuro y el claro',
-  'profile.accountSettings': 'Ajustes de la cuenta',
-  'profile.personalInfo': 'Información personal',
-  'profile.subscribe': 'Suscribirse',
-  'profile.security': 'Seguridad',
-  'profile.projectSetting': 'Ajustes del proyecto',
-  'profile.friends': 'Amigos',
-  'profile.invitations': 'Invitaciones',
-  'profile.attachments': 'Archivos adjuntos',
 
   'common.cancel': 'Cancelar',
   'common.delete': 'Eliminar',
@@ -724,14 +760,29 @@ const fr: Dict = {
   'today.greeting.morning': 'Bonjour',
   'today.greeting.afternoon': 'Bon après-midi',
   'today.greeting.evening': 'Bonsoir',
-  'today.headline.line1': 'Rendons',
-  'today.headline.line2': 'Cette Journée Productive',
+  'today.headline.line1': 'Planifiez la journée,',
+  'today.headline.line2': 'et avancez',
   'today.progress.title': 'Progrès du jour',
   'today.progress.total': 'Tâches au total',
   'today.progress.completed': 'Terminées',
   'today.progress.pending': 'En attente',
   'today.tasks.title': 'Tâches du jour',
   'today.tasks.viewAll': 'Tout voir',
+  'today.ai.label': 'Analyse IA du jour',
+  'today.ai.report': 'Rapport IA',
+  'today.ai.prefix': 'Vous avez {{count}} tâches',
+  'today.ai.suffix': 'pour aujourd’hui.',
+  'today.ai.urgent': 'Urgent',
+  'today.priorityTask': 'Tâches prioritaires',
+  'today.priorityEmpty': 'Rien dans la liste pour l’instant.',
+  'today.completed': 'Terminées',
+  'today.completedCount': '{{done}}/{{total}} tâches',
+  'today.inProgress': 'En cours',
+  'today.taskCount': '{{count}} tâches',
+  'today.allTasks': 'Toutes les tâches',
+  'today.dueDate': 'Échéance : {{date}}',
+  'today.type.event': 'Réunion',
+  'today.type.task': 'Tâche',
   'today.filter.todo': 'À faire',
   'today.filter.inprogress': 'En cours',
   'today.filter.done': 'Terminées',
@@ -740,20 +791,23 @@ const fr: Dict = {
   'today.setName': 'Renseignez votre nom dans le profil',
   'today.priority': 'Priorité {{level}}',
   'today.allDay': 'Toute la journée',
-  'today.ai.subtitle': 'Analyse IA du jour',
-  'today.ai.report': 'Rapport IA',
-  'today.ai.statement': 'Vous avez {{count}} tâches à terminer aujourd’hui',
-  'today.ai.urgent': 'Urgent',
-  'today.priorityCard.title': 'Tâche prioritaire',
-  'today.completedCard.title': 'Terminées',
-  'today.completedCard.count': '{{done}}/{{total}} tâches',
-  'today.inProgressCard.count': '{{count}} tâches',
-  'today.allTasks.title': 'Toutes les tâches',
-  'today.provider.zoom': 'Zoom Meet',
-  'today.provider.google': 'Google Meet',
-  'today.dueDate': 'Échéance : {{date}}',
-  'today.offline.authRequired': 'Connexion requise — ouvrez Profil pour lier votre compte.',
-  'today.offline.serverUnavailable': 'Serveur indisponible — vérifiez l’URL de l’API dans Profil.',
+  'today.hello': 'Bonjour, {{name}} !',
+  'today.friend': 'invité',
+  'today.tile.tasks': 'Tâches',
+  'today.tile.events': 'Événements',
+  'today.tile.today': 'Aujourd’hui',
+  'today.tile.productivity': 'Productivité',
+  'today.upcomingEvent': 'Prochain événement',
+  'today.noEvents': 'Rien de prévu',
+  'today.addNewTask': 'Nouvelle tâche',
+  'today.completedDone': '{{count}} terminées',
+  'calendar.view.day': 'Jour',
+  'calendar.view.week': 'Semaine',
+  'calendar.view.month': 'Mois',
+  'tasks.title': 'Mes tâches',
+  'tasks.filter.upcoming': 'À venir',
+  'tasks.completed': 'Terminées',
+  'tasks.countTasks': '{{count}} tâches',
 
   'calendar.headline.line1': 'Planning des',
   'calendar.headline.line2': 'Tâches',
@@ -769,11 +823,6 @@ const fr: Dict = {
   'calendar.status.todo': 'À venir',
   'calendar.status.done': 'Terminé',
   'calendar.today': 'Aujourd’hui',
-  'calendar.summary': '{{meetings}} Réunions • {{tasks}} Tâche',
-  'calendar.dueDate': 'Date d’échéance : {{date}}',
-  'calendar.spareTime': 'Vous avez du temps libre : {{from}} - {{to}}',
-  'calendar.empty.title': 'Rien de prévu',
-  'calendar.empty.body': 'Touchez + pour planifier quelque chose ce jour-là.',
 
   'tasks.headline.line1': 'Mes',
   'tasks.headline.line2': 'Tâches',
@@ -784,6 +833,7 @@ const fr: Dict = {
   'tasks.empty.body': 'Touchez + pour ajouter votre première tâche.',
   'tasks.error.title': 'Chargement impossible',
   'tasks.noDue': 'Sans échéance',
+  'tasks.tomorrow': 'Demain',
 
   'form.newTask': 'Nouvelle tâche',
   'form.newEvent': 'Nouvel événement',
@@ -800,7 +850,6 @@ const fr: Dict = {
   'form.priority.high': 'Haute',
   'form.project': 'Projet',
   'form.tags': 'Étiquettes',
-  'form.tagPlaceholder': 'Étiquette',
   'form.addTag': 'Ajouter',
   'form.createTask': 'Créer la tâche',
   'form.createEvent': 'Créer l’événement',
@@ -824,14 +873,24 @@ const fr: Dict = {
   'assistant.notNow': 'Pas maintenant',
   'assistant.addEvent': 'Ajouter cet événement ?',
   'assistant.addTask': 'Ajouter cette tâche ?',
-  'assistant.updateEvent': 'Mettre à jour cet événement ?',
-  'assistant.updateTask': 'Mettre à jour cette tâche ?',
-  'assistant.deleteEvent': 'Supprimer cet événement ?',
-  'assistant.deleteTask': 'Supprimer cette tâche ?',
   'assistant.done': 'Terminé',
   'assistant.recordHint': 'Touchez le carré quand vous avez fini',
-  'assistant.voiceWebHint': 'La voix fonctionne mieux sur un téléphone — la saisie fonctionne partout',
   'assistant.failed': 'Une erreur est survenue',
+
+  // Voice assistant
+  'voice.title': 'Votre assistante',
+  'voice.starting': 'Un instant…',
+  'voice.listening': 'Je vous écoute',
+  'voice.thinking': 'Je réfléchis…',
+  'voice.speaking': 'Elle parle',
+  'voice.tapToStop': 'Touchez quand vous avez fini',
+  'voice.tapToInterrupt': 'Touchez pour l’interrompre',
+  'voice.hint': 'Parlez, elle s’occupe du reste',
+  'voice.ended': 'C’est tout pour l’instant',
+  'voice.restart': 'Reparler',
+  'voice.undo': 'Annuler',
+  'voice.micDenied': 'Elle a besoin du microphone pour vous entendre.',
+  'voice.unavailable': 'Cette version ne gère pas le micro — il faut une development build pour lui parler.',
 
   'profile.headline.line1': 'Votre',
   'profile.headline.line2': 'Profil',
@@ -863,20 +922,6 @@ const fr: Dict = {
   'profile.restartTitle': 'Redémarrage nécessaire',
   'profile.restartBody':
     'Le sens de lecture a changé. Fermez puis rouvrez l’application.',
-  'profile.pro': 'Pro',
-  'profile.analytics': 'Analytique',
-  'profile.thisMonth': 'Ce mois-ci',
-  'profile.appearance': 'Apparence',
-  'profile.darkMode': 'Mode sombre',
-  'profile.darkModeBody': 'Basculez entre le thème sombre et clair',
-  'profile.accountSettings': 'Paramètres du compte',
-  'profile.personalInfo': 'Informations personnelles',
-  'profile.subscribe': 'S’abonner',
-  'profile.security': 'Sécurité',
-  'profile.projectSetting': 'Paramètres du projet',
-  'profile.friends': 'Amis',
-  'profile.invitations': 'Invitations',
-  'profile.attachments': 'Pièces jointes',
 
   'common.cancel': 'Annuler',
   'common.delete': 'Supprimer',
@@ -894,14 +939,29 @@ const ru: Dict = {
   'today.greeting.morning': 'Доброе утро',
   'today.greeting.afternoon': 'Добрый день',
   'today.greeting.evening': 'Добрый вечер',
-  'today.headline.line1': 'Сделаем',
-  'today.headline.line2': 'День Продуктивным',
+  'today.headline.line1': 'Спланируйте день,',
+  'today.headline.line2': 'и всё успевайте',
   'today.progress.title': 'Прогресс за сегодня',
   'today.progress.total': 'Всего задач',
   'today.progress.completed': 'Выполнено',
   'today.progress.pending': 'В ожидании',
   'today.tasks.title': 'Задачи на сегодня',
   'today.tasks.viewAll': 'Показать все',
+  'today.ai.label': 'ИИ-анализ на сегодня',
+  'today.ai.report': 'ИИ-отчёт',
+  'today.ai.prefix': 'У вас {{count}} задач',
+  'today.ai.suffix': 'на сегодня.',
+  'today.ai.urgent': 'Срочно',
+  'today.priorityTask': 'Приоритетные задачи',
+  'today.priorityEmpty': 'В списке пока пусто.',
+  'today.completed': 'Выполнено',
+  'today.completedCount': '{{done}}/{{total}} задач',
+  'today.inProgress': 'В работе',
+  'today.taskCount': '{{count}} задач',
+  'today.allTasks': 'Все задачи',
+  'today.dueDate': 'Срок: {{date}}',
+  'today.type.event': 'Встреча',
+  'today.type.task': 'Задача',
   'today.filter.todo': 'К выполнению',
   'today.filter.inprogress': 'В работе',
   'today.filter.done': 'Готово',
@@ -910,20 +970,23 @@ const ru: Dict = {
   'today.setName': 'Укажите имя в профиле',
   'today.priority': 'Приоритет: {{level}}',
   'today.allDay': 'Весь день',
-  'today.ai.subtitle': 'ИИ-анализ на сегодня',
-  'today.ai.report': 'Отчёт ИИ',
-  'today.ai.statement': 'У вас {{count}} задач на сегодня',
-  'today.ai.urgent': 'Срочно',
-  'today.priorityCard.title': 'Приоритетная задача',
-  'today.completedCard.title': 'Выполнено',
-  'today.completedCard.count': '{{done}}/{{total}} задач',
-  'today.inProgressCard.count': '{{count}} задач',
-  'today.allTasks.title': 'Все задачи',
-  'today.provider.zoom': 'Zoom',
-  'today.provider.google': 'Google Meet',
-  'today.dueDate': 'Срок: {{date}}',
-  'today.offline.authRequired': 'Требуется вход — откройте профиль, чтобы подключить аккаунт.',
-  'today.offline.serverUnavailable': 'Сервер недоступен — проверьте адрес API в профиле.',
+  'today.hello': 'Привет, {{name}}!',
+  'today.friend': 'гость',
+  'today.tile.tasks': 'Задачи',
+  'today.tile.events': 'События',
+  'today.tile.today': 'Сегодня',
+  'today.tile.productivity': 'Продуктивность',
+  'today.upcomingEvent': 'Ближайшее событие',
+  'today.noEvents': 'Ничего не запланировано',
+  'today.addNewTask': 'Новая задача',
+  'today.completedDone': 'Выполнено: {{count}}',
+  'calendar.view.day': 'День',
+  'calendar.view.week': 'Неделя',
+  'calendar.view.month': 'Месяц',
+  'tasks.title': 'Мои задачи',
+  'tasks.filter.upcoming': 'Предстоящие',
+  'tasks.completed': 'Выполнено',
+  'tasks.countTasks': '{{count}} задач',
 
   'calendar.headline.line1': 'Расписание',
   'calendar.headline.line2': 'Задач',
@@ -939,11 +1002,6 @@ const ru: Dict = {
   'calendar.status.todo': 'Предстоит',
   'calendar.status.done': 'Готово',
   'calendar.today': 'Сегодня',
-  'calendar.summary': '{{meetings}} Встречи • {{tasks}} Задача',
-  'calendar.dueDate': 'Срок: {{date}}',
-  'calendar.spareTime': 'У вас есть свободное время: {{from}} - {{to}}',
-  'calendar.empty.title': 'Ничего не запланировано',
-  'calendar.empty.body': 'Нажмите +, чтобы запланировать что-то на этот день.',
 
   'tasks.headline.line1': 'Мои',
   'tasks.headline.line2': 'Задачи',
@@ -954,6 +1012,7 @@ const ru: Dict = {
   'tasks.empty.body': 'Нажмите +, чтобы добавить задачу.',
   'tasks.error.title': 'Не удалось загрузить',
   'tasks.noDue': 'Без срока',
+  'tasks.tomorrow': 'Завтра',
 
   'form.newTask': 'Новая задача',
   'form.newEvent': 'Новое событие',
@@ -970,7 +1029,6 @@ const ru: Dict = {
   'form.priority.high': 'Высокий',
   'form.project': 'Проект',
   'form.tags': 'Теги',
-  'form.tagPlaceholder': 'Тег',
   'form.addTag': 'Добавить',
   'form.createTask': 'Создать задачу',
   'form.createEvent': 'Создать событие',
@@ -994,14 +1052,24 @@ const ru: Dict = {
   'assistant.notNow': 'Не сейчас',
   'assistant.addEvent': 'Добавить это событие?',
   'assistant.addTask': 'Добавить эту задачу?',
-  'assistant.updateEvent': 'Обновить это событие?',
-  'assistant.updateTask': 'Обновить эту задачу?',
-  'assistant.deleteEvent': 'Удалить это событие?',
-  'assistant.deleteTask': 'Удалить эту задачу?',
   'assistant.done': 'Готово',
   'assistant.recordHint': 'Нажмите квадрат, когда закончите',
-  'assistant.voiceWebHint': 'Голос лучше работает на телефоне — набор текста работает везде',
   'assistant.failed': 'Что-то пошло не так',
+
+  // Voice assistant
+  'voice.title': 'Ваша помощница',
+  'voice.starting': 'Секунду…',
+  'voice.listening': 'Слушаю',
+  'voice.thinking': 'Думаю…',
+  'voice.speaking': 'Говорит',
+  'voice.tapToStop': 'Нажмите, когда закончите',
+  'voice.tapToInterrupt': 'Нажмите, чтобы перебить',
+  'voice.hint': 'Просто говорите — остальное она сделает сама',
+  'voice.ended': 'На этом пока всё',
+  'voice.restart': 'Поговорить снова',
+  'voice.undo': 'Отменить',
+  'voice.micDenied': 'Чтобы слышать вас, ей нужен микрофон.',
+  'voice.unavailable': 'В этой сборке нет поддержки микрофона — нужен development build.',
 
   'profile.headline.line1': 'Ваш',
   'profile.headline.line2': 'Профиль',
@@ -1033,20 +1101,6 @@ const ru: Dict = {
   'profile.restartTitle': 'Нужен перезапуск',
   'profile.restartBody':
     'Направление интерфейса изменилось. Закройте и откройте приложение.',
-  'profile.pro': 'Про',
-  'profile.analytics': 'Аналитика',
-  'profile.thisMonth': 'Этот месяц',
-  'profile.appearance': 'Внешний вид',
-  'profile.darkMode': 'Тёмная тема',
-  'profile.darkModeBody': 'Переключение между тёмной и светлой темой',
-  'profile.accountSettings': 'Настройки аккаунта',
-  'profile.personalInfo': 'Личные данные',
-  'profile.subscribe': 'Подписка',
-  'profile.security': 'Безопасность',
-  'profile.projectSetting': 'Настройки проекта',
-  'profile.friends': 'Друзья',
-  'profile.invitations': 'Приглашения',
-  'profile.attachments': 'Вложения',
 
   'common.cancel': 'Отмена',
   'common.delete': 'Удалить',
@@ -1064,14 +1118,29 @@ const ar: Dict = {
   'today.greeting.morning': 'صباح الخير',
   'today.greeting.afternoon': 'مساء الخير',
   'today.greeting.evening': 'مساء الخير',
-  'today.headline.line1': 'لنجعل',
-  'today.headline.line2': 'اليوم منتجًا',
+  'today.headline.line1': 'خطّط ليومك،',
+  'today.headline.line2': 'وأنجز مهامك',
   'today.progress.title': 'تقدم اليوم',
   'today.progress.total': 'إجمالي المهام',
   'today.progress.completed': 'مكتملة',
   'today.progress.pending': 'قيد الانتظار',
   'today.tasks.title': 'مهام اليوم',
   'today.tasks.viewAll': 'عرض الكل',
+  'today.ai.label': 'تحليل الذكاء الاصطناعي لليوم',
+  'today.ai.report': 'تقرير AI',
+  'today.ai.prefix': 'لديك {{count}} مهام',
+  'today.ai.suffix': 'لليوم.',
+  'today.ai.urgent': 'عاجل',
+  'today.priorityTask': 'المهام ذات الأولوية',
+  'today.priorityEmpty': 'لا شيء في القائمة بعد.',
+  'today.completed': 'مكتملة',
+  'today.completedCount': '{{done}}/{{total}} مهمة',
+  'today.inProgress': 'قيد التنفيذ',
+  'today.taskCount': '{{count}} مهمة',
+  'today.allTasks': 'كل المهام',
+  'today.dueDate': 'تاريخ الاستحقاق: {{date}}',
+  'today.type.event': 'اجتماع',
+  'today.type.task': 'مهمة',
   'today.filter.todo': 'للتنفيذ',
   'today.filter.inprogress': 'قيد التنفيذ',
   'today.filter.done': 'مكتملة',
@@ -1080,20 +1149,23 @@ const ar: Dict = {
   'today.setName': 'أضف اسمك في الملف الشخصي',
   'today.priority': 'أولوية {{level}}',
   'today.allDay': 'طوال اليوم',
-  'today.ai.subtitle': 'تحليل الذكاء الاصطناعي لليوم',
-  'today.ai.report': 'تقرير AI',
-  'today.ai.statement': 'لديك {{count}} مهام لإكمالها اليوم',
-  'today.ai.urgent': 'عاجل',
-  'today.priorityCard.title': 'مهمة ذات أولوية',
-  'today.completedCard.title': 'مكتملة',
-  'today.completedCard.count': '{{done}}/{{total}} مهام',
-  'today.inProgressCard.count': '{{count}} مهام',
-  'today.allTasks.title': 'كل المهام',
-  'today.provider.zoom': 'زووم',
-  'today.provider.google': 'جوجل ميت',
-  'today.dueDate': 'تاريخ الاستحقاق: {{date}}',
-  'today.offline.authRequired': 'تسجيل الدخول مطلوب — افتح الملف الشخصي لربط حسابك.',
-  'today.offline.serverUnavailable': 'الخادم غير متاح — تحقق من رابط API في الملف الشخصي.',
+  'today.hello': 'مرحبًا، {{name}}!',
+  'today.friend': 'ضيف',
+  'today.tile.tasks': 'مهام',
+  'today.tile.events': 'أحداث',
+  'today.tile.today': 'اليوم',
+  'today.tile.productivity': 'الإنتاجية',
+  'today.upcomingEvent': 'الحدث القادم',
+  'today.noEvents': 'لا شيء مجدول',
+  'today.addNewTask': 'مهمة جديدة',
+  'today.completedDone': '{{count}} مكتملة',
+  'calendar.view.day': 'يوم',
+  'calendar.view.week': 'أسبوع',
+  'calendar.view.month': 'شهر',
+  'tasks.title': 'مهامي',
+  'tasks.filter.upcoming': 'القادمة',
+  'tasks.completed': 'مكتملة',
+  'tasks.countTasks': '{{count}} مهام',
 
   'calendar.headline.line1': 'جدول',
   'calendar.headline.line2': 'المهام',
@@ -1109,11 +1181,6 @@ const ar: Dict = {
   'calendar.status.todo': 'قادم',
   'calendar.status.done': 'مكتمل',
   'calendar.today': 'اليوم',
-  'calendar.summary': '{{meetings}} اجتماعات • {{tasks}} مهمة',
-  'calendar.dueDate': 'تاريخ الاستحقاق: {{date}}',
-  'calendar.spareTime': 'لديك وقت فراغ: {{from}} - {{to}}',
-  'calendar.empty.title': 'لا يوجد شيء مجدول',
-  'calendar.empty.body': 'اضغط + لتخطيط شيء لهذا اليوم.',
 
   'tasks.headline.line1': 'مهامي',
   'tasks.headline.line2': 'الخاصة',
@@ -1124,6 +1191,7 @@ const ar: Dict = {
   'tasks.empty.body': 'اضغط + لإضافة أول مهمة.',
   'tasks.error.title': 'تعذر تحميل المهام',
   'tasks.noDue': 'بدون موعد',
+  'tasks.tomorrow': 'غدًا',
 
   'form.newTask': 'مهمة جديدة',
   'form.newEvent': 'حدث جديد',
@@ -1140,7 +1208,6 @@ const ar: Dict = {
   'form.priority.high': 'عالية',
   'form.project': 'المشروع',
   'form.tags': 'الوسوم',
-  'form.tagPlaceholder': 'وسم',
   'form.addTag': 'إضافة',
   'form.createTask': 'إنشاء مهمة',
   'form.createEvent': 'إنشاء حدث',
@@ -1164,14 +1231,24 @@ const ar: Dict = {
   'assistant.notNow': 'ليس الآن',
   'assistant.addEvent': 'إضافة هذا الحدث؟',
   'assistant.addTask': 'إضافة هذه المهمة؟',
-  'assistant.updateEvent': 'تحديث هذا الحدث؟',
-  'assistant.updateTask': 'تحديث هذه المهمة؟',
-  'assistant.deleteEvent': 'حذف هذا الحدث؟',
-  'assistant.deleteTask': 'حذف هذه المهمة؟',
   'assistant.done': 'تم',
   'assistant.recordHint': 'اضغط المربع عند الانتهاء',
-  'assistant.voiceWebHint': 'الصوت يعمل بشكل أفضل على الهاتف — الكتابة تعمل في كل مكان',
   'assistant.failed': 'حدث خطأ ما',
+
+  // Voice assistant
+  'voice.title': 'مساعدتك',
+  'voice.starting': 'لحظة…',
+  'voice.listening': 'أستمع إليك',
+  'voice.thinking': 'أفكّر…',
+  'voice.speaking': 'تتحدث',
+  'voice.tapToStop': 'اضغط عند الانتهاء',
+  'voice.tapToInterrupt': 'اضغط لمقاطعتها',
+  'voice.hint': 'تحدّث فقط — هي تتكفّل بالباقي',
+  'voice.ended': 'انتهينا في الوقت الحالي',
+  'voice.restart': 'التحدث مجددًا',
+  'voice.undo': 'تراجع',
+  'voice.micDenied': 'تحتاج إلى الميكروفون لتسمعك.',
+  'voice.unavailable': 'هذه النسخة لا تدعم الميكروفون — تحتاج إلى development build للتحدث معها.',
 
   'profile.headline.line1': 'ملفك',
   'profile.headline.line2': 'الشخصي',
@@ -1201,20 +1278,6 @@ const ar: Dict = {
   'profile.savedBody': 'تم تحديث إعداداتك.',
   'profile.restartTitle': 'إعادة التشغيل مطلوبة',
   'profile.restartBody': 'تغيّر اتجاه العرض. أغلق التطبيق وافتحه من جديد.',
-  'profile.pro': 'برو',
-  'profile.analytics': 'التحليلات',
-  'profile.thisMonth': 'هذا الشهر',
-  'profile.appearance': 'المظهر',
-  'profile.darkMode': 'الوضع الداكن',
-  'profile.darkModeBody': 'التبديل بين المظهر الداكن والفاتح',
-  'profile.accountSettings': 'إعدادات الحساب',
-  'profile.personalInfo': 'المعلومات الشخصية',
-  'profile.subscribe': 'الاشتراك',
-  'profile.security': 'الأمان',
-  'profile.projectSetting': 'إعدادات المشروع',
-  'profile.friends': 'الأصدقاء',
-  'profile.invitations': 'الدعوات',
-  'profile.attachments': 'المرفقات',
 
   'common.cancel': 'إلغاء',
   'common.delete': 'حذف',
@@ -1268,16 +1331,57 @@ export async function loadLanguage(): Promise<Language> {
   } catch {
     current = 'en';
   }
-  applyDirection();
+  await applyDirection();
   return current;
 }
 
+// Set once we have already restarted trying to make the native flag stick, so
+// a host app that refuses to go RTL (Expo Go's own manifest decides that, not
+// ours) cannot put us in a reload loop.
+const RELOAD_MARKER_KEY = '@pa/rtlReloadedFor';
+
 /**
- * Tells React Native which way to lay out. This has to be called before the
- * first render: the native side reads the flag once at startup, which is why
- * changing between an RTL and an LTR language needs an app restart.
+ * Restarts the JS surface. The native RTL flag is read when a surface starts,
+ * so flipping it only shows up after a reload.
+ *
+ * Returns false when it cannot restart by itself and the user has to do it.
  */
-function applyDirection(): void {
+function reloadApp(): boolean {
+  if (Platform.OS === 'web') {
+    const loc = (globalThis as { location?: Location }).location;
+    if (!loc) return false;
+    loc.reload();
+    return true;
+  }
+  // DevSettings.reload only exists while the dev client is attached, which is
+  // the case in Expo Go and in a debug build. A release build has to be
+  // restarted by hand (expo-updates is not a dependency here).
+  if (__DEV__ && typeof DevSettings?.reload === 'function') {
+    DevSettings.reload();
+    return true;
+  }
+  return false;
+}
+
+/**
+ * Tells React Native which way to lay out.
+ *
+ * Two mechanisms, because neither covers every case on its own:
+ *
+ *  - The native I18nManager flag. This is the one that mirrors *everything*,
+ *    including native views and the old architecture, but the native side
+ *    reads it when a surface starts, so it needs a reload to take hold — and
+ *    on Android it is ignored entirely unless the host app's manifest sets
+ *    `android:supportsRtl`, which Expo Go decides for us.
+ *  - The `direction` style, applied at the root in App.tsx. Yoga honours it
+ *    per subtree with no restart, so it covers the case above — but only on
+ *    the new architecture (the old Android renderer has no such prop) and on
+ *    web, where the `dir` attribute below does the same job.
+ *
+ * Returns true when it kicked off a reload, so the caller knows not to also
+ * ask the user to restart.
+ */
+async function applyDirection(): Promise<boolean> {
   const rtl = LANGUAGES[current].rtl;
 
   if (Platform.OS === 'web') {
@@ -1291,21 +1395,44 @@ function applyDirection(): void {
       doc.documentElement.setAttribute('dir', rtl ? 'rtl' : 'ltr');
       doc.documentElement.setAttribute('lang', current);
     }
-    return;
+    return false;
   }
 
   I18nManager.allowRTL(rtl);
-  if (I18nManager.isRTL !== rtl) {
-    I18nManager.forceRTL(rtl);
+  if (I18nManager.isRTL === rtl) {
+    // Already laid out the right way; clear the marker so a later switch is
+    // free to restart again.
+    try {
+      await AsyncStorage.removeItem(RELOAD_MARKER_KEY);
+    } catch {
+      /* the marker is only a loop guard */
+    }
+    return false;
   }
+
+  I18nManager.forceRTL(rtl);
+  try {
+    if ((await AsyncStorage.getItem(RELOAD_MARKER_KEY)) === current) {
+      // We restarted for this language once and the flag still did not stick,
+      // so restarting again would achieve nothing. The root `direction` style
+      // is what mirrors the app from here.
+      return false;
+    }
+    await AsyncStorage.setItem(RELOAD_MARKER_KEY, current);
+  } catch {
+    /* without storage, fall through and restart once per launch */
+  }
+  return reloadApp();
 }
 
 /**
  * Saves the choice and applies it.
  *
- * Returns true when the layout direction changed, which the caller should
- * surface as "restart the app" — React Native cannot flip an already-rendered
- * tree, so text would translate while the layout stayed mirrored the old way.
+ * Returns true when the app has to be restarted by hand for the new direction
+ * to show — React Native cannot flip an already-rendered tree, so the text
+ * would translate while the layout stayed mirrored the old way. When the
+ * restart could be done for us, this returns false and the app is already on
+ * its way back up.
  */
 export async function setLanguage(next: Language): Promise<boolean> {
   const directionChanged = LANGUAGES[next].rtl !== LANGUAGES[current].rtl;
@@ -1315,6 +1442,6 @@ export async function setLanguage(next: Language): Promise<boolean> {
   } catch {
     /* the in-memory value still applies for this session */
   }
-  applyDirection();
-  return directionChanged;
+  const restarting = await applyDirection();
+  return directionChanged && !restarting;
 }

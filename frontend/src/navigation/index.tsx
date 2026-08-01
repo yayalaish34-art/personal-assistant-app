@@ -1,17 +1,13 @@
 import { useMemo } from 'react';
 import { View, Pressable, StyleSheet } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import {
-  createBottomTabNavigator,
-  type BottomTabBarProps,
-} from '@react-navigation/bottom-tabs';
+import { createBottomTabNavigator, type BottomTabBarProps } from '@react-navigation/bottom-tabs';
 import { createNativeStackNavigator } from '@react-navigation/native-stack';
 import * as Haptics from 'expo-haptics';
-import { House, Calendar, ChartNoAxesColumn, User, Plus } from 'lucide-react-native';
+import { House, Calendar, ClipboardList, User, Plus } from 'lucide-react-native';
 
-import { isRTL } from '../lib/i18n';
-import { useTheme } from '../lib/theme';
-import { navBar, radius, type Palette } from '../theme';
+import { colors, NAV_BAR } from '../theme';
+import { t } from '../lib/i18n';
 import TodayScreen from '../screens/TodayScreen';
 import JournalScreen from '../screens/JournalScreen';
 import CalendarScreen from '../screens/CalendarScreen';
@@ -29,34 +25,29 @@ export type RootStackParamList = {
 const Tab = createBottomTabNavigator();
 const Stack = createNativeStackNavigator<RootStackParamList>();
 
-/** Outline icons, matching the reference. Active is filled with the accent. */
 const ICONS = {
   Today: House,
   Calendar: Calendar,
-  Journal: ChartNoAxesColumn,
+  Journal: ClipboardList,
   Settings: User,
 } as const;
 
-const BAR_HEIGHT = 64;
-const FAB_SIZE = 58;
+const TAB_SIZE = 48;
 
 /**
- * Flat bottom bar with a raised centre action.
+ * Flat bottom bar: four outline icons around a black + in the middle.
  *
- * The reference has no floating card and no sliding pill: a flush bar, four
- * outline icons, and a large accent circle straddling the bar's top edge. The
- * circle sits in the middle of the row — two tabs, the button, two tabs — so
- * it occupies a layout slot rather than being absolutely positioned, which
- * keeps it centred on any width without measuring.
+ * The active tab is a filled black circle rather than a sliding pill, and the
+ * + sits in its own slot between the second and third tab — so it stays
+ * centred at any width without measuring anything.
  */
-function BottomBar({ state, navigation }: BottomTabBarProps) {
-  const { palette: c } = useTheme();
+function BottomBar({ state, descriptors, navigation }: BottomTabBarProps) {
   const insets = useSafeAreaInsets();
-  const nav = useMemo(() => navBar(c), [c]);
-  const styles = useMemo(() => makeStyles(c), [c]);
+  const order = useMemo(() => state.routes.map((_, i) => i), [state.routes]);
 
   const go = (index: number) => {
     const route = state.routes[index];
+    if (!route) return;
     Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
     const event = navigation.emit({
       type: 'tabPress',
@@ -70,7 +61,9 @@ function BottomBar({ state, navigation }: BottomTabBarProps) {
 
   const openAssistant = () => {
     Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
-    navigation.navigate('Assistant' as never);
+    // The tab navigator's helpers aren't typed for the parent stack's routes;
+    // the navigation itself bubbles up fine.
+    (navigation as unknown as { navigate: (name: string) => void }).navigate('Assistant');
   };
 
   const tab = (index: number) => {
@@ -78,52 +71,46 @@ function BottomBar({ state, navigation }: BottomTabBarProps) {
     if (!route) return null;
     const Icon = ICONS[route.name as keyof typeof ICONS] ?? House;
     const active = state.index === index;
+    const { options } = descriptors[route.key];
+    const label = typeof options.title === 'string' ? options.title : route.name;
+
     return (
       <Pressable
         key={route.key}
         onPress={() => go(index)}
-        style={styles.tab}
-        hitSlop={8}
-        accessibilityRole="tab"
+        style={[styles.tab, active && styles.tabActive]}
+        accessibilityRole="button"
         accessibilityState={{ selected: active }}
+        // No visible label any more, so the tab name only survives here.
+        accessibilityLabel={label}
       >
         <Icon
-          color={active ? nav.activeIcon : nav.inactiveIcon}
-          size={25}
-          strokeWidth={active ? 2.4 : 1.9}
+          color={active ? NAV_BAR.activeIcon : NAV_BAR.inactiveIcon}
+          size={22}
+          strokeWidth={active ? 2.2 : 1.8}
         />
       </Pressable>
     );
   };
 
-  // Mirror the tab order under RTL so the first tab stays on the leading edge.
-  const order = isRTL() ? [3, 2, 1, 0] : [0, 1, 2, 3];
-  const [a, b, d, e] = order;
-
   return (
-    <View
-      style={[
-        styles.bar,
-        { paddingBottom: insets.bottom, height: BAR_HEIGHT + insets.bottom },
-      ]}
-    >
-      {tab(a)}
-      {tab(b)}
+    <View style={[styles.bar, { paddingBottom: Math.max(insets.bottom, 10) }]}>
+      {tab(order[0] ?? 0)}
+      {tab(order[1] ?? 1)}
 
-      {/* Layout slot for the raised button: reserves the gap so the four icons
-          stay evenly distributed around it. */}
-      <View style={styles.fabSlot}>
-        <Pressable
-          onPress={openAssistant}
-          style={({ pressed }) => [styles.fab, pressed && { opacity: 0.85 }]}
-          accessibilityRole="button"
-        >
-          <Plus color={nav.fabIcon} size={28} strokeWidth={2.6} />
-        </Pressable>
-      </View>
+      {/* The assistant, who takes any request out loud. A bare glyph, as in the
+          reference — the filled circle belongs to the selected tab. */}
+      <Pressable
+        onPress={openAssistant}
+        style={styles.addButton}
+        accessibilityRole="button"
+        accessibilityLabel={t('voice.title')}
+      >
+        <Plus color={colors.text} size={26} strokeWidth={2.2} />
+      </Pressable>
 
-      {tab(d)}
-      {tab(e)}
+      {tab(order[2] ?? 2)}
+      {tab(order[3] ?? 3)}
     </View>
   );
 }
@@ -132,26 +119,34 @@ function Tabs() {
   return (
     <Tab.Navigator
       tabBar={(props) => <BottomBar {...props} />}
-      screenOptions={{ headerShown: false }}
+      screenOptions={{ headerShown: false, sceneStyle: { backgroundColor: colors.bg } }}
     >
-      <Tab.Screen name="Today" component={TodayScreen} />
-      <Tab.Screen name="Calendar" component={CalendarScreen} />
-      <Tab.Screen name="Journal" component={JournalScreen} />
-      <Tab.Screen name="Settings" component={SettingsScreen} />
+      <Tab.Screen name="Today" component={TodayScreen} options={{ title: t('tab.home') }} />
+      <Tab.Screen
+        name="Calendar"
+        component={CalendarScreen}
+        options={{ title: t('tab.calendar') }}
+      />
+      <Tab.Screen name="Journal" component={JournalScreen} options={{ title: t('tab.tasks') }} />
+      <Tab.Screen
+        name="Settings"
+        component={SettingsScreen}
+        options={{ title: t('tab.profile') }}
+      />
     </Tab.Navigator>
   );
 }
 
 export default function RootNavigator() {
-  const { palette: c } = useTheme();
   return (
     <Stack.Navigator
       screenOptions={{
         headerShown: false,
-        contentStyle: { backgroundColor: c.bg },
+        contentStyle: { backgroundColor: colors.bg },
       }}
     >
       <Stack.Screen name="Tabs" component={Tabs} />
+      {/* The Add New Task screen renders its own X / ✓ header. */}
       <Stack.Screen
         name="EntryForm"
         component={EntryFormScreen}
@@ -166,47 +161,27 @@ export default function RootNavigator() {
   );
 }
 
-function makeStyles(c: Palette) {
-  const nav = navBar(c);
-  return StyleSheet.create({
-    bar: {
-      position: 'absolute',
-      bottom: 0,
-      left: 0,
-      right: 0,
-      flexDirection: 'row',
-      alignItems: 'center',
-      backgroundColor: nav.background,
-      // A hairline above the bar separates it from content scrolling beneath.
-      borderTopWidth: c.mode === 'dark' ? 0 : 1,
-      borderTopColor: c.border,
-    },
-    tab: {
-      flex: 1,
-      height: BAR_HEIGHT,
-      alignItems: 'center',
-      justifyContent: 'center',
-    },
-    fabSlot: {
-      width: FAB_SIZE + 16,
-      alignItems: 'center',
-      justifyContent: 'center',
-    },
-    fab: {
-      width: FAB_SIZE,
-      height: FAB_SIZE,
-      borderRadius: FAB_SIZE / 2,
-      backgroundColor: nav.fabFill,
-      alignItems: 'center',
-      justifyContent: 'center',
-      // Lifted so it straddles the bar's top edge, as in the reference.
-      marginBottom: FAB_SIZE * 0.55,
-      shadowColor: nav.fabFill,
-      shadowOffset: { width: 0, height: 6 },
-      shadowOpacity: 0.45,
-      shadowRadius: 14,
-      elevation: 10,
-    },
-    radiusRef: { borderRadius: radius.pill },
-  });
-}
+const styles = StyleSheet.create({
+  bar: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-around',
+    backgroundColor: NAV_BAR.background,
+    paddingTop: 12,
+    paddingHorizontal: 18,
+  },
+  tab: {
+    width: TAB_SIZE,
+    height: TAB_SIZE,
+    borderRadius: TAB_SIZE / 2,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  tabActive: { backgroundColor: NAV_BAR.activeFill },
+  addButton: {
+    width: TAB_SIZE,
+    height: TAB_SIZE,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+});

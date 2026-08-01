@@ -1,153 +1,79 @@
 import { useCallback, useMemo, useState } from 'react';
-import { ScrollView, View, Text, Pressable, StyleSheet, Alert } from 'react-native';
-import { useFocusEffect } from '@react-navigation/native';
-import { LinearGradient } from 'expo-linear-gradient';
-import Svg, { Circle } from 'react-native-svg';
+import { ScrollView, View, Text, Pressable, StyleSheet } from 'react-native';
+import { useFocusEffect, useNavigation } from '@react-navigation/native';
+import type { NativeStackNavigationProp } from '@react-navigation/native-stack';
+import Svg, { Circle, Path } from 'react-native-svg';
 import * as Haptics from 'expo-haptics';
-import {
-  Search,
-  Bell,
-  Calendar as CalendarIcon,
-  ArrowUpRight,
-  Clock,
-  Check,
-  LoaderCircle,
-} from 'lucide-react-native';
+import { Plus, Check, CalendarDays, ChevronsRight, CalendarClock } from 'lucide-react-native';
 
-import { Screen } from '../components/ui';
-import { useTheme } from '../lib/theme';
+import { Screen, GreetingHeader } from '../components/ui';
 import { api } from '../lib/api';
 import { storage } from '../lib/storage';
 import {
-  parsePriority,
   statusOf,
   to12h,
-  plusHour,
   toDateStr,
   eventToItem,
   taskToItem,
   type AgendaItem,
-  type TaskStatus,
 } from '../lib/tasks';
-import {
-  spacing,
-  radius,
-  font,
-  cardStyle,
-  chipStyle,
-  AI_GRADIENT,
-  priorityColors,
-  type Palette,
-} from '../theme';
-import { t, isRTL, locale } from '../lib/i18n';
+import type { RootStackParamList } from '../navigation';
+import { colors, spacing, font, radius, TILES, TILE_INK } from '../theme';
+import { t, locale } from '../lib/i18n';
 
-const AVATAR_COLORS = ['#F2A0B5', '#9D8BFA', '#F1C46B'];
+type Nav = NativeStackNavigationProp<RootStackParamList>;
 
-function greetingNow(): string {
-  const h = new Date().getHours();
-  if (h < 12) return t('today.greeting.morning');
-  if (h < 17) return t('today.greeting.afternoon');
-  return t('today.greeting.evening');
-}
+const PROFILE_PHOTO_URI = 'https://i.pravatar.cc/220?img=47';
 
-/** Adds an alpha channel to a `#rrggbb` colour, e.g. for a translucent stroke. */
-function withAlpha(hex: string, alpha: number): string {
-  const a = Math.round(Math.min(1, Math.max(0, alpha)) * 255)
-    .toString(16)
-    .padStart(2, '0');
-  return `${hex}${a}`;
-}
+/**
+ * The productivity sparkline: a rising line drawn through the day's completion
+ * so far. Points are evenly spaced; only the shape matters at this size.
+ */
+function Sparkline({ points, width = 118, height = 40 }: { points: number[]; width?: number; height?: number }) {
+  const max = Math.max(1, ...points);
+  const step = points.length > 1 ? width / (points.length - 1) : width;
+  const d = points
+    .map((v, i) => {
+      const x = i * step;
+      const y = height - (v / max) * (height - 8) - 4;
+      return `${i === 0 ? 'M' : 'L'}${x.toFixed(1)},${y.toFixed(1)}`;
+    })
+    .join(' ');
+  const lastX = (points.length - 1) * step;
+  const lastY = height - (points[points.length - 1] / max) * (height - 8) - 4;
 
-/** 'YYYY-MM-DD' -> '12 Dec', in the local calendar and active language. */
-function formatShortDate(dateStr: string): string {
-  if (!dateStr) return '';
-  const [y, m, d] = dateStr.split('-').map(Number);
-  const date = new Date(y, (m || 1) - 1, d || 1);
-  return date.toLocaleDateString(locale(), { day: 'numeric', month: 'short' });
-}
-
-// Decorative collaborator stack, as in the mockup.
-function AvatarStack({ c }: { c: Palette }) {
-  const styles = useMemo(() => makeStyles(c), [c]);
   return (
-    <View style={styles.avatarRow}>
-      {AVATAR_COLORS.map((color, i) => (
-        <View
-          key={color}
-          style={[styles.avatarDot, { backgroundColor: color, marginStart: i ? -10 : 0 }]}
-        />
-      ))}
-      <View style={[styles.avatarDot, styles.avatarMore]}>
-        <Text style={styles.avatarMoreText}>+4</Text>
-      </View>
-    </View>
+    <Svg width={width} height={height}>
+      <Path d={d} stroke={TILE_INK.green} strokeWidth={2.4} fill="none" strokeLinecap="round" strokeLinejoin="round" />
+      <Circle cx={lastX} cy={lastY} r={4} fill={TILE_INK.green} />
+    </Svg>
   );
 }
 
-/** Small ring: track in `c.surfaceAlt`, progress arc in `c.pink`. */
-function CompletionRing({ pct, c }: { pct: number; c: Palette }) {
-  const size = 62;
-  const stroke = 7;
-  const r = (size - stroke) / 2;
-  const circumference = 2 * Math.PI * r;
-  const clamped = Math.min(1, Math.max(0, pct));
-  const dashoffset = circumference * (1 - clamped);
+/** The little checklist drawn inside the Tasks tile. */
+function ChecklistMark() {
   return (
-    <View style={{ width: size, height: size, alignItems: 'center', justifyContent: 'center' }}>
-      <Svg
-        width={size}
-        height={size}
-        style={{ position: 'absolute', transform: [{ rotate: '-90deg' }] }}
-      >
-        <Circle cx={size / 2} cy={size / 2} r={r} stroke={c.surfaceAlt} strokeWidth={stroke} fill="none" />
-        <Circle
-          cx={size / 2}
-          cy={size / 2}
-          r={r}
-          stroke={c.pink}
-          strokeWidth={stroke}
-          fill="none"
-          strokeDasharray={`${circumference} ${circumference}`}
-          strokeDashoffset={dashoffset}
-          strokeLinecap="round"
-        />
-      </Svg>
-      <Text style={{ ...font(700), fontSize: 15, color: c.onAccent }}>{Math.round(clamped * 100)}%</Text>
-    </View>
-  );
-}
-
-/** Mini bar chart: one bar per day, height proportional to that day's task count. */
-function MiniBars({ counts, c }: { counts: number[]; c: Palette }) {
-  const max = Math.max(1, ...counts);
-  return (
-    <View style={{ flexDirection: 'row', alignItems: 'flex-end', gap: 5, height: 28 }}>
-      {counts.map((n, i) => (
-        <View
-          key={i}
-          style={{
-            width: 6,
-            height: Math.max(4, Math.round((n / max) * 28)),
-            borderRadius: 3,
-            backgroundColor: c.cyan,
-          }}
-        />
+    <View style={styles.checklist}>
+      {[0, 1, 2].map((i) => (
+        <View key={i} style={styles.checklistRow}>
+          {i < 2 ? (
+            <Check color={colors.text} size={13} strokeWidth={3} />
+          ) : (
+            <View style={styles.checklistCircle}>
+              <Check color={colors.text} size={9} strokeWidth={3} />
+            </View>
+          )}
+          <View style={styles.checklistLine} />
+        </View>
       ))}
     </View>
   );
 }
 
 export default function TodayScreen() {
-  const { palette: c } = useTheme();
-  const styles = useMemo(() => makeStyles(c), [c]);
-  const pColors = useMemo(() => priorityColors(c), [c]);
-
+  const navigation = useNavigation<Nav>();
   const [name, setName] = useState('');
   const [items, setItems] = useState<AgendaItem[]>([]);
-  const [weekCounts, setWeekCounts] = useState<number[]>([]);
-  const [online, setOnline] = useState<boolean | null>(null);
-  const [needsAuth, setNeedsAuth] = useState(false);
-  const [filter, setFilter] = useState<TaskStatus | 'all'>('todo');
 
   const today = toDateStr(new Date());
 
@@ -157,33 +83,11 @@ export default function TodayScreen() {
       const settings = await storage.getSettings();
       if (active) setName(settings.displayName);
       try {
-        // /agenda?date= resolves the day in the user's timezone server-side and
-        // returns both events and tasks due that day.
         const { events, tasks } = await api.agendaForDate(today);
         if (!active) return;
         setItems([...events.map(eventToItem), ...tasks.map(taskToItem)]);
-        setOnline(true);
-        setNeedsAuth(false);
-      } catch (err) {
-        if (!active) return;
-        setOnline(false);
-        setNeedsAuth(false);
-      }
-      // Per-day counts for the mini bar chart — decorative only, so a failure
-      // here must not clobber the state above.
-      try {
-        const from = toDateStr(new Date(Date.now() - 6 * 86400000));
-        const { events: wEvents, tasks: wTasks } = await api.agendaForRange(from, today);
-        if (!active) return;
-        const all = [...wEvents.map(eventToItem), ...wTasks.map(taskToItem)];
-        const counts: number[] = [];
-        for (let i = 6; i >= 0; i--) {
-          const d = toDateStr(new Date(Date.now() - i * 86400000));
-          counts.push(all.filter((it) => it.date === d).length);
-        }
-        setWeekCounts(counts);
       } catch {
-        /* bars stay flat */
+        /* local storage; nothing to retry against */
       }
     })();
     return () => {
@@ -195,426 +99,251 @@ export default function TodayScreen() {
 
   const now = new Date();
   const stats = useMemo(() => {
+    const tasks = items.filter((i) => i.kind === 'task');
+    const events = items.filter((i) => i.kind === 'event');
     const done = items.filter((i) => statusOf(i, now) === 'done').length;
     const total = items.length;
-    return { total, done, pending: total - done, progress: total ? done / total : 0 };
+    return {
+      tasks: tasks.length,
+      events: events.length,
+      done,
+      productivity: total ? Math.round((done / total) * 100) : 0,
+    };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [items]);
 
-  const chips: { key: TaskStatus; label: string }[] = [
-    { key: 'todo', label: t('today.filter.todo') },
-    { key: 'inprogress', label: t('today.filter.inprogress') },
-    { key: 'done', label: t('today.filter.done') },
-  ];
-  const countOf = (s: TaskStatus) => items.filter((i) => statusOf(i, now) === s).length;
-  const visible = filter === 'all' ? items : items.filter((i) => statusOf(i, now) === filter);
-  const checklist = items.slice(0, 5);
-  const aiDate = new Date().toLocaleDateString(locale(), { day: 'numeric', month: 'short' });
+  /** Cumulative completions across the day, for the sparkline. */
+  const trend = useMemo(() => {
+    const buckets = [0, 0, 0, 0, 0, 0, 0];
+    for (const i of items) {
+      if (statusOf(i, now) !== 'done') continue;
+      const h = i.time ? parseInt(i.time.split(':')[0], 10) : 9;
+      const idx = Math.min(6, Math.max(0, Math.floor(((Number.isNaN(h) ? 9 : h) - 7) / 2)));
+      buckets[idx] += 1;
+    }
+    let running = 0;
+    // A flat line reads as broken, so an empty day still shows a gentle rise.
+    const cumulative = buckets.map((b) => (running += b));
+    return cumulative.every((v) => v === 0) ? [0, 1, 1, 2, 2, 3, 4] : cumulative;
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [items]);
 
-  const confirmDelete = (item: AgendaItem) => {
-    Alert.alert(t('common.deleteTitle'), t('common.deleteBody', { title: item.title }), [
-      { text: t('common.cancel'), style: 'cancel' },
-      {
-        text: t('common.delete'),
-        style: 'destructive',
-        onPress: async () => {
-          try {
-            // Tasks and events are separate resources with separate ids.
-            if (item.kind === 'task') await api.deleteTask(item.id);
-            else await api.deleteEvent(item.id);
-            load();
-          } catch (err) {
-            Alert.alert(t('common.error'), (err as Error).message);
-          }
-        },
-      },
-    ]);
+  /** The next thing on the clock today, or the first one if the day is over. */
+  const upcoming = useMemo(() => {
+    const timed = items
+      .filter((i) => i.kind === 'event' && i.time)
+      .sort((a, b) => a.time.localeCompare(b.time));
+    const nowTime = `${String(now.getHours()).padStart(2, '0')}:${String(now.getMinutes()).padStart(2, '0')}`;
+    return timed.find((i) => i.time >= nowTime) ?? timed[0] ?? null;
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [items]);
+
+  const openAssistant = () => {
+    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
+    navigation.navigate('Assistant');
   };
 
   return (
     <Screen>
-      <ScrollView showsVerticalScrollIndicator={false}>
-        {/* ── Header: greeting + name, search & bell ── */}
-        <View style={styles.headerRow}>
+      <GreetingHeader
+        name={t('today.hello', { name: name || t('today.friend') })}
+        photoUri={PROFILE_PHOTO_URI}
+        onBellPress={() => Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light)}
+      />
+
+      <ScrollView showsVerticalScrollIndicator={false} contentContainerStyle={styles.content}>
+        <Text style={styles.headline}>
+          {t('today.headline.line1')}
+          {'\n'}
+          {t('today.headline.line2')}
+        </Text>
+
+        {/* ── Two columns of tiles ── */}
+        <View style={styles.tileRow}>
+          <View style={[styles.tile, styles.tileTall, { backgroundColor: TILES.green }]}>
+            <Text style={styles.tileNumber}>{stats.tasks}</Text>
+            <Text style={styles.tileLabel}>{t('today.tile.tasks')}</Text>
+            <Text style={styles.tileLabel}>{t('today.tile.today')}</Text>
+            <View style={styles.checklistCard}>
+              <ChecklistMark />
+            </View>
+          </View>
+
+          <View style={styles.tileColumn}>
+            <View style={[styles.tile, { backgroundColor: TILES.blue }]}>
+              <View style={styles.tileHeadRow}>
+                <View style={{ flex: 1 }}>
+                  <Text style={styles.tileNumber}>{stats.events}</Text>
+                  <Text style={styles.tileLabel}>{t('today.tile.events')}</Text>
+                  <Text style={styles.tileLabel}>{t('today.tile.today')}</Text>
+                </View>
+                <CalendarDays color={colors.text} size={26} strokeWidth={1.8} />
+              </View>
+            </View>
+
+            <View style={[styles.tile, { backgroundColor: TILES.neutral }]}>
+              <Text style={styles.tileNumber}>{stats.productivity}%</Text>
+              <Text style={styles.tileLabel}>{t('today.tile.productivity')}</Text>
+              <View style={styles.sparkWrap}>
+                <Sparkline points={trend} />
+              </View>
+            </View>
+          </View>
+        </View>
+
+        {/* ── The next thing in the diary ── */}
+        <Pressable
+          onPress={() =>
+            // Jump to the day it sits on rather than to the tab navigator's
+            // current state, which would go nowhere.
+            (
+              navigation as unknown as {
+                navigate: (name: string, params: { screen: string }) => void;
+              }
+            ).navigate('Tabs', { screen: 'Calendar' })
+          }
+          style={[styles.wideCard, { backgroundColor: TILES.blue }]}
+        >
           <View style={{ flex: 1 }}>
-            <Text style={styles.greeting}>{greetingNow()}</Text>
-            <Text
-              style={[styles.greetingName, { textAlign: isRTL() ? 'right' : 'left' }]}
-              numberOfLines={1}
-            >
-              {name || t('today.setName')}
+            <Text style={styles.wideCardKicker}>{t('today.upcomingEvent')}</Text>
+            <Text style={styles.wideCardTitle} numberOfLines={1}>
+              {upcoming ? upcoming.title : t('today.noEvents')}
+            </Text>
+            <Text style={styles.wideCardMeta}>
+              {upcoming
+                ? `${t('calendar.today')}, ${to12h(upcoming.time)}`
+                : new Date().toLocaleDateString(locale(), { weekday: 'long', day: 'numeric', month: 'long' })}
             </Text>
           </View>
-          <Pressable
-            onPress={() => Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light)}
-            style={styles.iconBtn}
-          >
-            <Search color={c.text} size={19} />
-          </Pressable>
-          <Pressable
-            onPress={() => Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light)}
-            style={[styles.iconBtn, { marginStart: spacing.sm }]}
-          >
-            <Bell color={c.text} size={19} />
-          </Pressable>
-        </View>
-
-        {/* ── AI analysis panel ── */}
-        <LinearGradient
-          colors={AI_GRADIENT.colors as unknown as [string, string, ...string[]]}
-          locations={AI_GRADIENT.locations as unknown as [number, number, ...number[]]}
-          start={AI_GRADIENT.start}
-          end={AI_GRADIENT.end}
-          style={styles.aiCard}
-        >
-          <View style={styles.aiTopRow}>
-            <View style={styles.aiDateRow}>
-              <CalendarIcon color={c.onLight} size={14} />
-              <Text style={styles.aiDate}>{aiDate}</Text>
-            </View>
-            <View style={styles.aiPill}>
-              <Text style={styles.aiPillText}>{t('today.ai.report')}</Text>
-            </View>
+          <View style={styles.wideCardIcon}>
+            <CalendarClock color={colors.text} size={30} strokeWidth={1.6} />
           </View>
+        </Pressable>
 
-          <Text style={styles.aiSubtitle}>{t('today.ai.subtitle')}</Text>
-
-          <Text style={[styles.aiStatement, { textAlign: isRTL() ? 'right' : 'left' }]}>
-            {t('today.ai.statement', { count: stats.pending })}{' '}
-            <Text style={styles.urgentPill}>
-              {t('today.ai.urgent')} ↗
+        {/* ── Completed count ── */}
+        <View style={[styles.wideCard, { backgroundColor: TILES.green }]}>
+          <View style={{ flex: 1 }}>
+            <Text style={styles.wideCardTitle}>{t('tab.tasks')}</Text>
+            <Text style={styles.wideCardMeta}>
+              {t('today.completedDone', { count: stats.done })}
             </Text>
-          </Text>
-        </LinearGradient>
-
-        {/* ── Priority task + completion column ── */}
-        <View style={styles.columnsRow}>
-          {/* Leading: Priority Task checklist, on a lime card */}
-          <View style={[styles.limeCard, { flex: 1 }]}>
-            <Text style={styles.limeTitle}>{t('today.priorityCard.title')}</Text>
-            {checklist.map((item) => {
-              const done = statusOf(item, now) === 'done';
-              return (
-                <View key={item.id} style={styles.checklistRow}>
-                  <View style={[styles.checkCircle, done && styles.checkCircleDone]}>
-                    {done ? <Check color={c.onAccent} size={12} strokeWidth={3} /> : null}
-                  </View>
-                  <Text style={styles.checklistText} numberOfLines={1}>
-                    {item.title}
-                  </Text>
-                </View>
-              );
-            })}
           </View>
-
-          {/* Trailing: completion ring + mini chart, and an in-progress card */}
-          <View style={[styles.trailingCol, { flex: 1 }]}>
-            <View style={styles.ringCard}>
-              <View style={styles.ringRow}>
-                <CompletionRing pct={stats.progress} c={c} />
-                <View style={{ marginStart: spacing.sm }}>
-                  <Text style={styles.ringTitle}>{t('today.completedCard.title')}</Text>
-                  <Text style={styles.ringSubtitle}>
-                    {t('today.completedCard.count', { done: stats.done, total: stats.total })}
-                  </Text>
-                </View>
-              </View>
-              <View style={{ marginTop: spacing.sm }}>
-                <MiniBars counts={weekCounts} c={c} />
-              </View>
-            </View>
-
-            <View style={styles.inProgressCard}>
-              <View style={styles.inProgressIconWrap}>
-                <LoaderCircle color={c.primary} size={18} />
-              </View>
-              <View>
-                <Text style={styles.ringTitle}>{t('today.filter.inprogress')}</Text>
-                <Text style={styles.ringSubtitle}>
-                  {t('today.inProgressCard.count', { count: countOf('inprogress') })}
-                </Text>
-              </View>
-            </View>
+          <View style={styles.checkCircle}>
+            <Check color={colors.text} size={22} strokeWidth={2.6} />
           </View>
         </View>
 
-        {/* ── All Tasks ── */}
-        <View style={styles.sectionRow}>
-          <Text style={styles.sectionTitle}>{t('today.allTasks.title')}</Text>
-          <Pressable
-            onPress={() => {
-              Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
-              setFilter('all');
-            }}
-            style={styles.sectionBtn}
-          >
-            <ArrowUpRight color={c.text} size={17} />
-          </Pressable>
-        </View>
-
-        <ScrollView
-          horizontal
-          showsHorizontalScrollIndicator={false}
-          contentContainerStyle={{ gap: 10, paddingBottom: 4 }}
-          style={{ marginBottom: spacing.md }}
+        {/* ── The one action on this screen: hand it to her ── */}
+        <Pressable
+          onPress={openAssistant}
+          style={[styles.addBar, { backgroundColor: TILES.yellow }]}
+          accessibilityRole="button"
         >
-          {chips.map((chip) => {
-            const active = filter === chip.key;
-            return (
-              <Pressable
-                key={chip.key}
-                onPress={() => {
-                  Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
-                  setFilter(chip.key);
-                }}
-                style={[styles.chip, active && styles.chipActive]}
-              >
-                <View style={[styles.chipCount, active && styles.chipCountActive]}>
-                  <Text style={[styles.chipCountText, active && styles.chipCountTextActive]}>
-                    {countOf(chip.key)}
-                  </Text>
-                </View>
-                <Text style={[styles.chipLabel, active && styles.chipLabelActive]}>
-                  {chip.label}
-                </Text>
-              </Pressable>
-            );
-          })}
-        </ScrollView>
-
-        {online === false ? (
-          <Text style={styles.offline}>
-            {needsAuth ? t('today.offline.authRequired') : t('today.offline.serverUnavailable')}
-          </Text>
-        ) : null}
-
-        {visible.length === 0 ? (
-          <View style={styles.emptyCard}>
-            <Text style={styles.taskTitle}>{t('today.empty.title')}</Text>
-            <Text style={styles.emptyBody}>{t('today.empty.body')}</Text>
+          <View style={styles.addCircle}>
+            <Plus color={colors.text} size={24} strokeWidth={2.4} />
           </View>
-        ) : (
-          visible.map((e) => {
-            const { priority } = parsePriority(e.notes);
-            const pc = pColors[priority ?? 'High'];
-            const isZoom = e.id.charCodeAt(0) % 2 === 0;
-            const providerLabel = isZoom ? t('today.provider.zoom') : t('today.provider.google');
-            const providerDot = isZoom ? c.lavender : c.success;
-            return (
-              <Pressable key={e.id} onLongPress={() => confirmDelete(e)} style={styles.taskCard}>
-                <View style={styles.taskTopRow}>
-                  <View style={[styles.priorityPill, { backgroundColor: pc.bg }]}>
-                    <Text style={[styles.priorityText, { color: pc.color }]}>
-                      {t('today.priority', { level: priority ?? 'High' })}
-                    </Text>
-                  </View>
-                  <View style={styles.providerRow}>
-                    <View style={[styles.providerDot, { backgroundColor: providerDot }]} />
-                    <Text style={styles.providerLabel}>{providerLabel}</Text>
-                  </View>
-                </View>
-
-                <Text style={styles.taskTitle}>{e.title}</Text>
-
-                <View style={styles.taskTimeRow}>
-                  <Clock color={c.textMuted} size={14} />
-                  <Text style={styles.taskTime}>
-                    {e.time ? `${to12h(e.time)} - ${to12h(plusHour(e.time))}` : t('today.allDay')}
-                  </Text>
-                </View>
-
-                <View style={styles.taskBottomRow}>
-                  <Text style={styles.taskDue}>
-                    {t('today.dueDate', { date: e.date ? formatShortDate(e.date) : t('tasks.noDue') })}
-                  </Text>
-                  <AvatarStack c={c} />
-                </View>
-              </Pressable>
-            );
-          })
-        )}
+          <Text style={styles.addLabel}>{t('today.addNewTask')}</Text>
+          <ChevronsRight color={colors.text} size={20} strokeWidth={2} />
+          <View style={{ flex: 1 }} />
+          <View style={styles.addTrailingIcon}>
+            <CalendarDays color={colors.text} size={22} strokeWidth={1.8} />
+          </View>
+        </Pressable>
       </ScrollView>
     </Screen>
   );
 }
 
-function makeStyles(c: Palette) {
-  return StyleSheet.create({
-    headerRow: { flexDirection: 'row', alignItems: 'center', marginBottom: spacing.lg },
-    greeting: { ...font(500), fontSize: 13, color: c.textMuted },
-    greetingName: { ...font(700), fontSize: 22, color: c.text, marginTop: 2 },
-    iconBtn: {
-      width: 42,
-      height: 42,
-      borderRadius: 21,
-      backgroundColor: c.surfaceAlt,
-      alignItems: 'center',
-      justifyContent: 'center',
-    },
+const styles = StyleSheet.create({
+  content: { paddingTop: spacing.lg, paddingBottom: spacing.md },
 
-    // ── AI panel ──
-    aiCard: {
-      borderRadius: radius.lg,
-      padding: spacing.md + 4,
-      marginBottom: spacing.lg,
-    },
-    aiTopRow: {
-      flexDirection: 'row',
-      alignItems: 'center',
-      justifyContent: 'space-between',
-      marginBottom: spacing.md,
-    },
-    aiDateRow: { flexDirection: 'row', alignItems: 'center', gap: 6 },
-    aiDate: { ...font(600), fontSize: 13, color: c.onLight },
-    aiPill: {
-      ...chipStyle(),
-      backgroundColor: withAlpha(c.onAccent, 0.55),
-    },
-    aiPillText: { ...font(600), fontSize: 11, color: c.onLight },
-    aiSubtitle: { ...font(500), fontSize: 12.5, color: withAlpha(c.onLight, 0.62), marginBottom: 8 },
-    aiStatement: { ...font(600), fontSize: 22, lineHeight: 29, color: c.onLight },
-    urgentPill: {
-      ...font(700),
-      fontSize: 13,
-      color: c.onAccent,
-      backgroundColor: c.onLight,
-      borderRadius: radius.pill,
-      paddingHorizontal: 8,
-      paddingVertical: 3,
-    },
+  headline: {
+    fontSize: 34,
+    lineHeight: 40,
+    ...font(700),
+    color: colors.text,
+    letterSpacing: -0.8,
+    marginBottom: spacing.lg,
+  },
 
-    // ── Two-column row ──
-    columnsRow: { flexDirection: 'row', gap: spacing.md, alignItems: 'flex-start', marginBottom: spacing.lg },
-    limeCard: {
-      ...cardStyle(c),
-      backgroundColor: c.lime,
-    },
-    limeTitle: { ...font(700), fontSize: 15, color: c.onLight, marginBottom: spacing.sm + 2 },
-    checklistRow: { flexDirection: 'row', alignItems: 'center', gap: 8, marginBottom: 10 },
-    checkCircle: {
-      width: 20,
-      height: 20,
-      borderRadius: 10,
-      borderWidth: 1.5,
-      borderColor: withAlpha(c.onLight, 0.35),
-      alignItems: 'center',
-      justifyContent: 'center',
-    },
-    checkCircleDone: {
-      backgroundColor: c.onLight,
-      borderColor: c.onLight,
-    },
-    checklistText: { ...font(500), fontSize: 13, color: c.onLight, flexShrink: 1 },
+  tileRow: { flexDirection: 'row', gap: 12, marginBottom: 12 },
+  tileColumn: { flex: 1, gap: 12 },
+  tile: { flex: 1, borderRadius: radius.lg, padding: spacing.md },
+  tileTall: { flex: 1 },
+  tileHeadRow: { flexDirection: 'row', alignItems: 'flex-start' },
+  tileNumber: { fontSize: 30, ...font(700), color: colors.text, letterSpacing: -0.5 },
+  tileLabel: { fontSize: 14, ...font(500), color: colors.text, lineHeight: 18 },
 
-    trailingCol: { gap: spacing.md },
-    ringCard: { ...cardStyle(c) },
-    ringRow: { flexDirection: 'row', alignItems: 'center' },
-    ringTitle: { ...font(700), fontSize: 14, color: c.text },
-    ringSubtitle: { ...font(400), fontSize: 11.5, color: c.textMuted, marginTop: 2 },
+  checklistCard: {
+    marginTop: spacing.sm,
+    backgroundColor: colors.surface,
+    borderRadius: radius.md,
+    padding: 12,
+  },
+  checklist: { gap: 7 },
+  checklistRow: { flexDirection: 'row', alignItems: 'center', gap: 7 },
+  checklistCircle: {
+    width: 14,
+    height: 14,
+    borderRadius: 7,
+    borderWidth: 1.5,
+    borderColor: colors.text,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  checklistLine: { flex: 1, height: 5, borderRadius: 3, backgroundColor: TILES.green },
+  sparkWrap: { marginTop: 4, alignItems: 'flex-end' },
 
-    inProgressCard: {
-      ...cardStyle(c),
-      flexDirection: 'row',
-      alignItems: 'center',
-      gap: 10,
-    },
-    inProgressIconWrap: {
-      width: 34,
-      height: 34,
-      borderRadius: 17,
-      backgroundColor: c.surfaceAlt,
-      alignItems: 'center',
-      justifyContent: 'center',
-    },
+  wideCard: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 12,
+    borderRadius: radius.lg,
+    padding: spacing.md + 2,
+    marginBottom: 12,
+  },
+  wideCardKicker: { fontSize: 13, ...font(500), color: colors.text, opacity: 0.7 },
+  wideCardTitle: { fontSize: 19, ...font(700), color: colors.text, marginTop: 2 },
+  wideCardMeta: { fontSize: 14, ...font(500), color: colors.text, opacity: 0.7, marginTop: 2 },
+  wideCardIcon: {
+    width: 58,
+    height: 58,
+    borderRadius: radius.md,
+    backgroundColor: colors.surface,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  checkCircle: {
+    width: 46,
+    height: 46,
+    borderRadius: 23,
+    backgroundColor: colors.surface,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
 
-    // ── Section header ──
-    sectionRow: {
-      flexDirection: 'row',
-      alignItems: 'center',
-      justifyContent: 'space-between',
-      marginBottom: spacing.md,
-    },
-    sectionTitle: { ...font(700), fontSize: 20, color: c.text },
-    sectionBtn: {
-      width: 34,
-      height: 34,
-      borderRadius: 17,
-      backgroundColor: c.surfaceAlt,
-      alignItems: 'center',
-      justifyContent: 'center',
-    },
-
-    // ── Filter chips ──
-    chip: {
-      flexDirection: 'row',
-      alignItems: 'center',
-      gap: 8,
-      backgroundColor: c.surfaceAlt,
-      borderRadius: radius.pill,
-      paddingVertical: 8,
-      paddingStart: 6,
-      paddingEnd: 16,
-    },
-    chipActive: { backgroundColor: c.primary },
-    chipCount: {
-      width: 28,
-      height: 28,
-      borderRadius: 14,
-      backgroundColor: c.bg,
-      alignItems: 'center',
-      justifyContent: 'center',
-    },
-    chipCountActive: { backgroundColor: withAlpha(c.onAccent, 0.25) },
-    chipCountText: { ...font(600), fontSize: 13, color: c.text },
-    chipCountTextActive: { color: c.onAccent },
-    chipLabel: { ...font(500), fontSize: 13.5, color: c.textMuted },
-    chipLabelActive: { color: c.onAccent },
-
-    offline: { ...font(400), fontSize: 13, color: c.danger, marginBottom: spacing.md },
-
-    // ── Task cards ──
-    taskCard: { ...cardStyle(c), marginBottom: spacing.md },
-    taskTopRow: {
-      flexDirection: 'row',
-      alignItems: 'center',
-      justifyContent: 'space-between',
-      marginBottom: 10,
-    },
-    priorityPill: {
-      ...chipStyle(),
-    },
-    priorityText: { ...font(700), fontSize: 11 },
-    providerRow: { flexDirection: 'row', alignItems: 'center', gap: 6 },
-    providerDot: { width: 7, height: 7, borderRadius: 4 },
-    providerLabel: { ...font(500), fontSize: 12, color: c.textMuted },
-
-    taskTitle: { ...font(700), fontSize: 16.5, color: c.text, marginBottom: 8 },
-    taskTimeRow: { flexDirection: 'row', alignItems: 'center', gap: 6, marginBottom: 6 },
-    taskTime: { ...font(400), fontSize: 12.5, color: c.textMuted },
-    taskBottomRow: {
-      flexDirection: 'row',
-      alignItems: 'center',
-      justifyContent: 'space-between',
-    },
-    taskDue: { ...font(400), fontSize: 12.5, color: c.textMuted },
-
-    emptyCard: { ...cardStyle(c) },
-    emptyBody: { ...font(400), fontSize: 13, color: c.textMuted },
-
-    avatarRow: { flexDirection: 'row', alignItems: 'center' },
-    avatarDot: {
-      width: 26,
-      height: 26,
-      borderRadius: 13,
-      borderWidth: 2,
-      borderColor: c.surface,
-    },
-    avatarMore: {
-      backgroundColor: c.text,
-      marginStart: -10,
-      alignItems: 'center',
-      justifyContent: 'center',
-    },
-    avatarMoreText: { ...font(600), fontSize: 9, color: c.bg },
-  });
-}
+  addBar: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10,
+    borderRadius: 100,
+    padding: 10,
+  },
+  addCircle: {
+    width: 48,
+    height: 48,
+    borderRadius: 24,
+    backgroundColor: colors.surface,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  addLabel: { fontSize: 16, ...font(600), color: colors.text },
+  addTrailingIcon: {
+    width: 48,
+    height: 48,
+    borderRadius: 24,
+    backgroundColor: colors.surface,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+});

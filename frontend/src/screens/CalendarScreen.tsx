@@ -1,687 +1,425 @@
-import { useCallback, useMemo, useState, type ReactNode } from 'react';
-import { ScrollView, View, Text, Pressable, StyleSheet, Alert, LayoutAnimation } from 'react-native';
-import { useFocusEffect } from '@react-navigation/native';
+import { useCallback, useMemo, useState } from 'react';
+import { ScrollView, View, Text, Pressable, StyleSheet, Alert } from 'react-native';
+import { useFocusEffect, useNavigation } from '@react-navigation/native';
+import type { NativeStackNavigationProp } from '@react-navigation/native-stack';
 import * as Haptics from 'expo-haptics';
-import { Ellipsis, ChevronLeft, ChevronRight, Clock } from 'lucide-react-native';
-
-import { Screen } from '../components/ui';
-import { api } from '../lib/api';
 import {
-  parsePriority,
+  ChevronLeft,
+  ChevronRight,
+  CircleCheck,
+  Users,
+  FileText,
+  Smile,
+} from 'lucide-react-native';
+
+import { Screen, GreetingHeader } from '../components/ui';
+import { api } from '../lib/api';
+import { storage } from '../lib/storage';
+import {
   statusOf,
   to12h,
-  plusHour,
   toDateStr,
-  toTimeStr,
   eventToItem,
   taskToItem,
   type AgendaItem,
-  type TaskStatus,
 } from '../lib/tasks';
-import { useTheme } from '../lib/theme';
-import { spacing, radius, font, cardStyle, priorityColors, type Palette } from '../theme';
-import { t, isRTL, locale } from '../lib/i18n';
+import type { RootStackParamList } from '../navigation';
+import { colors, spacing, font, radius, TILES, ROW_TILES } from '../theme';
+import { t, locale } from '../lib/i18n';
 
-const AVATAR_COLORS = ['#F2A0B5', '#9D8BFA', '#F1C46B'];
+type Nav = NativeStackNavigationProp<RootStackParamList>;
 
-/**
- * Monday-first weekday abbreviations in the active language. Derived rather
- * than hardcoded: the literal English list rendered untranslated in all six
- * other locales, while the week strip directly above it was already
- * locale-aware — the two rows disagreed.
- */
-function weekdayLabels(): string[] {
-  // 2024-01-01 was a Monday, so this walks Mon→Sun.
-  return Array.from({ length: 7 }, (_, i) =>
-    new Date(2024, 0, 1 + i).toLocaleDateString(locale(), { weekday: 'short' }),
-  );
-}
+const PROFILE_PHOTO_URI = 'https://i.pravatar.cc/220?img=47';
 
-const STATUS_LABEL_KEY: Record<TaskStatus, string> = {
-  todo: 'calendar.status.todo',
-  inprogress: 'calendar.status.inprogress',
-  done: 'calendar.status.done',
-};
+type ViewMode = 'day' | 'week' | 'month';
 
-function statusColor(c: Palette, s: TaskStatus): string {
-  if (s === 'done') return c.success;
-  if (s === 'inprogress') return c.primary;
-  return c.lavender;
-}
+/** The hours the timeline covers. Anything earlier is clamped to the top. */
+const FIRST_HOUR = 8;
+const LAST_HOUR = 20;
+/** Height of one hour row — an entry's block is sized from its duration. */
+const HOUR_HEIGHT = 62;
 
-/**
- * The full month grid containing `anchor`, as weeks of 7 days. Leading and
- * trailing days from the neighbouring months pad the grid so every row is
- * complete; `inMonth` distinguishes them so they can render dimmed.
- */
-function monthGrid(anchor: Date): { date: Date; inMonth: boolean }[][] {
-  const year = anchor.getFullYear();
-  const month = anchor.getMonth();
-  const first = new Date(year, month, 1);
-  // Monday-first: how many days of the previous month lead the grid.
-  const lead = (first.getDay() + 6) % 7;
-
-  const start = new Date(year, month, 1 - lead);
-  const weeks: { date: Date; inMonth: boolean }[][] = [];
-  const cursor = new Date(start);
-
-  // Emit whole weeks until we've passed the end of the month.
-  do {
-    const week = [...Array(7)].map(() => {
-      const date = new Date(cursor);
-      cursor.setDate(cursor.getDate() + 1);
-      return { date, inMonth: date.getMonth() === month };
-    });
-    weeks.push(week);
-  } while (cursor.getMonth() === month && weeks.length < 6);
-
-  return weeks;
-}
-
-/** The Sun–Sat week containing `d`. */
-function weekOf(d: Date): Date[] {
-  const start = new Date(d);
-  start.setDate(d.getDate() - d.getDay());
-  return Array.from({ length: 7 }, (_, i) => {
-    const day = new Date(start);
-    day.setDate(start.getDate() + i);
-    return day;
+/** The seven days of the week `anchor` falls in, Sunday first. */
+function weekOf(anchor: Date): Date[] {
+  const start = new Date(anchor);
+  start.setDate(start.getDate() - start.getDay());
+  return [...Array(7)].map((_, i) => {
+    const d = new Date(start);
+    d.setDate(start.getDate() + i);
+    return d;
   });
 }
 
-function minutesOf(hhmm: string): number {
-  const [h, m] = hhmm.split(':').map((n) => parseInt(n, 10));
-  return (Number.isNaN(h) ? 0 : h) * 60 + (Number.isNaN(m) ? 0 : m);
+/** A trailing icon per entry, so blocks read as distinct as in the design. */
+function entryIcon(item: AgendaItem, done: boolean) {
+  if (done) return CircleCheck;
+  if (item.kind === 'task') return FileText;
+  if (/lunch|coffee|dinner|ארוחה|צהריים|קפה/i.test(item.title)) return Smile;
+  if (/standup|meeting|sync|פגישה|סטנדאפ/i.test(item.title)) return Users;
+  return CircleCheck;
 }
 
 export default function CalendarScreen() {
-  const { palette: c } = useTheme();
-  const styles = useMemo(() => makeStyles(c), [c]);
-  const pColors = useMemo(() => priorityColors(c), [c]);
-
+  const navigation = useNavigation<Nav>();
+  const [name, setName] = useState('');
   const [selected, setSelected] = useState<Date>(new Date());
-  const [events, setEvents] = useState<AgendaItem[]>([]);
-  const [error, setError] = useState<string | null>(null);
-  const [filter, setFilter] = useState<'all' | 'work' | 'personal'>('all');
-
-  // The month currently on screen, anchored to its 1st. Kept separate from
-  // `selected` so paging months doesn't move the selected day.
-  const [visibleMonth, setVisibleMonth] = useState<Date>(() => {
-    const d = new Date();
-    return new Date(d.getFullYear(), d.getMonth(), 1);
-  });
-  // The month grid is collapsed until the header button opens it.
-  const [monthOpen, setMonthOpen] = useState(false);
-  // All task dates, for the "has tasks" dots under the day cells.
-  const [markedDates, setMarkedDates] = useState<Set<string>>(new Set());
+  const [mode, setMode] = useState<ViewMode>('day');
+  const [items, setItems] = useState<AgendaItem[]>([]);
 
   const selectedStr = toDateStr(selected);
   const todayStr = toDateStr(new Date());
-  const grid = useMemo(
-    () => monthGrid(visibleMonth),
-    [visibleMonth.getFullYear(), visibleMonth.getMonth()], // eslint-disable-line react-hooks/exhaustive-deps
-  );
   const week = useMemo(() => weekOf(selected), [selectedStr]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const load = useCallback(() => {
     let active = true;
     (async () => {
+      const settings = await storage.getSettings();
+      if (active) setName(settings.displayName);
       try {
-        // The day list: /agenda resolves the date in the user's timezone.
-        const { events: ev, tasks } = await api.agendaForDate(selectedStr);
-        if (active) {
-          const items = [...ev.map(eventToItem), ...tasks.map(taskToItem)];
-          setEvents(items.sort((a, b) => (a.time || '').localeCompare(b.time || '')));
-          setError(null);
-        }
-      } catch (e) {
-        if (active) {
-          setError((e as Error).message);
-        }
-      }
-      // Dots for the visible month, fetched as one range request. A failure
-      // here only means no dots, so it must not clobber the list's error.
-      try {
-        const y = visibleMonth.getFullYear();
-        const m = visibleMonth.getMonth();
-        const from = toDateStr(new Date(y, m, 1));
-        const to = toDateStr(new Date(y, m + 1, 0));
-        const { events: mev, tasks: mtasks } = await api.agendaForRange(from, to);
-        if (active) {
-          setMarkedDates(
-            new Set(
-              [...mev.map(eventToItem), ...mtasks.map(taskToItem)]
-                .map((i) => i.date)
-                .filter(Boolean),
+        if (mode === 'day') {
+          const { events, tasks } = await api.agendaForDate(selectedStr);
+          if (!active) return;
+          setItems(
+            [...events.map(eventToItem), ...tasks.map(taskToItem)].sort((a, b) =>
+              (a.time || '').localeCompare(b.time || ''),
             ),
           );
+          return;
         }
+        // Week and month share the range endpoint; only the window differs.
+        const first = new Date(selected.getFullYear(), selected.getMonth(), 1);
+        const last = new Date(selected.getFullYear(), selected.getMonth() + 1, 0);
+        const from = mode === 'week' ? toDateStr(week[0]) : toDateStr(first);
+        const to = mode === 'week' ? toDateStr(week[6]) : toDateStr(last);
+        const { events, tasks } = await api.agendaForRange(from, to);
+        if (!active) return;
+        setItems(
+          [...events.map(eventToItem), ...tasks.map(taskToItem)].sort((a, b) =>
+            `${a.date}${a.time}`.localeCompare(`${b.date}${b.time}`),
+          ),
+        );
       } catch {
-        /* dots are decorative — ignore */
+        /* local storage; nothing to retry against */
       }
     })();
     return () => {
       active = false;
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [selectedStr, visibleMonth.getFullYear(), visibleMonth.getMonth()]);
+  }, [selectedStr, mode]);
 
   useFocusEffect(load);
 
   const shiftMonth = (delta: number) => {
     Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
-    setVisibleMonth((m) => new Date(m.getFullYear(), m.getMonth() + delta, 1));
-  };
-
-  const shiftDay = (delta: number) => {
-    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
     const d = new Date(selected);
-    d.setDate(d.getDate() + delta);
+    d.setMonth(d.getMonth() + delta);
     setSelected(d);
-    // Follow the day into a new month so the grid never shows a selection
-    // that isn't visible.
-    setVisibleMonth(new Date(d.getFullYear(), d.getMonth(), 1));
   };
 
-  const selectDay = (d: Date) => {
+  const pickDay = (d: Date) => {
     Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
-    setSelected(new Date(d));
-    setVisibleMonth(new Date(d.getFullYear(), d.getMonth(), 1));
+    setSelected(d);
   };
 
-  const toggleMonthOpen = () => {
-    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
-    // Opening always lands on the selected day's month, so the grid never
-    // appears showing a month the selection isn't in.
-    if (!monthOpen) {
-      setVisibleMonth(new Date(selected.getFullYear(), selected.getMonth(), 1));
-    }
-    LayoutAnimation.configureNext(
-      LayoutAnimation.create(220, LayoutAnimation.Types.easeInEaseOut, 'opacity'),
-    );
-    setMonthOpen((v) => !v);
-  };
-
-  const confirmDelete = (evt: AgendaItem) => {
-    Alert.alert(t('common.deleteTitle'), t('common.deleteBody', { title: evt.title }), [
+  const confirmDelete = (item: AgendaItem) => {
+    Alert.alert(t('common.deleteTitle'), t('common.deleteBody', { title: item.title }), [
       { text: t('common.cancel'), style: 'cancel' },
       {
         text: t('common.delete'),
         style: 'destructive',
         onPress: async () => {
           try {
-            // Tasks and events are distinct resources with distinct ids.
-            if (evt.kind === 'task') await api.deleteTask(evt.id);
-            else await api.deleteEvent(evt.id);
+            // Tasks and events are separate resources with separate ids.
+            if (item.kind === 'task') await api.deleteTask(item.id);
+            else await api.deleteEvent(item.id);
             load();
-          } catch (e) {
-            Alert.alert(t('common.error'), (e as Error).message);
+          } catch (err) {
+            Alert.alert(t('common.error'), (err as Error).message);
           }
         },
       },
     ]);
   };
 
-  const now = new Date();
+  const hours = useMemo(
+    () => [...Array(LAST_HOUR - FIRST_HOUR + 1)].map((_, i) => FIRST_HOUR + i),
+    [],
+  );
 
-  const monthLabel = visibleMonth.toLocaleDateString(locale(), { month: 'long' });
-  const dayTitle = `${selected.toLocaleDateString(locale(), { weekday: 'long' })} ${selected.getDate()}`;
-  const meetingsCount = events.filter((e) => e.kind === 'event').length;
-  const tasksCount = events.filter((e) => e.kind === 'task').length;
+  /** Day view: entries positioned against the hour rail. */
+  const dayEntries = useMemo(
+    () =>
+      items
+        .filter((i) => i.time)
+        .map((item, index) => {
+          const [h, m] = item.time.split(':').map(Number);
+          const startMinutes = Math.max(FIRST_HOUR * 60, (h || 0) * 60 + (m || 0));
+          const startMs = new Date(`${item.date}T${item.time}:00`).getTime();
+          const endMs = item.endsAt ? new Date(item.endsAt).getTime() : NaN;
+          const minutes =
+            !Number.isNaN(endMs) && !Number.isNaN(startMs) && endMs > startMs
+              ? Math.round((endMs - startMs) / 60000)
+              : 60;
+          return {
+            item,
+            index,
+            top: ((startMinutes - FIRST_HOUR * 60) / 60) * HOUR_HEIGHT,
+            height: Math.max(46, (Math.min(minutes, 240) / 60) * HOUR_HEIGHT - 6),
+          };
+        }),
+    [items],
+  );
 
-  // ── Timeline rows: an event/task card, with a spare-time block inserted
-  // whenever two consecutive timed items are more than an hour apart. ──
-  const timelineNodes: ReactNode[] = [];
-  events.forEach((e, idx) => {
-    const isEvent = e.kind === 'event';
-    const status = statusOf(e, now);
-    const { priority } = parsePriority(e.notes);
-    const pc = pColors[priority ?? 'High'];
-    const timeLabel = e.time ? to12h(e.time) : null;
-    const rangeLabel = e.time
-      ? `${to12h(e.time)} - ${to12h(e.endsAt ? toTimeStr(new Date(e.endsAt)) : plusHour(e.time))}`
-      : null;
-    const dueLabel = e.date
-      ? new Date(`${e.date}T00:00:00`).toLocaleDateString(locale(), {
-          month: 'short',
-          day: 'numeric',
-          year: 'numeric',
-        })
-      : null;
-    const onDark = isEvent; // event cards are filled c.cyan, so their text uses c.onLight
-    const titleColor = onDark ? c.onLight : c.text;
-    const mutedColor = onDark ? c.onLight : c.textMuted;
-    const avatarBorder = isEvent ? c.cyan : c.surface;
-
-    timelineNodes.push(
-      <View key={e.id} style={styles.timelineRow}>
-        <View style={styles.gutter}>
-          <Text style={styles.gutterText}>{timeLabel ?? t('tasks.noDue')}</Text>
-        </View>
-        <Pressable
-          onLongPress={() => confirmDelete(e)}
-          style={isEvent ? styles.eventCard : styles.taskCardRow}
-        >
-          <View style={styles.cardTopRow}>
-            <View style={[styles.priorityPill, { backgroundColor: pc.bg }]}>
-              <View style={[styles.priorityDot, { backgroundColor: pc.color }]} />
-              <Text style={[styles.priorityText, { color: pc.color }]}>
-                {t('today.priority', { level: priority ?? 'High' })}
-              </Text>
-            </View>
-            <View style={styles.statusTag}>
-              <View style={[styles.statusDot, { backgroundColor: statusColor(c, status) }]} />
-              <Text style={[styles.statusLabel, { color: mutedColor }]}>
-                {t(STATUS_LABEL_KEY[status])}
-              </Text>
-            </View>
-          </View>
-
-          <Text style={[styles.cardTitle, { color: titleColor }]}>{e.title}</Text>
-
-          {rangeLabel ? (
-            <View style={styles.clockRow}>
-              <Clock color={mutedColor} size={14} />
-              <Text style={[styles.clockText, { color: mutedColor }]}>{rangeLabel}</Text>
-            </View>
-          ) : null}
-
-          {dueLabel ? (
-            <Text style={[styles.dueText, { color: mutedColor }]}>
-              {t('calendar.dueDate', { date: dueLabel })}
-            </Text>
-          ) : null}
-
-          <View style={styles.cardBottomRow}>
-            <View style={styles.avatarRow}>
-              {AVATAR_COLORS.map((ac, i) => (
-                <View
-                  key={ac}
-                  style={[
-                    styles.avatarDot,
-                    { backgroundColor: ac, borderColor: avatarBorder, marginStart: i ? -9 : 0 },
-                  ]}
-                />
-              ))}
-              <View style={[styles.avatarDot, styles.avatarMore, { borderColor: avatarBorder }]}>
-                <Text style={styles.avatarMoreText}>+4</Text>
-              </View>
-            </View>
-          </View>
-        </Pressable>
-      </View>,
-    );
-
-    const next = events[idx + 1];
-    if (e.time && next?.time) {
-      const endMin = e.endsAt
-        ? minutesOf(toTimeStr(new Date(e.endsAt)))
-        : minutesOf(e.time) + 60;
-      const gapMin = minutesOf(next.time) - endMin;
-      if (gapMin > 60) {
-        const fromH = String(Math.floor((endMin % 1440) / 60)).padStart(2, '0');
-        const fromM = String(endMin % 60).padStart(2, '0');
-        const fromLabel = to12h(`${fromH}:${fromM}`);
-        const toLabel = to12h(next.time);
-        timelineNodes.push(
-          <View key={`${e.id}-spare`} style={styles.timelineRow}>
-            <View style={styles.gutter} />
-            <View style={styles.spareBlock}>
-              <Text style={styles.spareText}>
-                {t('calendar.spareTime', { from: fromLabel, to: toLabel })}
-              </Text>
-            </View>
-          </View>,
-        );
-      }
-    }
-  });
+  const undated = items.filter((i) => !i.time);
+  const monthLabel = selected.toLocaleDateString(locale(), { month: 'long', year: 'numeric' });
 
   return (
     <Screen>
-      <ScrollView showsVerticalScrollIndicator={false}>
-        {/* ── Header: centred title + month-grid toggle ── */}
-        <View style={styles.headerRow}>
-          <View style={styles.headerSpacer} />
-          <Text style={styles.headerTitle}>{t('calendar.headline.line2')}</Text>
-          <Pressable onPress={toggleMonthOpen} style={styles.headerBtn}>
-            <Ellipsis color={c.text} size={20} />
+      <GreetingHeader
+        name={t('today.hello', { name: name || t('today.friend') })}
+        photoUri={PROFILE_PHOTO_URI}
+        onBellPress={() => Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light)}
+      />
+
+      <Text style={styles.headline}>{t('tab.calendar')}</Text>
+
+      {/* ── Day / Week / Month ── */}
+      <View style={styles.segment}>
+        {(['day', 'week', 'month'] as ViewMode[]).map((m) => {
+          const active = mode === m;
+          return (
+            <Pressable
+              key={m}
+              onPress={() => {
+                Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+                setMode(m);
+              }}
+              style={[styles.segmentItem, active && styles.segmentItemActive]}
+              accessibilityRole="button"
+              accessibilityState={{ selected: active }}
+            >
+              <Text style={[styles.segmentText, active && styles.segmentTextActive]}>
+                {t(`calendar.view.${m}`)}
+              </Text>
+            </Pressable>
+          );
+        })}
+      </View>
+
+      {/* ── Month, with arrows ── */}
+      <View style={styles.monthRow}>
+        <Text style={styles.monthLabel}>{monthLabel}</Text>
+        <View style={styles.monthArrows}>
+          <Pressable
+            onPress={() => shiftMonth(-1)}
+            style={styles.arrowBtn}
+            accessibilityRole="button"
+          >
+            <ChevronLeft color={colors.text} size={20} />
+          </Pressable>
+          <Pressable
+            onPress={() => shiftMonth(1)}
+            style={styles.arrowBtn}
+            accessibilityRole="button"
+          >
+            <ChevronRight color={colors.text} size={20} />
           </Pressable>
         </View>
+      </View>
 
-        {/* ── Month row: advances one month forward ── */}
-        <Pressable onPress={() => shiftMonth(1)} style={styles.monthRow} hitSlop={8}>
-          <Text style={styles.monthRowText}>
-            {monthLabel} {visibleMonth.getFullYear()}
-          </Text>
-          <ChevronRight color={c.textMuted} size={15} />
-        </Pressable>
-
-        {/* ── Week strip ── */}
-        <View style={styles.weekStripRow}>
-          {week.map((d) => {
-            const dStr = toDateStr(d);
-            const active = dStr === selectedStr;
-            const initial = d.toLocaleDateString(locale(), { weekday: 'narrow' });
-            return (
-              <Pressable key={dStr} onPress={() => selectDay(d)} style={styles.weekCol}>
-                <Text style={styles.weekInitial}>{initial}</Text>
-                {active ? <View style={styles.weekDot} /> : <View style={styles.weekDotSpacer} />}
-                <View style={[styles.weekCircle, active && styles.weekCircleActive]}>
-                  <Text style={[styles.weekDayNum, active && styles.weekDayNumActive]}>
-                    {d.getDate()}
-                  </Text>
-                </View>
-              </Pressable>
-            );
-          })}
-        </View>
-        <View style={styles.grabHandleWrap}>
-          <View style={styles.grabHandle} />
-        </View>
-
-        {/* ── Month grid: only mounted once the header button opens it ── */}
-        {monthOpen ? (
-          <View style={styles.monthCard}>
-            <View style={styles.monthNav}>
-              <Pressable onPress={() => shiftMonth(-1)} style={styles.monthArrow} hitSlop={8}>
-                <ChevronLeft color={c.text} size={19} />
-              </Pressable>
-              <View style={styles.monthLabelBox}>
-                <Text style={styles.monthLabel}>
-                  {monthLabel} <Text style={styles.monthLabelYear}>{visibleMonth.getFullYear()}</Text>
+      {/* ── The week strip ── */}
+      <View style={styles.weekRow}>
+        {week.map((d) => {
+          const str = toDateStr(d);
+          const isSelected = str === selectedStr;
+          return (
+            <Pressable key={str} onPress={() => pickDay(d)} style={styles.weekCell}>
+              <Text style={styles.weekName}>
+                {d.toLocaleDateString(locale(), { weekday: 'short' })}
+              </Text>
+              <View style={[styles.weekDay, isSelected && styles.weekDaySelected]}>
+                <Text style={[styles.weekDayText, str === todayStr && styles.weekDayToday]}>
+                  {d.getDate()}
                 </Text>
               </View>
-              <Pressable onPress={() => shiftMonth(1)} style={styles.monthArrow} hitSlop={8}>
-                <ChevronRight color={c.text} size={19} />
-              </Pressable>
-            </View>
+            </Pressable>
+          );
+        })}
+      </View>
 
-            <View style={styles.weekRow}>
-              {weekdayLabels().map((w) => (
-                <Text key={w} style={styles.weekdayLabel}>
-                  {w}
-                </Text>
+      <ScrollView showsVerticalScrollIndicator={false} contentContainerStyle={styles.timeline}>
+        {mode === 'day' ? (
+          <View style={styles.timelineBody}>
+            {/* The hour rail */}
+            <View>
+              {hours.map((h) => (
+                <View key={h} style={styles.hourRow}>
+                  <Text style={styles.hourLabel}>
+                    {to12h(`${String(h).padStart(2, '0')}:00`).replace(':00', '')}
+                  </Text>
+                  <View style={styles.hourLine} />
+                </View>
               ))}
             </View>
 
-            {grid.map((gWeek, wi) => (
-              <View key={wi} style={styles.weekRow}>
-                {gWeek.map(({ date, inMonth }) => {
-                  const dStr = toDateStr(date);
-                  const active = dStr === selectedStr;
-                  const isToday = dStr === todayStr;
-                  const marked = markedDates.has(dStr);
-                  return (
-                    <Pressable key={dStr} onPress={() => selectDay(date)} style={styles.dayCell}>
-                      {active ? (
-                        <View style={styles.dayCellFill} />
-                      ) : isToday ? (
-                        <View style={styles.dayCellToday} />
-                      ) : null}
-                      <Text
-                        style={[
-                          styles.dayCellText,
-                          !inMonth && styles.dayCellTextMuted,
-                          active && styles.dayCellTextActive,
-                          !active && isToday && styles.dayCellTextToday,
-                        ]}
-                      >
-                        {date.getDate()}
+            {/* Entries floating over it */}
+            <View style={styles.entryLayer} pointerEvents="box-none">
+              {dayEntries.map(({ item, index, top, height }) => {
+                const done = statusOf(item) === 'done';
+                const Icon = entryIcon(item, done);
+                return (
+                  <Pressable
+                    key={`${item.kind}-${item.id}`}
+                    onLongPress={() => confirmDelete(item)}
+                    style={[
+                      styles.entry,
+                      { top, height, backgroundColor: TILES[ROW_TILES[index % ROW_TILES.length]] },
+                    ]}
+                  >
+                    <View style={{ flex: 1 }}>
+                      <Text style={styles.entryTitle} numberOfLines={1}>
+                        {item.title}
                       </Text>
-                      {marked ? (
-                        <View style={[styles.dayDot, active && styles.dayDotActive]} />
-                      ) : null}
-                    </Pressable>
-                  );
-                })}
-              </View>
+                      <Text style={styles.entryTime}>{to12h(item.time)}</Text>
+                    </View>
+                    <Icon color={colors.text} size={20} strokeWidth={1.8} />
+                  </Pressable>
+                );
+              })}
+            </View>
+          </View>
+        ) : (
+          // Week and month are a plain chronological list — the hour rail only
+          // makes sense for a single day.
+          <View style={styles.list}>
+            {items.map((item, index) => {
+              const Icon = entryIcon(item, statusOf(item) === 'done');
+              return (
+                <Pressable
+                  key={`${item.kind}-${item.id}`}
+                  onLongPress={() => confirmDelete(item)}
+                  style={[
+                    styles.listRow,
+                    { backgroundColor: TILES[ROW_TILES[index % ROW_TILES.length]] },
+                  ]}
+                >
+                  <View style={{ flex: 1 }}>
+                    <Text style={styles.entryTitle} numberOfLines={1}>
+                      {item.title}
+                    </Text>
+                    <Text style={styles.entryTime}>
+                      {new Date(`${item.date}T00:00:00`).toLocaleDateString(locale(), {
+                        weekday: 'short',
+                        day: 'numeric',
+                        month: 'short',
+                      })}
+                      {item.time ? ` · ${to12h(item.time)}` : ''}
+                    </Text>
+                  </View>
+                  <Icon color={colors.text} size={20} strokeWidth={1.8} />
+                </Pressable>
+              );
+            })}
+          </View>
+        )}
+
+        {mode === 'day' && undated.length > 0 ? (
+          <View style={styles.list}>
+            <Text style={styles.sectionLabel}>{t('calendar.section.allDay')}</Text>
+            {undated.map((item, index) => (
+              <Pressable
+                key={`${item.kind}-${item.id}`}
+                onLongPress={() => confirmDelete(item)}
+                style={[
+                  styles.listRow,
+                  { backgroundColor: TILES[ROW_TILES[index % ROW_TILES.length]] },
+                ]}
+              >
+                <Text style={[styles.entryTitle, { flex: 1 }]} numberOfLines={1}>
+                  {item.title}
+                </Text>
+              </Pressable>
             ))}
           </View>
         ) : null}
 
-        {/* ── Day summary card ── */}
-        <View style={styles.summaryCard}>
-          <Text style={styles.summaryMuted}>
-            {t('calendar.summary', { meetings: meetingsCount, tasks: tasksCount })}
-          </Text>
-          <View style={styles.summaryRow}>
-            <Text style={[styles.summaryTitle, { textAlign: isRTL() ? 'right' : 'left' }]}>
-              {dayTitle}
-            </Text>
-            <View style={{ flex: 1 }} />
-            <Pressable onPress={() => shiftDay(-1)} style={styles.summaryBtn} hitSlop={6}>
-              <ChevronLeft color={c.text} size={18} />
-            </Pressable>
-            <Pressable
-              onPress={() => shiftDay(1)}
-              style={[styles.summaryBtn, { marginStart: spacing.xs }]}
-              hitSlop={6}
-            >
-              <ChevronRight color={c.text} size={18} />
-            </Pressable>
-          </View>
-        </View>
-
-        {/* ── Filter chips ── */}
-        <View style={styles.filterRow}>
-          {(
-            [
-              { key: 'all', label: t('calendar.filter.all') },
-              { key: 'work', label: t('calendar.filter.work') },
-              { key: 'personal', label: t('calendar.filter.personal') },
-            ] as const
-          ).map(({ key, label }) => {
-            const active = filter === key;
-            return (
-              <Pressable
-                key={key}
-                onPress={() => {
-                  Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
-                  setFilter(key);
-                }}
-                style={[styles.filterChip, active && styles.filterChipActive]}
-              >
-                <Text style={[styles.filterText, active && styles.filterTextActive]}>{label}</Text>
-              </Pressable>
-            );
-          })}
-        </View>
-
-        {/* ── Timeline ── */}
-        {error ? (
-          <View style={styles.emptyCard}>
-            <Text style={styles.emptyTitle}>{t('tasks.error.title')}</Text>
-            <Text style={styles.emptyBody}>{error}</Text>
-          </View>
-        ) : events.length === 0 ? (
-          <View style={styles.emptyCard}>
-            <Text style={styles.emptyTitle}>{t('calendar.empty.title')}</Text>
-            <Text style={styles.emptyBody}>{t('calendar.empty.body')}</Text>
-          </View>
-        ) : (
-          timelineNodes
-        )}
+        {items.length === 0 ? <Text style={styles.empty}>{t('today.noEvents')}</Text> : null}
       </ScrollView>
     </Screen>
   );
 }
 
-function makeStyles(c: Palette) {
-  return StyleSheet.create({
-    headerRow: {
-      flexDirection: 'row',
-      alignItems: 'center',
-      justifyContent: 'space-between',
-      marginBottom: spacing.lg,
-    },
-    headerSpacer: { width: 40, height: 40 },
-    headerTitle: { flex: 1, textAlign: 'center', ...font(700), fontSize: 22, color: c.text },
-    headerBtn: {
-      width: 40,
-      height: 40,
-      borderRadius: 20,
-      backgroundColor: c.surfaceAlt,
-      alignItems: 'center',
-      justifyContent: 'center',
-    },
+const styles = StyleSheet.create({
+  headline: {
+    fontSize: 32,
+    ...font(700),
+    color: colors.text,
+    letterSpacing: -0.8,
+    marginTop: spacing.md,
+    marginBottom: spacing.md,
+  },
 
-    monthRow: {
-      flexDirection: 'row',
-      alignItems: 'center',
-      gap: 4,
-      alignSelf: 'flex-start',
-      marginBottom: spacing.md,
-    },
-    monthRowText: { ...font(500), fontSize: 13, color: c.textMuted },
+  segment: {
+    flexDirection: 'row',
+    backgroundColor: colors.surface,
+    borderRadius: 100,
+    padding: 5,
+    marginBottom: spacing.md,
+  },
+  segmentItem: { flex: 1, paddingVertical: 11, borderRadius: 100, alignItems: 'center' },
+  segmentItemActive: { backgroundColor: TILES.green },
+  segmentText: { fontSize: 15, ...font(500), color: colors.textMuted },
+  segmentTextActive: { ...font(700), color: colors.text },
 
-    weekStripRow: { flexDirection: 'row', justifyContent: 'space-between' },
-    weekCol: { alignItems: 'center', width: 40 },
-    weekInitial: { ...font(500), fontSize: 11, color: c.textMuted, marginBottom: 6 },
-    weekDot: { width: 5, height: 5, borderRadius: 2.5, backgroundColor: c.onAccent, marginBottom: 4 },
-    weekDotSpacer: { width: 5, height: 5, marginBottom: 4 },
-    weekCircle: {
-      width: 40,
-      height: 40,
-      borderRadius: 20,
-      backgroundColor: c.surfaceAlt,
-      alignItems: 'center',
-      justifyContent: 'center',
-    },
-    weekCircleActive: { backgroundColor: c.primary },
-    weekDayNum: { ...font(600), fontSize: 14, color: c.text },
-    weekDayNumActive: { color: c.onAccent },
+  monthRow: { flexDirection: 'row', alignItems: 'center', marginBottom: spacing.sm },
+  monthLabel: { flex: 1, fontSize: 18, ...font(700), color: colors.text },
+  monthArrows: { flexDirection: 'row', gap: 4 },
+  arrowBtn: { width: 34, height: 34, alignItems: 'center', justifyContent: 'center' },
 
-    grabHandleWrap: { alignItems: 'center', marginTop: spacing.sm, marginBottom: spacing.md },
-    grabHandle: { width: 36, height: 4, borderRadius: 2, backgroundColor: c.border },
+  weekRow: { flexDirection: 'row', marginBottom: spacing.sm },
+  weekCell: { flex: 1, alignItems: 'center', gap: 6 },
+  weekName: { fontSize: 13, ...font(500), color: colors.textMuted },
+  weekDay: { width: 34, height: 34, borderRadius: 17, alignItems: 'center', justifyContent: 'center' },
+  weekDaySelected: { backgroundColor: TILES.green },
+  weekDayText: { fontSize: 15, ...font(600), color: colors.text },
+  weekDayToday: { ...font(700) },
 
-    monthCard: { ...cardStyle(c), marginBottom: spacing.md },
-    monthNav: {
-      flexDirection: 'row',
-      alignItems: 'center',
-      justifyContent: 'space-between',
-      marginBottom: 14,
-    },
-    monthArrow: {
-      width: 34,
-      height: 34,
-      borderRadius: 17,
-      alignItems: 'center',
-      justifyContent: 'center',
-      backgroundColor: c.surfaceAlt,
-    },
-    monthLabelBox: { flex: 1, alignItems: 'center' },
-    monthLabel: { ...font(600), fontSize: 17, color: c.text, letterSpacing: -0.2 },
-    monthLabelYear: { ...font(400), color: c.textMuted },
+  timeline: { paddingBottom: spacing.lg },
+  timelineBody: { position: 'relative', paddingTop: 4 },
+  hourRow: { flexDirection: 'row', alignItems: 'flex-start', height: HOUR_HEIGHT },
+  hourLabel: { width: 52, fontSize: 12, ...font(500), color: colors.textMuted, marginTop: -6 },
+  hourLine: { flex: 1, height: StyleSheet.hairlineWidth, backgroundColor: colors.border },
+  entryLayer: { position: 'absolute', top: 4, insetInlineStart: 58, insetInlineEnd: 0 },
+  entry: {
+    position: 'absolute',
+    insetInlineStart: 0,
+    insetInlineEnd: 0,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10,
+    borderRadius: radius.md,
+    paddingHorizontal: 14,
+    paddingVertical: 10,
+  },
+  entryTitle: { fontSize: 15, ...font(700), color: colors.text },
+  entryTime: { fontSize: 13, ...font(500), color: colors.text, opacity: 0.7, marginTop: 2 },
 
-    weekRow: { flexDirection: 'row', justifyContent: 'space-between' },
-    weekdayLabel: {
-      ...font(500),
-      fontSize: 11,
-      color: c.textMuted,
-      width: 38,
-      textAlign: 'center',
-      marginBottom: 6,
-    },
-    dayCell: { width: 38, height: 43, alignItems: 'center', justifyContent: 'center', marginBottom: 2 },
-    dayCellFill: { ...StyleSheet.absoluteFillObject, borderRadius: 13, backgroundColor: c.primary },
-    dayCellToday: {
-      ...StyleSheet.absoluteFillObject,
-      borderRadius: 13,
-      borderWidth: 1.5,
-      borderColor: c.primary,
-    },
-    dayCellText: { ...font(500), fontSize: 14, color: c.text },
-    dayCellTextMuted: { color: c.textMuted },
-    dayCellTextActive: { ...font(600), color: c.onAccent },
-    dayCellTextToday: { ...font(600), color: c.primary },
-    dayDot: { position: 'absolute', bottom: 4, width: 4, height: 4, borderRadius: 2, backgroundColor: c.primary },
-    dayDotActive: { backgroundColor: c.onAccent },
-
-    summaryCard: { ...cardStyle(c), marginBottom: spacing.lg },
-    summaryMuted: { ...font(400), fontSize: 12, color: c.textMuted, marginBottom: 6 },
-    summaryRow: { flexDirection: 'row', alignItems: 'center' },
-    summaryTitle: { ...font(700), fontSize: 22, color: c.text },
-    summaryBtn: {
-      width: 36,
-      height: 36,
-      borderRadius: 18,
-      backgroundColor: c.surfaceAlt,
-      alignItems: 'center',
-      justifyContent: 'center',
-    },
-
-    filterRow: { flexDirection: 'row', alignItems: 'center', gap: 9, marginBottom: spacing.lg },
-    filterChip: {
-      backgroundColor: c.surfaceAlt,
-      borderRadius: radius.pill,
-      paddingHorizontal: 18,
-      paddingVertical: 12,
-    },
-    filterChipActive: { backgroundColor: c.primary },
-    filterText: { ...font(500), fontSize: 14, color: c.textMuted },
-    filterTextActive: { color: c.onAccent },
-
-    timelineRow: { flexDirection: 'row', marginBottom: spacing.md },
-    gutter: { width: 58, alignItems: 'flex-start', paddingTop: 4 },
-    gutterText: { ...font(500), fontSize: 11, color: c.textMuted },
-
-    eventCard: {
-      flex: 1,
-      backgroundColor: c.cyan,
-      borderRadius: radius.lg,
-      padding: spacing.md,
-      marginStart: spacing.xs,
-    },
-    taskCardRow: { ...cardStyle(c), flex: 1, marginStart: spacing.xs },
-
-    cardTopRow: {
-      flexDirection: 'row',
-      alignItems: 'center',
-      justifyContent: 'space-between',
-      marginBottom: spacing.sm,
-    },
-    priorityPill: {
-      flexDirection: 'row',
-      alignItems: 'center',
-      gap: 6,
-      borderRadius: radius.pill,
-      paddingVertical: 6,
-      paddingHorizontal: 12,
-    },
-    priorityDot: { width: 7, height: 7, borderRadius: 4 },
-    priorityText: { ...font(500), fontSize: 12 },
-    statusTag: { flexDirection: 'row', alignItems: 'center', gap: 5 },
-    statusDot: { width: 6, height: 6, borderRadius: 3 },
-    statusLabel: { ...font(500), fontSize: 12 },
-
-    cardTitle: { ...font(600), fontSize: 16, marginBottom: 8 },
-    clockRow: { flexDirection: 'row', alignItems: 'center', gap: 6, marginBottom: 4 },
-    clockText: { ...font(400), fontSize: 13 },
-    dueText: { ...font(400), fontSize: 12, marginBottom: 8 },
-
-    cardBottomRow: { flexDirection: 'row', alignItems: 'center' },
-    avatarRow: { flexDirection: 'row', alignItems: 'center' },
-    avatarDot: { width: 26, height: 26, borderRadius: 13, borderWidth: 2 },
-    avatarMore: { backgroundColor: c.text, marginStart: -9, alignItems: 'center', justifyContent: 'center' },
-    avatarMoreText: { ...font(500), fontSize: 9, color: c.bg },
-
-    spareBlock: {
-      flex: 1,
-      backgroundColor: c.lavender + '22',
-      borderTopWidth: 1,
-      borderStyle: 'dashed',
-      borderTopColor: c.pink,
-      borderRadius: radius.md,
-      paddingHorizontal: spacing.md,
-      paddingVertical: spacing.sm,
-      marginStart: spacing.xs,
-      justifyContent: 'center',
-    },
-    spareText: { ...font(500), fontSize: 12, color: c.textMuted },
-
-    emptyCard: { ...cardStyle(c) },
-    emptyTitle: { ...font(600), fontSize: 15.5, color: c.text, marginBottom: 4 },
-    emptyBody: { ...font(400), fontSize: 13, color: c.textMuted, lineHeight: 18 },
-  });
-}
+  list: { gap: 10, marginTop: spacing.sm },
+  listRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10,
+    borderRadius: radius.md,
+    paddingHorizontal: 14,
+    paddingVertical: 14,
+  },
+  sectionLabel: { fontSize: 13, ...font(600), color: colors.textMuted, marginTop: spacing.sm },
+  empty: {
+    textAlign: 'center',
+    marginTop: spacing.xl,
+    fontSize: 15,
+    ...font(500),
+    color: colors.textMuted,
+  },
+});

@@ -1,0 +1,405 @@
+import { api, uuid, type Task, type Event } from './api';
+import { getLanguage } from './i18n';
+
+// The voice assistant's side of the wire.
+//
+// The device owns the data, so every turn carries a snapshot of it: what she
+// can see is what is on this phone. The server owns the keys — OpenAI for
+// understanding, ElevenLabs for the voice — and hands back what she said plus
+// the changes to make. Those changes are applied here, locally, by
+// `applyActions`.
+
+const API_BASE = 'https://personal-assistant-api-production-618a.up.railway.app';
+const TRANSCRIBE_URL = `${API_BASE}/transcribe`;
+const TURN_URL = `${API_BASE}/voice/turn`;
+const SPEAK_URL = `${API_BASE}/voice/speak`;
+
+/** Languages the assistant speaks. Anything else falls back to English. */
+const SPOKEN = new Set(['he', 'en', 'ar', 'es', 'fr', 'it', 'ru']);
+
+function spokenLanguage(): string {
+  const lang = getLanguage();
+  return SPOKEN.has(lang) ? lang : 'en';
+}
+
+// ── Speech in ───────────────────────────────────────────────────────────────
+
+/**
+ * Uploads a recording and returns what was said.
+ *
+ * Speech-to-text runs on the server because it needs the OpenAI key. The audio
+ * is streamed to the provider and not stored. Multipart is built by hand
+ * rather than through a JSON helper: setting Content-Type manually would drop
+ * the boundary fetch generates, and the upload would be rejected.
+ */
+export async function transcribe(uri: string): Promise<string> {
+  const form = new FormData();
+
+  if (uri.startsWith('blob:') || uri.startsWith('data:')) {
+    // Web: MediaRecorder hands back a blob URL.
+    const blob = await (await fetch(uri)).blob();
+    form.append('audio', blob, blob.type.includes('webm') ? 'recording.webm' : 'recording.m4a');
+  } else {
+    // Native: React Native's FormData takes a file descriptor object.
+    const name = uri.split('/').pop() || 'recording.m4a';
+    const ext = name.split('.').pop()?.toLowerCase() || 'm4a';
+    form.append('audio', {
+      uri,
+      name,
+      type: ext === 'webm' ? 'audio/webm' : 'audio/m4a',
+    } as unknown as Blob);
+  }
+
+  const res = await fetch(TRANSCRIBE_URL, { method: 'POST', body: form });
+  if (!res.ok) {
+    const body = await res.json().catch(() => null);
+    throw new Error(body?.error?.message ?? `Transcription failed (${res.status})`);
+  }
+  const { text } = (await res.json()) as { text: string };
+  return text;
+}
+
+// ── Speech out ──────────────────────────────────────────────────────────────
+
+/**
+ * Where to fetch the spoken version of a line.
+ *
+ * A URL rather than downloaded bytes: the audio player takes a source it can
+ * stream, and the device has nowhere useful to put an mp3 anyway.
+ */
+export function speechUrl(text: string): string {
+  // Hand-encoded rather than URLSearchParams: React Native ships an incomplete
+  // implementation, and this string is mostly non-ASCII.
+  return `${SPEAK_URL}?text=${encodeURIComponent(text)}&language=${spokenLanguage()}`;
+}
+
+// ── The turn ────────────────────────────────────────────────────────────────
+
+export type VoiceAction = { tool: string; arguments: Record<string, unknown> };
+
+export type TurnMessage = { role: 'user' | 'assistant'; content: string };
+
+export interface TurnResult {
+  reply: string;
+  actions: VoiceAction[];
+  canSpeak: boolean;
+}
+
+/** Everything she is allowed to know: this device's live tasks and events. */
+export async function buildSnapshot(): Promise<{
+  tasks: { id: string; title: string; notes: string | null; dueAt: string | null; isDone: boolean }[];
+  events: { id: string; title: string; note: string | null; startsAt: string; endsAt: string }[];
+}> {
+  const [{ tasks }, { events }] = await Promise.all([api.listTasks(), api.listEvents()]);
+
+  const live = <T extends { deletedAt: string | null }>(rows: T[]) =>
+    rows.filter((r) => r.deletedAt === null);
+
+  // A whole year of history would crowd out the conversation; recent past and
+  // the month ahead is what anyone actually asks about.
+  const from = Date.now() - 7 * 24 * 60 * 60 * 1000;
+  const to = Date.now() + 31 * 24 * 60 * 60 * 1000;
+  const inWindow = (iso: string | null) => {
+    if (!iso) return true; // an undated task is always relevant
+    const t = new Date(iso).getTime();
+    return Number.isNaN(t) || (t >= from && t <= to);
+  };
+
+  return {
+    tasks: live(tasks)
+      .filter((t) => inWindow(t.dueAt))
+      .slice(0, 120)
+      .map((t) => ({
+        id: t.id,
+        title: t.title,
+        notes: t.notes,
+        dueAt: t.dueAt,
+        isDone: t.isDone,
+      })),
+    events: live(events)
+      .filter((e) => inWindow(e.startsAt))
+      .slice(0, 120)
+      .map((e) => ({
+        id: e.id,
+        title: e.title,
+        note: e.note,
+        startsAt: e.startsAt,
+        endsAt: e.endsAt,
+      })),
+  };
+}
+
+/** Sends one spoken turn and returns what she says back, plus what to change. */
+export async function voiceTurn(
+  text: string,
+  history: TurnMessage[],
+  userName?: string,
+): Promise<TurnResult> {
+  const snapshot = await buildSnapshot();
+
+  const res = await fetch(TURN_URL, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      text,
+      language: spokenLanguage(),
+      timezone: Intl.DateTimeFormat().resolvedOptions().timeZone || 'UTC',
+      now: new Date().toISOString(),
+      ...(userName ? { userName } : {}),
+      // The server caps this; sending the tail keeps the request small.
+      history: history.slice(-10),
+      snapshot,
+    }),
+  });
+
+  if (!res.ok) {
+    const body = await res.json().catch(() => null);
+    throw new Error(body?.error?.message ?? `The assistant is unavailable (${res.status})`);
+  }
+
+  return (await res.json()) as TurnResult;
+}
+
+// ── Applying what she decided ───────────────────────────────────────────────
+
+/** A change that has been applied and can still be taken back. */
+export interface AppliedChange {
+  /** What was removed, so it can be put back verbatim. */
+  undo: () => Promise<void>;
+  /** Title of the entry, for the undo prompt. */
+  title: string;
+  destructive: boolean;
+}
+
+const asString = (v: unknown): string | undefined => (typeof v === 'string' ? v : undefined);
+
+/** ISO in, ISO out — and anything unparseable is treated as absent. */
+function isoOrUndefined(v: unknown): string | undefined {
+  const s = asString(v);
+  if (!s) return undefined;
+  const t = new Date(s).getTime();
+  return Number.isNaN(t) ? undefined : new Date(t).toISOString();
+}
+
+/**
+ * Applies the actions from one turn to local storage.
+ *
+ * Deletions are reversible: the row is kept in memory and `undo` writes it
+ * back, because the only signal that she removed the wrong thing is the user
+ * hearing it a second later.
+ */
+export async function applyActions(actions: VoiceAction[]): Promise<AppliedChange[]> {
+  const applied: AppliedChange[] = [];
+
+  for (const action of actions) {
+    const args = action.arguments ?? {};
+    try {
+      switch (action.tool) {
+        case 'create_task': {
+          const title = asString(args.title);
+          if (!title) break;
+          const priority = asString(args.priority);
+          const notes = asString(args.notes);
+          const id = uuid();
+          await api.createTask({
+            id,
+            title,
+            // Priority rides along in the notes, the way the entry form writes it.
+            ...(notes || priority
+              ? { notes: priority ? `[${priority}] ${notes ?? ''}`.trim() : notes! }
+              : {}),
+            ...(isoOrUndefined(args.dueAt) ? { dueAt: isoOrUndefined(args.dueAt)! } : {}),
+            updatedAt: new Date().toISOString(),
+          });
+          applied.push({
+            title,
+            destructive: false,
+            undo: () => api.deleteTask(id),
+          });
+          break;
+        }
+
+        case 'update_task': {
+          const id = asString(args.id);
+          if (!id) break;
+          const before = await findTask(id);
+          if (!before) break;
+          const patch: Record<string, unknown> = {};
+          if (asString(args.title)) patch.title = asString(args.title);
+          if ('dueAt' in args) patch.dueAt = args.dueAt === null ? null : isoOrUndefined(args.dueAt);
+          if (asString(args.notes)) patch.notes = asString(args.notes);
+          // She sometimes restates a value she was not asked to change; writing
+          // it back would bump updatedAt for nothing.
+          if (!changesAnything(before as unknown as Record<string, unknown>, patch)) break;
+          await api.updateTask(id, patch);
+          applied.push({
+            title: before.title,
+            destructive: false,
+            undo: () =>
+              api
+                .updateTask(id, {
+                  title: before.title,
+                  notes: before.notes,
+                  dueAt: before.dueAt,
+                })
+                .then(() => undefined),
+          });
+          break;
+        }
+
+        case 'complete_task': {
+          const id = asString(args.id);
+          if (!id) break;
+          const before = await findTask(id);
+          if (!before || before.isDone) break;
+          await api.updateTask(id, { isDone: true });
+          applied.push({
+            title: before.title,
+            destructive: false,
+            undo: () => api.updateTask(id, { isDone: false }).then(() => undefined),
+          });
+          break;
+        }
+
+        case 'delete_task': {
+          const id = asString(args.id);
+          if (!id) break;
+          const before = await findTask(id);
+          if (!before) break;
+          await api.deleteTask(id);
+          applied.push({
+            title: before.title,
+            destructive: true,
+            undo: async () => {
+              await api.createTask({
+                id: before.id,
+                title: before.title,
+                ...(before.notes ? { notes: before.notes } : {}),
+                ...(before.dueAt ? { dueAt: before.dueAt } : {}),
+                updatedAt: new Date().toISOString(),
+              });
+              if (before.isDone) await api.updateTask(before.id, { isDone: true });
+            },
+          });
+          break;
+        }
+
+        case 'create_event': {
+          const title = asString(args.title);
+          const startsAt = isoOrUndefined(args.startsAt);
+          if (!title || !startsAt) break;
+          const id = uuid();
+          await api.createEvent({
+            id,
+            title,
+            ...(asString(args.note) ? { note: asString(args.note)! } : {}),
+            startsAt,
+            ...(isoOrUndefined(args.endsAt) ? { endsAt: isoOrUndefined(args.endsAt)! } : {}),
+            reminderMinutesBefore: 15,
+            updatedAt: new Date().toISOString(),
+          });
+          applied.push({ title, destructive: false, undo: () => api.deleteEvent(id) });
+          break;
+        }
+
+        case 'update_event': {
+          const id = asString(args.id);
+          if (!id) break;
+          const before = await findEvent(id);
+          if (!before) break;
+          const patch: Record<string, unknown> = {};
+          if (asString(args.title)) patch.title = asString(args.title);
+          if (asString(args.note)) patch.note = asString(args.note);
+          const startsAt = isoOrUndefined(args.startsAt);
+          const endsAt = isoOrUndefined(args.endsAt);
+          if (startsAt) {
+            patch.startsAt = startsAt;
+            // Moving an event keeps its length unless she said otherwise —
+            // otherwise a 30-minute standup silently becomes an hour.
+            patch.endsAt =
+              endsAt ??
+              new Date(
+                new Date(startsAt).getTime() +
+                  (new Date(before.endsAt).getTime() - new Date(before.startsAt).getTime()),
+              ).toISOString();
+          } else if (endsAt) {
+            patch.endsAt = endsAt;
+          }
+          if (!changesAnything(before as unknown as Record<string, unknown>, patch)) break;
+          await api.updateEvent(id, patch);
+          applied.push({
+            title: before.title,
+            destructive: false,
+            undo: () =>
+              api
+                .updateEvent(id, {
+                  title: before.title,
+                  note: before.note,
+                  startsAt: before.startsAt,
+                  endsAt: before.endsAt,
+                })
+                .then(() => undefined),
+          });
+          break;
+        }
+
+        case 'delete_event': {
+          const id = asString(args.id);
+          if (!id) break;
+          const before = await findEvent(id);
+          if (!before) break;
+          await api.deleteEvent(id);
+          applied.push({
+            title: before.title,
+            destructive: true,
+            undo: async () => {
+              await api.createEvent({
+                id: before.id,
+                title: before.title,
+                ...(before.note ? { note: before.note } : {}),
+                startsAt: before.startsAt,
+                endsAt: before.endsAt,
+                reminderMinutesBefore: before.reminderMinutesBefore,
+                updatedAt: new Date().toISOString(),
+              });
+            },
+          });
+          break;
+        }
+
+        default:
+          // An action this build does not know about is skipped rather than
+          // guessed at.
+          break;
+      }
+    } catch {
+      // One failed change should not stop the rest, and never the reply.
+    }
+  }
+
+  return applied;
+}
+
+function changesAnything(before: Record<string, unknown>, patch: Record<string, unknown>): boolean {
+  return Object.entries(patch).some(([key, value]) => {
+    const current = before[key];
+    if (value === undefined) return false;
+    // Times differ in formatting but not in meaning ("+03:00" vs "Z").
+    if (typeof value === 'string' && typeof current === 'string') {
+      const a = new Date(value).getTime();
+      const b = new Date(current).getTime();
+      if (!Number.isNaN(a) && !Number.isNaN(b)) return a !== b;
+    }
+    return value !== current;
+  });
+}
+
+async function findTask(id: string): Promise<Task | undefined> {
+  const { tasks } = await api.listTasks();
+  return tasks.find((t) => t.id === id && t.deletedAt === null);
+}
+
+async function findEvent(id: string): Promise<Event | undefined> {
+  const { events } = await api.listEvents();
+  return events.find((e) => e.id === id && e.deletedAt === null);
+}

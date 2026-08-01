@@ -3,6 +3,7 @@ import {
   ScrollView,
   View,
   Text,
+  TextInput,
   Switch,
   StyleSheet,
   Alert,
@@ -13,29 +14,24 @@ import { useFocusEffect } from '@react-navigation/native';
 import { LinearGradient } from 'expo-linear-gradient';
 import * as Haptics from 'expo-haptics';
 import {
-  Ellipsis,
-  ChevronDown,
-  ChevronRight,
-  Moon,
-  CircleUser,
+  User,
+  Globe,
   Bell,
-  CirclePlus,
-  ShieldCheck,
-  Users,
-  UserPlus,
-  Paperclip,
-  Languages,
+  CheckCircle2,
+  ListTodo,
+  Flame,
+  CalendarDays,
+  Pencil,
   Database,
   Trash2,
-  type LucideIcon,
+  Languages,
 } from 'lucide-react-native';
 
 import { Screen } from '../components/ui';
-import { useTheme } from '../lib/theme';
 import { storage, defaultSettings, Settings } from '../lib/storage';
 import { api, type Task, type Event } from '../lib/api';
 import { toDateStr, isLive } from '../lib/tasks';
-import { spacing, radius, font, cardStyle, chipStyle, ACCENT_GRADIENT, type Palette } from '../theme';
+import { colors, spacing, font, ACCENT_GRADIENT, TILES, TILE_INK } from '../theme';
 import { t, LANGUAGES, getLanguage, setLanguage, type Language } from '../lib/i18n';
 
 // Placeholder portrait, matching the Today header avatar.
@@ -52,14 +48,55 @@ function initialsOf(name: string): string {
   );
 }
 
-type SettingsRowSpec = { key: string; Icon: LucideIcon; label: string };
+// Lavender icon square, same pattern as the Today's Progress stat rows.
+function IconSquare({ children }: { children: React.ReactNode }) {
+  return <View style={styles.iconSquare}>{children}</View>;
+}
+
+/** One figure in the hero's stat strip. */
+function HeroStat({
+  Icon,
+  value,
+  label,
+}: {
+  Icon: typeof ListTodo;
+  value: number | string;
+  label: string;
+}) {
+  return (
+    <View style={styles.heroStat}>
+      <View style={styles.heroStatIcon}>
+        <Icon color={colors.text} size={15} />
+      </View>
+      <Text style={styles.heroStatValue}>{value}</Text>
+      <Text style={styles.heroStatLabel}>{label}</Text>
+    </View>
+  );
+}
+
+/** Glass panel used by every settings card, matching the other screens. */
+function GlassCard({
+  children,
+  style,
+}: {
+  children: React.ReactNode;
+  style?: object;
+}) {
+  return (
+    <LinearGradient
+      colors={[colors.surface, colors.surface, colors.surface]}
+      locations={[0, 0.55, 1]}
+      start={{ x: 0.05, y: 0 }}
+      end={{ x: 0.95, y: 1 }}
+      style={[styles.card, style]}
+    >
+      {children}
+    </LinearGradient>
+  );
+}
 
 export default function SettingsScreen() {
-  const { mode, palette: c, toggle } = useTheme();
-  const styles = useMemo(() => makeStyles(c), [c]);
-
   const [settings, setSettings] = useState<Settings>(defaultSettings);
-  const [email, setEmail] = useState('');
   const [events, setEvents] = useState<Event[]>([]);
   const [tasks, setTasks] = useState<Task[]>([]);
   const [online, setOnline] = useState<boolean | null>(null);
@@ -69,12 +106,12 @@ export default function SettingsScreen() {
   const pickLanguage = async (code: Language) => {
     if (code === lang) return;
     Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
-    const directionChanged = await setLanguage(code);
+    // Switching between an RTL and an LTR language restarts the app itself
+    // where it can (the native direction flag is only read when a surface
+    // starts). This is true only when it could not.
+    const restartByHand = await setLanguage(code);
     setLang(code);
-    if (directionChanged) {
-      // React Native reads the RTL flag once at startup, so an already-mounted
-      // tree keeps the old direction — the text would translate while the
-      // layout stayed mirrored the wrong way.
+    if (restartByHand) {
       Alert.alert(t('profile.restartTitle'), t('profile.restartBody'));
     }
   };
@@ -94,7 +131,6 @@ export default function SettingsScreen() {
         ]);
         if (!active) return;
         setSettings((prev) => ({ ...prev, displayName: me.user.name || prev.displayName }));
-        setEmail(me.user.email || '');
         // Sync endpoints include soft-deleted rows; drop them before counting.
         setEvents(evRes.events.filter(isLive));
         setTasks(taskRes.tasks.filter(isLive));
@@ -135,43 +171,6 @@ export default function SettingsScreen() {
 
   const completion = stats.total ? Math.round((stats.done / stats.total) * 100) : 0;
 
-  // Segmented bar: completed / open / events / streak, as real proportions of
-  // one another. An all-zero total would collapse every segment to nothing,
-  // so it falls back to four even slivers instead.
-  const barTotal = stats.done + stats.open + stats.events + stats.streak;
-  const segments = [
-    { key: 'done', flex: barTotal ? stats.done : 1, color: c.lime },
-    { key: 'open', flex: barTotal ? stats.open : 1, color: c.cyan },
-    { key: 'events', flex: barTotal ? stats.events : 1, color: c.pink },
-    { key: 'streak', flex: barTotal ? stats.streak : 1, color: c.lavender },
-  ];
-
-  const gridStats = [
-    { key: 'total', label: t('profile.stat.tasks'), value: String(stats.total), color: c.lime },
-    { key: 'completion', label: t('profile.completion'), value: `${completion}%`, color: c.cyan },
-    { key: 'open', label: t('profile.openTasks'), value: String(stats.open), color: c.pink },
-    {
-      key: 'events',
-      label: t('profile.stat.events'),
-      value: String(stats.events),
-      color: c.lavender,
-    },
-  ];
-
-  // Presentational only — there is nowhere in this app for these to go yet.
-  const accountRows: SettingsRowSpec[] = [
-    { key: 'personal', Icon: CircleUser, label: t('profile.personalInfo') },
-    { key: 'notifications', Icon: Bell, label: t('profile.notifications') },
-    { key: 'subscribe', Icon: CirclePlus, label: t('profile.subscribe') },
-    { key: 'security', Icon: ShieldCheck, label: t('profile.security') },
-  ];
-  const projectRows: SettingsRowSpec[] = [
-    { key: 'friends', Icon: Users, label: t('profile.friends') },
-    { key: 'invitations', Icon: UserPlus, label: t('profile.invitations') },
-    { key: 'attachments', Icon: Paperclip, label: t('profile.attachments') },
-  ];
-  const onRowPress = () => Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
-
   const save = async () => {
     Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
     await storage.saveSettings(settings);
@@ -181,6 +180,7 @@ export default function SettingsScreen() {
     }
     Alert.alert(t('profile.saved'), t('profile.savedBody'));
   };
+
 
   const clearData = () => {
     Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
@@ -200,150 +200,149 @@ export default function SettingsScreen() {
   return (
     <Screen>
       <ScrollView showsVerticalScrollIndicator={false}>
-        {/* ── Header: centred title, trailing overflow button ── */}
-        <View style={styles.headerRow}>
-          <View style={styles.headerSpacer} />
-          <Text style={styles.headerTitle} numberOfLines={1}>
-            {t('profile.headline.line1')} {t('profile.headline.line2')}
-          </Text>
-          <Pressable
-            onPress={() => Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light)}
-            style={styles.headerBtn}
-          >
-            <Ellipsis color={c.text} size={20} />
-          </Pressable>
-        </View>
+        {/* ── Headline: light first line, heavier second ── */}
+        <Text style={styles.headline}>
+          Your{'\n'}
+          <Text style={styles.headlineStrong}>Profile</Text>
+        </Text>
 
-        {/* ── Identity row: not a card, directly on the ground ── */}
-        <View style={styles.identityRow}>
-          <View style={styles.avatar}>
-            <Text style={styles.avatarText}>{initialsOf(settings.displayName || 'You')}</Text>
-            <Image source={{ uri: PROFILE_PHOTO_URI }} style={styles.avatarPhoto} />
-          </View>
-          <View style={styles.identityText}>
-            <Text style={styles.identityName} numberOfLines={1}>
-              {settings.displayName || t('profile.yourName')}
-            </Text>
-            {email ? (
-              <Text style={styles.identityEmail} numberOfLines={1}>
-                {email}
-              </Text>
-            ) : null}
-          </View>
-          <View style={styles.proPill}>
-            <Text style={styles.proPillText}>{t('profile.pro')}</Text>
-          </View>
-        </View>
+        {/* ── Hero: purple gradient identity card ── */}
+        <LinearGradient
+          colors={[TILES.green, TILES.green, TILES.green]}
+          locations={[0, 0.5, 1]}
+          start={{ x: 0.05, y: 0 }}
+          end={{ x: 0.95, y: 1 }}
+          style={styles.hero}
+        >
+          {/* Soft highlight so the panel reads as glass, not flat fill. */}
+          <LinearGradient
+            colors={['rgba(255,255,255,0.35)', 'rgba(255,255,255,0)']}
+            start={{ x: 0, y: 0 }}
+            end={{ x: 0.75, y: 0.9 }}
+            style={StyleSheet.absoluteFillObject}
+            pointerEvents="none"
+          />
 
-        {/* ── Analytics ── */}
-        <View style={styles.card}>
-          <View style={styles.analyticsHeader}>
-            <Text style={styles.cardTitle}>{t('profile.analytics')}</Text>
-            <Pressable
-              onPress={() => Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light)}
-              style={styles.monthRow}
-              hitSlop={6}
-            >
-              <Text style={styles.monthLabel}>{t('profile.thisMonth')}</Text>
-              <ChevronDown color={c.textMuted} size={14} />
-            </Pressable>
-          </View>
-
-          <View style={styles.segmentBar}>
-            {segments.map((seg) => (
-              <View
-                key={seg.key}
-                style={[styles.segment, { flex: seg.flex, backgroundColor: seg.color }]}
-              />
-            ))}
-          </View>
-
-          <View style={styles.statGrid}>
-            {gridStats.map((g) => (
-              <View key={g.key} style={styles.statCell}>
-                <View style={[styles.statRule, { backgroundColor: g.color }]} />
-                <View style={styles.statCellBody}>
-                  <Text style={styles.statLabel} numberOfLines={1}>
-                    {g.label}
-                  </Text>
-                  <Text style={styles.statValue}>{g.value}</Text>
-                </View>
+          <View style={styles.heroTop}>
+            <View style={styles.avatarRing}>
+              <View style={styles.avatar}>
+                <Text style={styles.avatarText}>
+                  {initialsOf(settings.displayName || 'You')}
+                </Text>
+                <Image source={{ uri: PROFILE_PHOTO_URI }} style={styles.avatarPhoto} />
               </View>
-            ))}
+            </View>
+            <View style={{ flex: 1, marginStart: 14 }}>
+              <Text style={styles.heroName} numberOfLines={1}>
+                {settings.displayName || t('profile.yourName')}
+              </Text>
+              <Text style={styles.heroSub}>{t('profile.workspace')}</Text>
+              <View style={styles.statusPill}>
+                <View
+                  style={[
+                    styles.statusDot,
+                    { backgroundColor: TILE_INK.green },
+                  ]}
+                />
+                <Text style={styles.statusText}>
+                  On this device
+                </Text>
+              </View>
+            </View>
           </View>
+
+          {/* Completion bar */}
+          <View style={styles.progressBlock}>
+            <View style={styles.progressLabelRow}>
+              <Text style={styles.progressLabel}>{t('profile.completion')}</Text>
+              <Text style={styles.progressPct}>{completion}%</Text>
+            </View>
+            <View style={styles.progressTrack}>
+              <LinearGradient
+                colors={[colors.surface, colors.surface]}
+                start={{ x: 0, y: 0 }}
+                end={{ x: 1, y: 0 }}
+                style={[styles.progressFill, { width: `${Math.max(completion, 2)}%` }]}
+              />
+            </View>
+          </View>
+
+          <View style={styles.heroDivider} />
+
+          <View style={styles.heroStatsRow}>
+            <HeroStat Icon={ListTodo} value={stats.total} label={t('profile.stat.tasks')} />
+            <HeroStat Icon={CheckCircle2} value={stats.done} label={t('profile.stat.done')} />
+            <HeroStat Icon={Flame} value={stats.streak} label={t('profile.stat.streak')} />
+            <HeroStat Icon={CalendarDays} value={stats.events} label={t('profile.stat.events')} />
+          </View>
+        </LinearGradient>
+
+        {/* ── Quick stat tiles ── */}
+        <View style={styles.tileRow}>
+          <GlassCard style={styles.tile}>
+            <View style={[styles.tileIcon, { backgroundColor: TILES.blue }]}>
+              <ListTodo color={colors.primary} size={17} />
+            </View>
+            <Text style={styles.tileValue}>{stats.open}</Text>
+            <Text style={styles.tileLabel}>{t('profile.openTasks')}</Text>
+          </GlassCard>
+          <GlassCard style={styles.tile}>
+            <View style={[styles.tileIcon, { backgroundColor: TILES.green }]}>
+              <CheckCircle2 color={TILE_INK.green} size={17} />
+            </View>
+            <Text style={styles.tileValue}>{stats.done}</Text>
+            <Text style={styles.tileLabel}>{t('profile.completed')}</Text>
+          </GlassCard>
         </View>
 
-        {/* ── Appearance: the theme toggle ── */}
-        <View style={styles.card}>
-          <Text style={[styles.cardTitle, { marginBottom: spacing.md }]}>
-            {t('profile.appearance')}
-          </Text>
-          <View style={styles.appearanceRow}>
-            <View style={styles.appearanceIcon}>
-              <Moon color={c.text} size={18} />
-            </View>
-            <View style={styles.appearanceText}>
-              <Text style={styles.rowLabel}>{t('profile.darkMode')}</Text>
-              <Text style={styles.rowDesc}>{t('profile.darkModeBody')}</Text>
+        {/* ── Display name ── */}
+        <GlassCard>
+          <View style={styles.cardHeaderRow}>
+            <IconSquare>
+              <User color={colors.primary} size={18} />
+            </IconSquare>
+            <Text style={styles.cardTitle}>{t('profile.displayName')}</Text>
+          </View>
+          <View style={styles.inputWrap}>
+            <TextInput
+              value={settings.displayName}
+              onChangeText={(displayName) => setSettings((s) => ({ ...s, displayName }))}
+              placeholder={t('profile.yourName')}
+              placeholderTextColor={colors.textMuted}
+              style={styles.input}
+            />
+            <Pencil color={colors.textMuted} size={15} style={styles.inputIcon} />
+          </View>
+        </GlassCard>
+
+        {/* ── Notifications ── */}
+        <GlassCard>
+          <View style={[styles.cardHeaderRow, { marginBottom: 0 }]}>
+            <IconSquare>
+              <Bell color={colors.primary} size={18} />
+            </IconSquare>
+            <View style={{ flex: 1 }}>
+              <Text style={styles.cardTitle}>{t('profile.notifications')}</Text>
+              <Text style={styles.mutedText}>{t('profile.notificationsBody')}</Text>
             </View>
             <Switch
-              value={mode === 'dark'}
-              onValueChange={() => {
+              value={settings.notifications}
+              onValueChange={(notifications) => {
                 Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
-                toggle();
+                setSettings((s) => ({ ...s, notifications }));
               }}
-              trackColor={{ true: c.primary, false: c.surfaceAlt }}
+              trackColor={{ true: colors.primary, false: '#E3E3DE' }}
               thumbColor="#FFFFFF"
             />
           </View>
-        </View>
-
-        {/* ── Account settings ── */}
-        <View style={styles.card}>
-          <Text style={[styles.cardTitle, { marginBottom: spacing.xs }]}>
-            {t('profile.accountSettings')}
-          </Text>
-          {accountRows.map((r, i) => (
-            <Pressable
-              key={r.key}
-              onPress={onRowPress}
-              style={[styles.row, i < accountRows.length - 1 && styles.rowDivider]}
-            >
-              <r.Icon color={c.textMuted} size={20} />
-              <Text style={styles.rowText} numberOfLines={1}>
-                {r.label}
-              </Text>
-              <ChevronRight color={c.textMuted} size={18} />
-            </Pressable>
-          ))}
-        </View>
-
-        {/* ── Project setting ── */}
-        <View style={styles.card}>
-          <Text style={[styles.cardTitle, { marginBottom: spacing.xs }]}>
-            {t('profile.projectSetting')}
-          </Text>
-          {projectRows.map((r, i) => (
-            <Pressable
-              key={r.key}
-              onPress={onRowPress}
-              style={[styles.row, i < projectRows.length - 1 && styles.rowDivider]}
-            >
-              <r.Icon color={c.textMuted} size={20} />
-              <Text style={styles.rowText} numberOfLines={1}>
-                {r.label}
-              </Text>
-              <ChevronRight color={c.textMuted} size={18} />
-            </Pressable>
-          ))}
-        </View>
+        </GlassCard>
 
         {/* ── Language ── */}
-        <View style={styles.card}>
+        <GlassCard>
           <View style={styles.cardHeaderRow}>
-            <View style={styles.iconSquare}>
-              <Languages color={c.primary} size={18} />
-            </View>
+            <IconSquare>
+              <Languages color={colors.primary} size={18} />
+            </IconSquare>
             <View style={{ flex: 1 }}>
               <Text style={styles.cardTitle}>{t('profile.language')}</Text>
               <Text style={styles.mutedText}>{t('profile.languageBody')}</Text>
@@ -358,33 +357,35 @@ export default function SettingsScreen() {
                   onPress={() => pickLanguage(code)}
                   style={[styles.langChip, active && styles.langChipActive]}
                 >
-                  <Text style={[styles.langChipText, active && styles.langChipTextActive]}>
+                  <Text style={[styles.langChipText, active && { color: '#FFFFFF' }]}>
                     {LANGUAGES[code].native}
                   </Text>
                 </Pressable>
               );
             })}
           </View>
-        </View>
+        </GlassCard>
 
         {/* ── Local data ── */}
-        <View style={styles.card}>
+        <GlassCard>
           <View style={styles.cardHeaderRow}>
-            <View style={styles.iconSquare}>
-              <Database color={c.primary} size={18} />
-            </View>
+            <IconSquare>
+              <Database color={colors.primary} size={18} />
+            </IconSquare>
             <View style={{ flex: 1 }}>
               <Text style={styles.cardTitle}>{t('profile.storage')}</Text>
-              <Text style={styles.mutedText}>{t('profile.storageBody')}</Text>
+              <Text style={styles.mutedText}>
+                {t('profile.storageBody')}
+              </Text>
             </View>
           </View>
           <Pressable onPress={clearData} style={styles.ghostBtn}>
-            <Trash2 color={c.danger} size={16} />
-            <Text style={[styles.ghostBtnText, { color: c.danger }]}>
+            <Trash2 color={colors.danger} size={16} />
+            <Text style={[styles.ghostBtnText, { color: colors.danger }]}>
               {t('profile.clearData')}
             </Text>
           </Pressable>
-        </View>
+        </GlassCard>
 
         {/* ── Save ── */}
         <Pressable onPress={save} style={({ pressed }) => [{ opacity: pressed ? 0.88 : 1 }]}>
@@ -397,167 +398,203 @@ export default function SettingsScreen() {
             <Text style={styles.saveBtnText}>{t('profile.save')}</Text>
           </LinearGradient>
         </Pressable>
+
       </ScrollView>
     </Screen>
   );
 }
 
-function makeStyles(c: Palette) {
-  return StyleSheet.create({
-    // ── Header ──
-    headerRow: { flexDirection: 'row', alignItems: 'center', marginBottom: spacing.lg },
-    headerSpacer: { width: 40 },
-    headerTitle: {
-      flex: 1,
-      ...font(700),
-      fontSize: 22,
-      color: c.text,
-      textAlign: 'center',
-    },
-    headerBtn: {
-      width: 40,
-      height: 40,
-      borderRadius: 20,
-      backgroundColor: c.surfaceAlt,
-      alignItems: 'center',
-      justifyContent: 'center',
-    },
+const styles = StyleSheet.create({
+  headline: {
+    ...font(400),
+    fontSize: 34,
+    lineHeight: 42,
+    color: colors.text,
+    letterSpacing: -0.6,
+    marginBottom: spacing.lg,
+  },
+  headlineStrong: { ...font(600) },
 
-    // ── Identity row ──
-    identityRow: { flexDirection: 'row', alignItems: 'center', marginBottom: spacing.lg },
-    avatar: {
-      width: 52,
-      height: 52,
-      borderRadius: 26,
-      backgroundColor: c.surfaceAlt,
-      alignItems: 'center',
-      justifyContent: 'center',
-      overflow: 'hidden',
-    },
-    avatarText: { ...font(600), fontSize: 17, color: c.text },
-    avatarPhoto: { ...StyleSheet.absoluteFillObject, width: '100%', height: '100%' },
-    identityText: { flex: 1, marginStart: spacing.md - 4 },
-    identityName: { ...font(700), fontSize: 17, color: c.text, textAlign: 'auto' },
-    identityEmail: {
-      ...font(400),
-      fontSize: 13,
-      color: c.textMuted,
-      marginTop: 2,
-      textAlign: 'auto',
-    },
-    proPill: { ...chipStyle(), backgroundColor: c.lime, marginStart: spacing.sm },
-    proPillText: { ...font(700), fontSize: 12, color: c.onLight },
+  // ── Hero ──
+  hero: {
+    borderRadius: 28,
+    padding: spacing.md + 4,
+    marginBottom: 14,
+    overflow: 'hidden',
+    shadowColor: '#14150F',
+    shadowOffset: { width: 0, height: 8 },
+    shadowOpacity: 0.06,
+    shadowRadius: 18,
+    elevation: 3,
+  },
+  heroTop: { flexDirection: 'row', alignItems: 'center' },
+  avatarRing: {
+    width: 72,
+    height: 72,
+    borderRadius: 36,
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderWidth: 2,
+    borderColor: 'rgba(255,255,255,0.9)',
+  },
+  avatar: {
+    width: 62,
+    height: 62,
+    borderRadius: 31,
+    backgroundColor: colors.surface,
+    alignItems: 'center',
+    justifyContent: 'center',
+    overflow: 'hidden',
+  },
+  avatarText: { ...font(700), fontSize: 21, color: colors.text },
+  avatarPhoto: { ...StyleSheet.absoluteFillObject, width: '100%', height: '100%' },
+  heroName: { ...font(700), fontSize: 20, color: colors.text, letterSpacing: -0.3 },
+  heroSub: { ...font(500), fontSize: 13, color: colors.text, opacity: 0.7, marginTop: 1 },
+  statusPill: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    alignSelf: 'flex-start',
+    backgroundColor: colors.surface,
+    borderRadius: 50,
+    paddingHorizontal: 10,
+    paddingVertical: 4,
+    marginTop: 8,
+  },
+  statusDot: { width: 6, height: 6, borderRadius: 3 },
+  statusText: { ...font(600), fontSize: 11, color: colors.text },
 
-    // ── Cards ──
-    card: { ...cardStyle(c), marginBottom: spacing.md },
-    cardTitle: { ...font(700), fontSize: 17, color: c.text },
-    mutedText: { ...font(400), fontSize: 12.5, color: c.textMuted, lineHeight: 18 },
+  progressBlock: { marginTop: spacing.md + 2 },
+  progressLabelRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    marginBottom: 7,
+  },
+  progressLabel: { ...font(500), fontSize: 12.5, color: colors.text, opacity: 0.75 },
+  progressPct: { ...font(700), fontSize: 13, color: colors.text },
+  progressTrack: {
+    height: 8,
+    borderRadius: 4,
+    backgroundColor: 'rgba(255,255,255,0.6)',
+    overflow: 'hidden',
+  },
+  progressFill: { height: '100%', borderRadius: 4 },
 
-    // ── Analytics ──
-    analyticsHeader: {
-      flexDirection: 'row',
-      alignItems: 'center',
-      justifyContent: 'space-between',
-      marginBottom: spacing.md,
-    },
-    monthRow: { flexDirection: 'row', alignItems: 'center', gap: 4 },
-    monthLabel: { ...font(500), fontSize: 12.5, color: c.textMuted },
+  heroDivider: {
+    height: 1,
+    backgroundColor: 'rgba(20,21,15,0.08)',
+    marginVertical: spacing.md,
+  },
+  heroStatsRow: { flexDirection: 'row', justifyContent: 'space-between' },
+  heroStat: { alignItems: 'center', flex: 1 },
+  heroStatIcon: {
+    width: 30,
+    height: 30,
+    borderRadius: 10,
+    backgroundColor: colors.surface,
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginBottom: 6,
+  },
+  heroStatValue: { ...font(700), fontSize: 17, color: colors.text },
+  heroStatLabel: {
+    ...font(400),
+    fontSize: 10.5,
+    color: colors.text,
+    opacity: 0.7,
+    marginTop: 1,
+  },
 
-    segmentBar: {
-      flexDirection: 'row',
-      height: 8,
-      gap: 4,
-      marginBottom: spacing.md,
-    },
-    segment: { height: '100%', borderRadius: 4 },
+  // ── Cards ──
+  card: {
+    borderRadius: 24,
+    padding: spacing.md + 2,
+    marginBottom: 14,
+    overflow: 'hidden',
+    shadowColor: '#14150F',
+    shadowOffset: { width: 0, height: 6 },
+    shadowOpacity: 0.05,
+    shadowRadius: 16,
+    elevation: 2,
+  },
 
-    statGrid: { flexDirection: 'row', flexWrap: 'wrap', rowGap: spacing.md, columnGap: spacing.sm + 2 },
-    statCell: { flexDirection: 'row', width: '47%' },
-    statRule: { width: 2, borderRadius: 1, marginEnd: 8 },
-    statCellBody: {
-      flex: 1,
-      flexDirection: 'row',
-      alignItems: 'center',
-      justifyContent: 'space-between',
-      gap: 6,
-    },
-    statLabel: { ...font(400), fontSize: 11.5, color: c.textMuted, flexShrink: 1 },
-    statValue: { ...font(700), fontSize: 15, color: c.text },
+  tileRow: { flexDirection: 'row', gap: 14 },
+  tile: { flex: 1, padding: spacing.md },
+  tileIcon: {
+    width: 36,
+    height: 36,
+    borderRadius: 12,
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginBottom: 10,
+  },
+  tileValue: { ...font(600), fontSize: 24, color: colors.text, letterSpacing: -0.5 },
+  tileLabel: { ...font(400), fontSize: 12, color: colors.textMuted, marginTop: 1 },
 
-    // ── Appearance ──
-    appearanceRow: { flexDirection: 'row', alignItems: 'center' },
-    appearanceIcon: {
-      width: 38,
-      height: 38,
-      borderRadius: radius.sm,
-      backgroundColor: c.surfaceAlt,
-      alignItems: 'center',
-      justifyContent: 'center',
-    },
-    appearanceText: { flex: 1, marginStart: spacing.sm + 2 },
-    rowLabel: { ...font(600), fontSize: 15, color: c.text, textAlign: 'auto' },
-    rowDesc: { ...font(400), fontSize: 12.5, color: c.textMuted, marginTop: 2, textAlign: 'auto' },
+  cardHeaderRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10,
+    marginBottom: 12,
+  },
+  iconSquare: {
+    width: 38,
+    height: 38,
+    borderRadius: 12,
+    backgroundColor: TILES.neutral,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  cardTitle: { ...font(600), fontSize: 16, color: colors.text },
+  mutedText: { ...font(400), fontSize: 12.5, color: colors.textMuted, lineHeight: 18 },
 
-    // ── Settings list rows ──
-    row: {
-      flexDirection: 'row',
-      alignItems: 'center',
-      gap: spacing.sm + 2,
-      height: 48,
-    },
-    rowDivider: { borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: c.border },
-    rowText: { flex: 1, ...font(500), fontSize: 15, color: c.text, textAlign: 'auto' },
+  inputWrap: { justifyContent: 'center' },
+  input: {
+    backgroundColor: TILES.neutral,
+    borderRadius: 14,
+    paddingHorizontal: 14,
+    paddingVertical: 15,
+    paddingEnd: 38,
+    fontSize: 15,
+    ...font(400),
+    color: colors.text,
 
-    // ── Language / storage card headers ──
-    cardHeaderRow: { flexDirection: 'row', alignItems: 'center', gap: 10, marginBottom: 12 },
-    iconSquare: {
-      width: 38,
-      height: 38,
-      borderRadius: radius.sm,
-      backgroundColor: c.surfaceAlt,
-      alignItems: 'center',
-      justifyContent: 'center',
-    },
+  },
+  inputIcon: { position: 'absolute', end: 14 },
 
-    langGrid: { flexDirection: 'row', flexWrap: 'wrap', gap: 8 },
-    langChip: {
-      paddingHorizontal: 14,
-      paddingVertical: 9,
-      borderRadius: radius.pill,
-      backgroundColor: c.surfaceAlt,
-      borderWidth: 1,
-      borderColor: c.border,
-    },
-    langChipActive: { backgroundColor: c.primary, borderColor: c.primary },
-    langChipText: { ...font(600), fontSize: 13.5, color: c.text },
-    langChipTextActive: { color: c.onAccent },
+  langGrid: { flexDirection: 'row', flexWrap: 'wrap', gap: 8 },
+  langChip: {
+    paddingHorizontal: 14,
+    paddingVertical: 9,
+    borderRadius: 50,
+    backgroundColor: TILES.neutral,
+  },
+  langChipActive: { backgroundColor: colors.primary, borderColor: colors.primary },
+  langChipText: { ...font(600), fontSize: 13.5, color: colors.primary },
 
-    ghostBtn: {
-      flexDirection: 'row',
-      alignItems: 'center',
-      justifyContent: 'center',
-      gap: 8,
-      marginTop: 12,
-      backgroundColor: c.surfaceAlt,
-      borderRadius: radius.pill,
-      paddingVertical: 15,
-      borderWidth: 1,
-      borderColor: c.border,
-    },
-    ghostBtnText: { ...font(600), fontSize: 14 },
+  ghostBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 8,
+    marginTop: 12,
+    backgroundColor: colors.surface,
+    borderRadius: 50,
+    paddingVertical: 15,
+  },
+  ghostBtnText: { ...font(500), fontSize: 14, color: colors.primary },
 
-    // ── Save ──
-    saveBtn: {
-      borderRadius: radius.pill,
-      paddingVertical: 19,
-      alignItems: 'center',
-      marginTop: 2,
-      shadowColor: c.primary,
-      shadowOffset: { width: 0, height: 6 },
-      shadowOpacity: 0.35,
-      shadowRadius: 14,
-      elevation: 5,
-    },
-    saveBtnText: { ...font(700), fontSize: 15.5, color: c.onAccent },
-  });
-}
+  saveBtn: {
+    borderRadius: 50,
+    paddingVertical: 19,
+    alignItems: 'center',
+    marginTop: 2,
+    shadowColor: '#14150F',
+    shadowOffset: { width: 0, height: 6 },
+    shadowOpacity: 0.18,
+    shadowRadius: 14,
+    elevation: 4,
+  },
+  saveBtnText: { ...font(600), fontSize: 15.5, color: colors.primaryText },
+});

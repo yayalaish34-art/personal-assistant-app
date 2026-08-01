@@ -1,5 +1,5 @@
-import { useEffect, useMemo, useState } from 'react';
-import { NavigationContainer, DefaultTheme, DarkTheme } from '@react-navigation/native';
+import { useEffect, useState } from 'react';
+import { NavigationContainer, DefaultTheme } from '@react-navigation/native';
 import { StatusBar } from 'expo-status-bar';
 import { SafeAreaProvider } from 'react-native-safe-area-context';
 import { View } from 'react-native';
@@ -12,17 +12,22 @@ import {
 } from '@expo-google-fonts/urbanist';
 
 import RootNavigator from './src/navigation';
-import { loadLanguage } from './src/lib/i18n';
-import { ThemeProvider, useTheme } from './src/lib/theme';
+import { loadLanguage, isRTL } from './src/lib/i18n';
+import { colors } from './src/theme';
 
-/**
- * Everything below the providers, so it can read the active theme. Splitting
- * this out is what lets the navigation container and status bar follow the
- * palette — a component cannot consume a context its own parent provides.
- */
-function Root() {
-  const { mode, palette } = useTheme();
+const navTheme = {
+  ...DefaultTheme,
+  colors: {
+    ...DefaultTheme.colors,
+    background: colors.bg,
+    card: '#FFFFFF',
+    text: colors.text,
+    border: colors.border,
+    primary: colors.primary,
+  },
+};
 
+export default function App() {
   // The language must resolve before the first render: I18nManager sets the
   // layout direction, and a tree already mounted left-to-right will not flip.
   const [langReady, setLangReady] = useState(false);
@@ -37,42 +42,25 @@ function Root() {
     Urbanist_700Bold,
   });
 
-  const navTheme = useMemo(() => {
-    const base = mode === 'dark' ? DarkTheme : DefaultTheme;
-    return {
-      ...base,
-      colors: {
-        ...base.colors,
-        background: palette.bg,
-        card: palette.surface,
-        text: palette.text,
-        border: palette.border,
-        primary: palette.primary,
-      },
-    };
-  }, [mode, palette]);
-
   // Hold the first frame until Urbanist is ready, so text doesn't flash in the
   // system font and reflow once the real metrics land.
   if (!fontsLoaded || !langReady) {
-    return <View style={{ flex: 1, backgroundColor: palette.bg }} />;
+    return <View style={{ flex: 1, backgroundColor: colors.bg }} />;
   }
 
   return (
-    <NavigationContainer theme={navTheme}>
-      {/* Light glyphs on the dark ground, dark on the light one. */}
-      <StatusBar style={mode === 'dark' ? 'light' : 'dark'} />
-      <RootNavigator />
-    </NavigationContainer>
-  );
-}
-
-export default function App() {
-  return (
     <SafeAreaProvider>
-      <ThemeProvider>
-        <Root />
-      </ThemeProvider>
+      {/* One direction for the whole tree. Individual screens used to declare
+          it themselves, which left anything outside a `Screen` — modals, the
+          tab bar, navigator chrome — laid out left-to-right in Hebrew and
+          Arabic. Declaring it here also means mirroring does not wait for the
+          native I18nManager flag, which only takes effect after a restart. */}
+      <View style={{ flex: 1, direction: isRTL() ? 'rtl' : 'ltr' }}>
+        <NavigationContainer theme={navTheme}>
+          <StatusBar style="dark" />
+          <RootNavigator />
+        </NavigationContainer>
+      </View>
     </SafeAreaProvider>
   );
 }

@@ -21,6 +21,7 @@ import { chatHistoryRouter } from './modules/chat/historyRouter.js';
 import { chatRouter } from './modules/chat/router.js';
 import { parseRouter } from './modules/chat/parseRouter.js';
 import { speechRouter } from './modules/speech/router.js';
+import { voiceRouter } from './modules/voice/router.js';
 
 const require = createRequire(import.meta.url);
 const pkg = require('../package.json') as { version: string };
@@ -60,6 +61,9 @@ export function createApp(): Express {
   // reads and writes nothing.
   app.use('/', parseRouter);
   app.use('/', speechRouter);
+  // Voice assistant: stateless like /parse — the device keeps the data, the
+  // server keeps the keys.
+  app.use('/', voiceRouter);
 
   app.use(notFoundHandler);
   app.use(errorHandler);

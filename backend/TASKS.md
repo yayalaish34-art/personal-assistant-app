@@ -331,3 +331,49 @@ Scenarios locked in:
 - **signInFromIdentity returning-user** (test 23): saved name persists after re-login (QA-2 M-2 / N-3 fix).
 
 tsc: clean. npm test: 66 passed / 3 skipped / 0 failed (69 total — 23 new auth tests all pass).
+
+---
+
+## Phase 7 — Voice assistant
+
+### T7.1 — Voice turn + speech (stateless)
+DONE (local, uncommitted)
+
+The app is local-first: tasks and events live on the device, not in this
+database. The voice assistant therefore follows `POST /parse` rather than
+`POST /chat/message` — stateless, unauthenticated, owning no rows. What it
+owns is the provider keys.
+
+Files added: `src/modules/voice/agent.ts`, `src/modules/voice/tts.ts`,
+`src/modules/voice/router.ts`. Files changed: `src/app.ts` (mount),
+`src/config.ts` (`OPENAI_VOICE_MODEL`, `ELEVENLABS_*`), `.env.example`,
+`API_CONTRACT.md`.
+
+- `POST /voice/turn` — the device sends the transcript, the conversation so
+  far, and a snapshot of its own tasks and events. The model answers in one
+  or two spoken sentences and returns `actions` the **client** applies.
+- `GET /voice/speak` — ElevenLabs proxy returning mp3. Only `eleven_v3`
+  speaks Hebrew (verified against their /v1/models); other languages use
+  `eleven_flash_v2_5`, which is roughly six times faster in testing
+  (0.4s vs 2.5s for a sentence).
+- Runs on `gpt-4.1-mini`, not the chat model: `gpt-4o-mini` narrated actions
+  it had not taken ("I am deleting it now" with no tool call).
+
+Deviation from CLAUDE.md §2.1, deliberate and product-driven: there is no
+confirm step. The user asked for an assistant that acts while they talk. The
+invariant it replaces:
+- Rule §2.2 (never trust an id from the model) is kept and strengthened —
+  ids must exist in the snapshot, and every action naming an existing entry
+  carries `matchTitle`, checked against that row server-side. This came
+  directly from testing: asked to delete a meeting that did not exist, the
+  model deleted the nearest one and announced it as the one asked for.
+- Deletions are reversible on the client (undo bar), because a spoken
+  confirmation is the only signal the user gets.
+
+Verified by hand against a local server (no DB): move-an-event + create-task
+in one turn, a schedule question combined with a delete, and a delete of
+something not in the snapshot (refused, nothing touched). Hebrew and English
+TTS both returned playable mp3.
+
+tsc: clean. npm test: 66 passed / 3 failed — the same 3 that fail on a clean
+checkout here, all of which need a live database.

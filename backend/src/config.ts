@@ -16,6 +16,21 @@ export const configSchema = z.object({
   GOOGLE_CLIENT_ID: z.string().optional(),
   APPLE_CLIENT_ID: z.string().optional(),
   OPENAI_API_KEY: z.string().optional(),
+  // The voice assistant runs on its own model: it has to pick the right tool
+  // first time (a spoken "I deleted it" that called nothing is a lie the user
+  // only discovers later), and it has to answer fast enough to feel like a
+  // conversation. gpt-4o-mini, which the text chat uses, is not reliable
+  // enough at the first half of that.
+  OPENAI_VOICE_MODEL: z.string().default('gpt-4.1-mini'),
+  // Text-to-speech for the voice assistant. Without a key the app still works;
+  // the assistant answers in text and simply does not speak.
+  ELEVENLABS_API_KEY: z.string().optional(),
+  // "Jessica — Playful, Bright, Warm". Override to change who she sounds like.
+  ELEVENLABS_VOICE_ID: z.string().default('cgSgspJ2msm6clMCkdW9'),
+  // Hebrew is only supported by eleven_v3; the flash/turbo models cover Latin
+  // and Cyrillic scripts at lower latency. See voice/tts.ts for the choice.
+  ELEVENLABS_MODEL_ID: z.string().default('eleven_v3'),
+  ELEVENLABS_FAST_MODEL_ID: z.string().default('eleven_flash_v2_5'),
   EXPO_ACCESS_TOKEN: z.string().optional(),
   CORS_ORIGINS: z
     .string()

@@ -338,6 +338,74 @@ Rate limit: 10/min per user.
 
 ---
 
+## Voice assistant
+
+Stateless and unauthenticated, like `POST /parse`: the device owns the tasks
+and events, sends what the assistant needs to see, and applies what comes back.
+The server owns the provider keys and nothing else — it reads and writes no
+rows for these two routes.
+
+### `POST /voice/turn`
+Request:
+```json
+{
+  "text": "move the dentist to tomorrow at four",
+  "language": "he",
+  "timezone": "Asia/Jerusalem",
+  "now": "2026-07-30T14:00:00.000Z",
+  "userName": "Yonatan",
+  "history": [{ "role": "user", "content": "…" }],
+  "snapshot": {
+    "tasks": [{ "id": "…", "title": "…", "notes": null, "dueAt": null, "isDone": false }],
+    "events": [{ "id": "…", "title": "…", "note": null, "startsAt": "…", "endsAt": "…" }]
+  }
+}
+```
+- `text` required, 1–2000 chars. `language` one of `he` `en` `ar` `es` `fr`
+  `it` `ru` (default `en`) — she always answers in it.
+- `text` of exactly `"[SESSION START]"` means "the user just opened you":
+  she greets them and summarises the day instead of answering anything.
+- `history` — up to 20 earlier turns, oldest first, `user`/`assistant` only.
+- `snapshot` — up to 200 tasks and 200 events. This is the whole of what she
+  can see; ids come from here.
+
+Response `200`:
+```json
+{
+  "reply": "העברתי את הפגישה למחר בארבע.",
+  "actions": [
+    { "tool": "update_event", "arguments": { "id": "…", "matchTitle": "…", "startsAt": "…" } }
+  ],
+  "canSpeak": true
+}
+```
+- `reply` — one or two spoken sentences, plain text, in `language`.
+- `actions` — what the **client** must apply to its own storage, in order.
+  Tools: `create_task` · `update_task` · `complete_task` · `delete_task` ·
+  `create_event` · `update_event` · `delete_event`. Times are ISO-8601 with an
+  explicit offset.
+- Every action that names an existing entry carries `matchTitle`, the title as
+  it appears in the snapshot. The server rejects the action when the id and the
+  title disagree, so a misidentified entry never reaches the device.
+- Ids outside the snapshot are dropped server-side; the model is told and asks
+  the user instead.
+- `canSpeak` — whether `/voice/speak` is configured. When false the client
+  shows the reply without audio.
+
+Rate limit: 30/min and 500/day per caller.
+
+### `GET /voice/speak?text=<text>&language=<lang>`
+Response `200`: `audio/mpeg` (the mp3 itself, with `Content-Length`).
+- `text` max 900 chars — a spoken answer, not a document.
+- Returns audio a media player can stream directly; the client passes this URL
+  to the player rather than buffering the body.
+- `400` when speech is not configured on the server, or generation failed.
+- Nothing is stored: the audio is generated per request and discarded.
+
+Rate limit: 10/min per caller.
+
+---
+
 ## Devices
 
 ### `POST /devices`
@@ -369,3 +437,7 @@ Response `200`:
 ## Change log
 
 - `2026-07-23` — Initial contract (aligns with `SPEC_BACKEND_V1.2.md`).
+- `2026-07-30` — Added the voice assistant: `POST /voice/turn` and
+  `GET /voice/speak`. Stateless and unauthenticated, like `POST /parse` — the
+  client applies the returned `actions` to its own storage. Nothing in the
+  existing contract changed.

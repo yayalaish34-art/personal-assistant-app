@@ -1,5 +1,12 @@
 import AsyncStorage from '@react-native-async-storage/async-storage';
 
+import {
+  cancelAllReminders,
+  cancelReminder,
+  scheduleEventReminder,
+  scheduleTaskReminder,
+} from './notifications';
+
 // Local-only data layer. Everything lives in AsyncStorage on the device —
 // there is no server, no network, and no account.
 //
@@ -139,60 +146,152 @@ const live = <T extends { deletedAt: string | null }>(rows: T[]) =>
   rows.filter((r) => r.deletedAt === null);
 
 /**
- * Puts a small set of example rows in place on first launch, so the app has
- * something to show instead of four empty screens. Runs once — the marker is
- * written whether or not rows were added, so a user who deletes everything
- * doesn't get it back on the next launch.
+ * Bumped whenever the sample set changes.
+ *
+ * The marker used to be a bare '1', so a device that had already launched
+ * never saw a new set. Storing the version instead lets a changed sample reach
+ * an install that is already running.
+ */
+const SEED_VERSION = '2';
+
+/** Work and life, mixed the way a real month is. */
+const TASK_POOL: [title: string, notes: string, hour: number][] = [
+  ['Write the weekly update', '[Medium] Send before end of day', 17],
+  ['Book flights for the offsite', '[High] Two travellers, direct', 12],
+  ['Renew the SSL certificate', '[High] Expires this month', 10],
+  ['Review the design handoff', '[Medium] Check spacing and states', 15],
+  ['Pay the electricity bill', '[High] Before the late fee', 9],
+  ['Call the accountant', '[Medium] Quarterly numbers', 11],
+  ['Order a birthday present', '[Medium] Something she would use', 19],
+  ['Refill the prescription', '[High] Two weeks left', 8],
+  ['Clear the inbox', '[Low] Down to zero', 16],
+  ['Draft the offsite agenda', '[Medium] Half a day, four topics', 14],
+  ['Back up the laptop', '[Low] Overdue by a month', 21],
+  ['Book the dentist follow-up', '[Medium] Six month check', 13],
+  ['Update the CV', '[Low] Add the last two projects', 20],
+  ['Water the plants', '[Low] The ones by the window', 18],
+  ['Send the invoice', '[High] Net 30, chase if quiet', 10],
+  ['Plan the weekend trip', '[Medium] Two nights, north', 20],
+  ['Fix the leaking tap', '[Medium] Washer, not the whole unit', 17],
+  ['Read the background job docs', '[Low] Retry semantics', 22],
+  ['Renew the parking permit', '[High] Expires on the 28th', 9],
+  ['Cancel the unused subscription', '[Low] The one from January', 16],
+  ['Prepare the sprint demo', '[High] Five minutes, no slides', 15],
+  ['Buy groceries', '[Medium] List is on the fridge', 18],
+  ['Schedule the car service', '[Medium] Due at 60k', 11],
+  ['Write the retro notes', '[Medium] Before it fades', 16],
+  ['Return the parcel', '[Low] Wrong size', 13],
+];
+
+const EVENT_POOL: [title: string, note: string, hour: number, minute: number][] = [
+  ['Daily standup', '[Medium] Blockers and hand-offs', 9, 0],
+  ['Review pull requests', '[High] Clear the queue', 11, 0],
+  ['Design review', '[Medium] Onboarding flow', 14, 0],
+  ['Gym', '[Low] Upper body, 45 min', 18, 0],
+  ['Stakeholder demo', '[High] Walkthrough, 40 min', 11, 30],
+  ['Dentist appointment', '[Low] Cleaning', 16, 30],
+  ['Sprint planning', '[High] Scope and capacity', 9, 30],
+  ['One-on-one', '[Medium] Career, not status', 13, 0],
+  ['Lunch with Sarah', '[Low] The place on the corner', 12, 30],
+  ['Team retro', '[Medium] What to stop doing', 15, 30],
+  ['Parents evening', '[High] Both teachers', 17, 0],
+  ['Yoga class', '[Low] Bring the mat', 7, 30],
+];
+
+/**
+ * Fills the current month with example rows, so the screens have something
+ * with shape to them — a week that is already done, a today with work on it,
+ * and a month ahead that is not empty.
+ *
+ * Rows are appended rather than written over: an install that has been used
+ * keeps whatever was created on it. The marker is stored either way, so
+ * deleting everything does not bring it back on the next launch.
  */
 async function seedOnce(): Promise<void> {
-  if (await AsyncStorage.getItem(KEYS.seeded)) return;
-  await AsyncStorage.setItem(KEYS.seeded, '1');
+  if ((await AsyncStorage.getItem(KEYS.seeded)) === SEED_VERSION) return;
+  await AsyncStorage.setItem(KEYS.seeded, SEED_VERSION);
 
-  const at = (dayOffset: number, h: number, m = 0) => {
-    const d = new Date();
-    d.setDate(d.getDate() + dayOffset);
-    d.setHours(h, m, 0, 0);
-    return d.toISOString();
-  };
   const stamp = nowIso();
+  const today = new Date();
+  const year = today.getFullYear();
+  const month = today.getMonth();
+  const daysInMonth = new Date(year, month + 1, 0).getDate();
+  const todayDate = today.getDate();
 
-  const events: Event[] = [
-    ['Daily standup', '[Medium] Blockers and hand-offs', 0, 9],
-    ['Review pull requests', '[High] Clear the queue', 0, 11],
-    ['Design review', '[Medium] Onboarding flow', 0, 14],
-    ['Gym', '[Low] Upper body, 45 min', 0, 18],
-    ['Stakeholder demo', '[High] Walkthrough, 40 min', 1, 11],
-    ['Dentist appointment', '[Low] Cleaning', 2, 16, 30],
-    ['Sprint planning', '[High] Scope and capacity', 3, 9, 30],
-  ].map(([title, note, d, h, m]) => ({
-    id: uuid(),
-    title: title as string,
-    note: note as string,
-    startsAt: at(d as number, h as number, (m as number) ?? 0),
-    endsAt: at(d as number, (h as number) + 1, (m as number) ?? 0),
-    reminderMinutesBefore: 15,
-    createdAt: stamp,
-    updatedAt: stamp,
-    deletedAt: null,
-  }));
+  /** A time on the given day of the current month. */
+  const on = (day: number, h: number, m = 0) =>
+    new Date(year, month, day, h, m, 0, 0).toISOString();
 
-  const tasks: Task[] = [
-    ['Write the weekly update', '[Medium] Send before end of day', 0, 17],
-    ['Book flights for the offsite', '[High] Two travellers, direct', 1, 12],
-    ['Renew the SSL certificate', '[High] Expires soon', 2, 10],
-    ['Read the docs', '[Low] Background job patterns', null, 0],
-  ].map(([title, notes, d, h]) => ({
-    id: uuid(),
-    title: title as string,
-    notes: notes as string,
-    dueAt: d === null ? null : at(d as number, h as number),
-    isDone: false,
-    createdAt: stamp,
-    updatedAt: stamp,
-    deletedAt: null,
-  }));
+  const tasks: Task[] = [];
+  for (let day = 1; day <= daysInMonth; day++) {
+    // Today carries a full plate; every other day one or two things.
+    const count = day === todayDate ? 4 : ((day % 3) === 0 ? 2 : 1);
+    for (let k = 0; k < count; k++) {
+      const [title, notes, hour] = TASK_POOL[(day * 2 + k) % TASK_POOL.length];
+      tasks.push({
+        id: uuid(),
+        title,
+        notes,
+        dueAt: on(day, hour),
+        // What is behind us is mostly done, and part of today is too — a day
+        // with nothing ticked off leaves the completion card and the
+        // productivity line both reading zero, which says nothing at all.
+        isDone:
+          day < todayDate ? (day + k) % 5 !== 0 : day === todayDate ? k < 2 : false,
+        createdAt: stamp,
+        updatedAt: stamp,
+        deletedAt: null,
+      });
+    }
+  }
 
-  await Promise.all([writeList(KEYS.events, events), writeList(KEYS.tasks, tasks)]);
+  // A couple with no date at all: the list has to handle them.
+  for (const [title, notes] of [
+    ['Read the docs', '[Low] Background job patterns'],
+    ['Tidy the photo library', '[Low] Whenever there is a gap'],
+  ]) {
+    tasks.push({
+      id: uuid(),
+      title,
+      notes,
+      dueAt: null,
+      isDone: false,
+      createdAt: stamp,
+      updatedAt: stamp,
+      deletedAt: null,
+    });
+  }
+
+  const events: Event[] = [];
+  for (let day = 1; day <= daysInMonth; day++) {
+    const weekday = new Date(year, month, day).getDay();
+    if (weekday === 6) continue; // Saturday stays clear
+    const count = day === todayDate ? 4 : ((day % 2) === 0 ? 2 : 1);
+    for (let k = 0; k < count; k++) {
+      const [title, note, hour, minute] = EVENT_POOL[(day * 3 + k) % EVENT_POOL.length];
+      events.push({
+        id: uuid(),
+        title,
+        note,
+        startsAt: on(day, hour, minute),
+        endsAt: on(day, hour + 1, minute),
+        reminderMinutesBefore: 15,
+        createdAt: stamp,
+        updatedAt: stamp,
+        deletedAt: null,
+      });
+    }
+  }
+
+  const [haveEvents, haveTasks] = await Promise.all([
+    readList<Event>(KEYS.events),
+    readList<Task>(KEYS.tasks),
+  ]);
+
+  await Promise.all([
+    writeList(KEYS.events, [...haveEvents, ...events]),
+    writeList(KEYS.tasks, [...haveTasks, ...tasks]),
+  ]);
 }
 
 export const api = {
@@ -236,6 +335,9 @@ export const api = {
       deletedAt: null,
     };
     await writeList(KEYS.tasks, [task, ...rows]);
+    // Reminders are scheduled here rather than in the screens, so a task the
+    // assistant creates rings exactly like one typed into the form.
+    void scheduleTaskReminder(task);
     return task;
   },
 
@@ -250,6 +352,8 @@ export const api = {
     if (i === -1) throw new ApiError(404, 'NOT_FOUND', 'Task not found');
     rows[i] = { ...rows[i], ...patch, updatedAt: patch.updatedAt ?? nowIso() };
     await writeList(KEYS.tasks, rows);
+    // Moving the due date moves the reminder; completing it drops the reminder.
+    void scheduleTaskReminder(rows[i]);
     return rows[i];
   },
 
@@ -260,6 +364,7 @@ export const api = {
       KEYS.tasks,
       rows.filter((r) => r.id !== id),
     );
+    void cancelReminder(id);
   },
 
   // ── Events ──
@@ -296,6 +401,7 @@ export const api = {
       deletedAt: null,
     };
     await writeList(KEYS.events, [event, ...rows]);
+    void scheduleEventReminder(event);
     return event;
   },
 
@@ -310,6 +416,7 @@ export const api = {
     if (i === -1) throw new ApiError(404, 'NOT_FOUND', 'Event not found');
     rows[i] = { ...rows[i], ...patch, updatedAt: patch.updatedAt ?? nowIso() };
     await writeList(KEYS.events, rows);
+    void scheduleEventReminder(rows[i]);
     return rows[i];
   },
 
@@ -319,6 +426,7 @@ export const api = {
       KEYS.events,
       rows.filter((r) => r.id !== id),
     );
+    void cancelReminder(id);
   },
 
   // ── Agenda: events and tasks for a day or range, in local time ──
@@ -364,5 +472,7 @@ export const api = {
   /** Wipes every stored row. Used by "Clear all data" in Profile. */
   clearAll: async () => {
     await AsyncStorage.multiRemove([KEYS.tasks, KEYS.events, KEYS.chat]);
+    // Rows are gone, so their alarms must go with them.
+    await cancelAllReminders();
   },
 };

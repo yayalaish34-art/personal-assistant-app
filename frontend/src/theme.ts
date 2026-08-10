@@ -81,12 +81,28 @@ export function font(weight: FontWeight = 400) {
 }
 
 // ── Bottom navigation bar ─────────────────────────────────────────────────
-// A flat white bar. The active tab is a filled black circle; everything else
-// is a plain outline icon.
+// A pane of glass hovering over the page: translucent, so what's behind it
+// ghosts through, lit along its top edge, and floating on two stacked shadows
+// — a tight one for contact and a wide one for height.
 export const NAV_BAR = {
-  background: '#FFFFFF',
-  activeFill: '#14150F',
-  activeIcon: '#FFFFFF',
+  /** Panel fill, top to bottom. Not opaque: the page shows through. */
+  glassTop: 'rgba(255, 255, 255, 0.95)',
+  glassBottom: 'rgba(250, 250, 246, 0.80)',
+  /** Hairline around the outline — the only thing that survives on any backdrop. */
+  edge: 'rgba(20, 21, 15, 0.07)',
+  /** Light catching the top edge, strongest around the scoop. */
+  rim: 'rgba(255, 255, 255, 0.95)',
+  /** Contact shadow (tight) and cast shadow (wide, further down). */
+  shadowNear: 'rgba(20, 21, 15, 0.13)',
+  shadowFar: 'rgba(20, 21, 15, 0.15)',
+  /** The raised + in the middle, and the tab you're on. */
+  accent: '#F4753A',
+  /** Lit from the top-left, so the button reads as a sphere rather than a disc. */
+  accentGradient: ['#FFA469', '#F4753A', '#E15C25'] as const,
+  accentIcon: '#FFFFFF',
+  activeIcon: '#F4753A',
+  /** Faint accent inside the active glyph, so it reads filled but stays legible. */
+  activeWash: 'rgba(244, 117, 58, 0.16)',
   inactiveIcon: '#9A9A93',
 };
 
@@ -105,5 +121,5 @@ export const PRIORITY_COLORS: Record<Priority, { color: string; bg: string }> = 
   High: { color: '#C0483C', bg: '#F6D9D2' },
 };
 
-/** Extra bottom room on scroll content so it clears the floating tab bar. */
-export const TAB_BAR_CLEARANCE = 108;
+/** Extra bottom room on scroll content so it clears the bar *and* its raised +. */
+export const TAB_BAR_CLEARANCE = 134;

@@ -25,7 +25,7 @@ import {
 } from '../lib/tasks';
 import type { RootStackParamList } from '../navigation';
 import { colors, spacing, font, radius, TILES, ROW_TILES } from '../theme';
-import { t, locale } from '../lib/i18n';
+import { t, locale, isRTL } from '../lib/i18n';
 
 type Nav = NativeStackNavigationProp<RootStackParamList>;
 
@@ -38,6 +38,21 @@ const FIRST_HOUR = 8;
 const LAST_HOUR = 20;
 /** Height of one hour row — an entry's block is sized from its duration. */
 const HOUR_HEIGHT = 62;
+/** The rail the hour labels live in. Entry blocks start after it. */
+const GUTTER = 58;
+
+/**
+ * Where the blocks start, and where they stop.
+ *
+ * The hour rail is a flex row, so it mirrors on its own and the label moves to
+ * the right in Hebrew. The block layer is absolutely positioned, and a logical
+ * inset does not follow the layout the same way — it stayed on the left, so the
+ * blocks ran straight over the labels. Naming the physical side keeps the two
+ * halves of the timeline agreeing on which edge the rail is.
+ */
+function gutterSide(): { left: number; right: number } {
+  return isRTL() ? { left: 0, right: GUTTER } : { left: GUTTER, right: 0 };
+}
 
 /** The seven days of the week `anchor` falls in, Sunday first. */
 function weekOf(anchor: Date): Date[] {
@@ -264,13 +279,14 @@ export default function CalendarScreen() {
             </View>
 
             {/* Entries floating over it */}
-            <View style={styles.entryLayer} pointerEvents="box-none">
+            <View style={[styles.entryLayer, gutterSide()]} pointerEvents="box-none">
               {dayEntries.map(({ item, index, top, height }) => {
                 const done = statusOf(item) === 'done';
                 const Icon = entryIcon(item, done);
                 return (
                   <Pressable
                     key={`${item.kind}-${item.id}`}
+                    onPress={() => navigation.navigate('EntryForm', { kind: item.kind, id: item.id })}
                     onLongPress={() => confirmDelete(item)}
                     style={[
                       styles.entry,
@@ -298,7 +314,8 @@ export default function CalendarScreen() {
               return (
                 <Pressable
                   key={`${item.kind}-${item.id}`}
-                  onLongPress={() => confirmDelete(item)}
+                  onPress={() => navigation.navigate('EntryForm', { kind: item.kind, id: item.id })}
+                    onLongPress={() => confirmDelete(item)}
                   style={[
                     styles.listRow,
                     { backgroundColor: TILES[ROW_TILES[index % ROW_TILES.length]] },
@@ -330,7 +347,8 @@ export default function CalendarScreen() {
             {undated.map((item, index) => (
               <Pressable
                 key={`${item.kind}-${item.id}`}
-                onLongPress={() => confirmDelete(item)}
+                onPress={() => navigation.navigate('EntryForm', { kind: item.kind, id: item.id })}
+                    onLongPress={() => confirmDelete(item)}
                 style={[
                   styles.listRow,
                   { backgroundColor: TILES[ROW_TILES[index % ROW_TILES.length]] },
@@ -388,9 +406,16 @@ const styles = StyleSheet.create({
   timeline: { paddingBottom: spacing.lg },
   timelineBody: { position: 'relative', paddingTop: 4 },
   hourRow: { flexDirection: 'row', alignItems: 'flex-start', height: HOUR_HEIGHT },
-  hourLabel: { width: 52, fontSize: 12, ...font(500), color: colors.textMuted, marginTop: -6 },
+  hourLabel: {
+    width: GUTTER - 6,
+    fontSize: 12,
+    ...font(500),
+    color: colors.textMuted,
+    marginTop: -6,
+  },
   hourLine: { flex: 1, height: StyleSheet.hairlineWidth, backgroundColor: colors.border },
-  entryLayer: { position: 'absolute', top: 4, insetInlineStart: 58, insetInlineEnd: 0 },
+  // The side is chosen at render — see `gutterSide`.
+  entryLayer: { position: 'absolute', top: 4 },
   entry: {
     position: 'absolute',
     insetInlineStart: 0,

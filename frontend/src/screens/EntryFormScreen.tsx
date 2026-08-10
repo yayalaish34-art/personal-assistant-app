@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { ScrollView, View, Text, TextInput, Pressable, StyleSheet, Alert } from 'react-native';
 import { useNavigation, useRoute, type RouteProp } from '@react-navigation/native';
 import type { NativeStackNavigationProp } from '@react-navigation/native-stack';
@@ -11,12 +11,21 @@ import {
   Folder,
   ChevronDown,
   Plus,
+  Trash2,
 } from 'lucide-react-native';
 
 import { Screen, Button } from '../components/ui';
 import { api, uuid } from '../lib/api';
 import { storage } from '../lib/storage';
-import { withPriority, toDateStr, toUtcIso, nowIso, plusHour } from '../lib/tasks';
+import {
+  withPriority,
+  parsePriority,
+  toDateStr,
+  toTimeStr,
+  toUtcIso,
+  nowIso,
+  plusHour,
+} from '../lib/tasks';
 import type { RootStackParamList } from '../navigation';
 import { colors, spacing, font, PRIORITY_COLORS, type Priority } from '../theme';
 import { t } from '../lib/i18n';
@@ -45,19 +54,66 @@ function IconInput({
 
 export default function EntryFormScreen() {
   const navigation = useNavigation<Nav>();
-  const { kind } = useRoute<Route>().params;
+  const { kind, id: editingId } = useRoute<Route>().params;
   const isTask = kind === 'task';
+  const isEditing = Boolean(editingId);
 
   const [title, setTitle] = useState('');
   const [body, setBody] = useState('');
   const [priority, setPriority] = useState<Priority | null>('Medium');
   const [date, setDate] = useState(toDateStr(new Date()));
   const [time, setTime] = useState('');
+  /** Events only. Left blank on a new event, which then runs an hour. */
+  const [endTime, setEndTime] = useState('');
   const [project, setProject] = useState(0);
   const [tags, setTags] = useState<string[]>(['Design', 'UI/UX', 'Work']);
   const [addingTag, setAddingTag] = useState(false);
   const [newTag, setNewTag] = useState('');
   const [saving, setSaving] = useState(false);
+
+  // Editing: pull the row in and fill the fields from it.
+  useEffect(() => {
+    if (!editingId) return;
+    let active = true;
+    (async () => {
+      try {
+        if (isTask) {
+          const { tasks } = await api.listTasks();
+          const row = tasks.find((r) => r.id === editingId);
+          if (!row || !active) return;
+          const parsed = parsePriority(row.notes);
+          setTitle(row.title);
+          setBody(parsed.text);
+          setPriority(parsed.priority);
+          if (row.dueAt) {
+            const d = new Date(row.dueAt);
+            setDate(toDateStr(d));
+            setTime(toTimeStr(d));
+          } else {
+            setDate('');
+            setTime('');
+          }
+        } else {
+          const { events } = await api.listEvents();
+          const row = events.find((r) => r.id === editingId);
+          if (!row || !active) return;
+          const parsed = parsePriority(row.note);
+          const start = new Date(row.startsAt);
+          setTitle(row.title);
+          setBody(parsed.text);
+          setPriority(parsed.priority);
+          setDate(toDateStr(start));
+          setTime(toTimeStr(start));
+          setEndTime(toTimeStr(new Date(row.endsAt)));
+        }
+      } catch {
+        /* a row that vanished leaves an empty form rather than an error */
+      }
+    })();
+    return () => {
+      active = false;
+    };
+  }, [editingId, isTask]);
 
   const save = async () => {
     if (!title.trim()) {
@@ -68,19 +124,18 @@ export default function EntryFormScreen() {
     try {
       // Ids are client-generated so creates work offline and replays are
       // idempotent server-side (200 on same-id replay, 409 across users).
-      const id = uuid();
+      const id = editingId ?? uuid();
       const updatedAt = nowIso();
       const notes = withPriority(body, priority);
 
       if (isTask) {
-        await api.createTask({
-          id,
-          title: title.trim(),
-          notes,
-          // An undated task is valid: dueAt is nullable.
-          dueAt: date.trim() ? toUtcIso(date.trim(), time.trim() || '09:00') : undefined,
-          updatedAt,
-        });
+        // An undated task is valid: dueAt is nullable.
+        const dueAt = date.trim() ? toUtcIso(date.trim(), time.trim() || '09:00') : undefined;
+        if (isEditing) {
+          await api.updateTask(id, { title: title.trim(), notes, dueAt: dueAt ?? null, updatedAt });
+        } else {
+          await api.createTask({ id, title: title.trim(), notes, dueAt, updatedAt });
+        }
       } else {
         if (!date.trim()) {
           Alert.alert(t('form.missingDate'), t('form.missingDateBody'));
@@ -88,18 +143,29 @@ export default function EntryFormScreen() {
           return;
         }
         const startTime = time.trim() || '09:00';
-        await api.createEvent({
-          id,
-          title: title.trim(),
-          note: notes,
-          // Events are UTC instants; convert from the local date + time.
-          startsAt: toUtcIso(date.trim(), startTime),
-          endsAt: toUtcIso(date.trim(), plusHour(startTime)),
-          reminderMinutesBefore: 15,
-          updatedAt,
-        });
+        // Events are UTC instants; convert from the local date + time.
+        const startsAt = toUtcIso(date.trim(), startTime);
+        const endsAt = toUtcIso(date.trim(), endTime.trim() || plusHour(startTime));
+        if (new Date(endsAt) <= new Date(startsAt)) {
+          Alert.alert(t('form.badEndTime'), t('form.badEndTimeBody'));
+          setSaving(false);
+          return;
+        }
+        if (isEditing) {
+          await api.updateEvent(id, { title: title.trim(), note: notes, startsAt, endsAt, updatedAt });
+        } else {
+          await api.createEvent({
+            id,
+            title: title.trim(),
+            note: notes,
+            startsAt,
+            endsAt,
+            reminderMinutesBefore: 15,
+            updatedAt,
+          });
+        }
       }
-      await storage.bumpEntryCount();
+      if (!isEditing) await storage.bumpEntryCount();
       Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
       navigation.goBack();
     } catch (e) {
@@ -107,6 +173,27 @@ export default function EntryFormScreen() {
     } finally {
       setSaving(false);
     }
+  };
+
+  const remove = () => {
+    if (!editingId) return;
+    Alert.alert(t('common.deleteTitle'), t('common.deleteBody', { title: title || '—' }), [
+      { text: t('common.cancel'), style: 'cancel' },
+      {
+        text: t('common.delete'),
+        style: 'destructive',
+        onPress: async () => {
+          try {
+            // Tasks and events are separate resources with separate ids.
+            if (isTask) await api.deleteTask(editingId);
+            else await api.deleteEvent(editingId);
+            navigation.goBack();
+          } catch (e) {
+            Alert.alert(t('common.error'), (e as Error).message);
+          }
+        },
+      },
+    ]);
   };
 
   const close = () => {
@@ -122,10 +209,25 @@ export default function EntryFormScreen() {
           <Pressable onPress={close} style={styles.circleWhite}>
             <X color={colors.text} size={20} />
           </Pressable>
-          <Text style={styles.headerTitle}>{isTask ? t('form.newTask') : t('form.newEvent')}</Text>
-          <Pressable onPress={save} style={styles.circleWhite}>
-            <Check color={colors.text} size={20} />
-          </Pressable>
+          <Text style={styles.headerTitle}>
+            {isEditing
+              ? isTask
+                ? t('form.editTask')
+                : t('form.editEvent')
+              : isTask
+                ? t('form.newTask')
+                : t('form.newEvent')}
+          </Text>
+          <View style={styles.headerActions}>
+            {isEditing ? (
+              <Pressable onPress={remove} style={styles.circleWhite} accessibilityRole="button">
+                <Trash2 color={colors.danger} size={19} />
+              </Pressable>
+            ) : null}
+            <Pressable onPress={save} style={styles.circleWhite} accessibilityRole="button">
+              <Check color={colors.text} size={20} />
+            </Pressable>
+          </View>
         </View>
 
         {/* ── Title ── */}
@@ -177,6 +279,24 @@ export default function EntryFormScreen() {
                 />
               </View>
             </View>
+
+            {/* An event has an end as well as a start; a task only has a due
+                moment, so this belongs to events alone. */}
+            {!isTask ? (
+              <>
+                <Text style={styles.label}>{t('form.endTime')}</Text>
+                <View style={{ flex: 1 }}>
+                  <IconInput
+                    icon={<Clock color={colors.text} size={17} />}
+                    value={endTime}
+                    onChangeText={setEndTime}
+                    placeholder="11:00"
+                    autoCapitalize="none"
+                    autoCorrect={false}
+                  />
+                </View>
+              </>
+            ) : null}
 
             {/* ── Priority ── */}
             <Text style={styles.label}>{t('form.priority')}</Text>
@@ -279,6 +399,7 @@ export default function EntryFormScreen() {
 }
 
 const styles = StyleSheet.create({
+  headerActions: { flexDirection: 'row', alignItems: 'center', gap: 8 },
   headerRow: {
     flexDirection: 'row',
     alignItems: 'center',

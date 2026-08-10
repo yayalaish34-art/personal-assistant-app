@@ -9,6 +9,7 @@ import {
   Alert,
   Pressable,
   Image,
+  Linking,
 } from 'react-native';
 import { useFocusEffect } from '@react-navigation/native';
 import { LinearGradient } from 'expo-linear-gradient';
@@ -25,6 +26,11 @@ import {
   Database,
   Trash2,
   Languages,
+  Shield,
+  ScrollText,
+  Mail,
+  FileText,
+  ChevronRight,
 } from 'lucide-react-native';
 
 import { Screen } from '../components/ui';
@@ -36,6 +42,25 @@ import { t, LANGUAGES, getLanguage, setLanguage, type Language } from '../lib/i1
 
 // Placeholder portrait, matching the Today header avatar.
 const PROFILE_PHOTO_URI = 'https://i.pravatar.cc/220?img=47';
+
+// ── Support and legal ─────────────────────────────────────────────────────
+// Point these at the real pages before submitting to the App Store: a
+// reachable privacy policy is a review requirement, not a nicety.
+const LEGAL_URLS = {
+  privacy: 'https://example.com/privacy',
+  terms: 'https://example.com/terms',
+};
+const SUPPORT_EMAIL = 'support@example.com';
+
+/** Opens a URL, saying so plainly when the device has nothing to open it. */
+async function openLink(url: string): Promise<void> {
+  Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+  try {
+    await Linking.openURL(url);
+  } catch {
+    Alert.alert(t('profile.linkFailed'), url);
+  }
+}
 
 function initialsOf(name: string): string {
   return (
@@ -181,6 +206,34 @@ export default function SettingsScreen() {
     Alert.alert(t('profile.saved'), t('profile.savedBody'));
   };
 
+
+  const contactSupport = () =>
+    openLink(
+      `mailto:${SUPPORT_EMAIL}?subject=${encodeURIComponent(t('profile.contactSubject'))}`,
+    );
+
+  /**
+   * There is no account to close — everything lives on this device — so
+   * "delete my account" means erasing all of it, which is what the store
+   * policy is actually asking for.
+   */
+  const deleteAccount = () => {
+    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
+    Alert.alert(t('profile.deleteAccount'), t('profile.deleteAccountBody'), [
+      { text: t('common.cancel'), style: 'cancel' },
+      {
+        text: t('profile.deleteEverything'),
+        style: 'destructive',
+        onPress: async () => {
+          await api.clearAll();
+          await storage.saveSettings({ ...defaultSettings });
+          setSettings(defaultSettings);
+          load();
+          Alert.alert(t('profile.deleted'), t('profile.deletedBody'));
+        },
+      },
+    ]);
+  };
 
   const clearData = () => {
     Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
@@ -387,6 +440,50 @@ export default function SettingsScreen() {
           </Pressable>
         </GlassCard>
 
+        {/* ── Legal and support ──
+             The App Store requires a reachable privacy policy and a way to
+             erase everything; the rest is the usual footer. LEGAL_URLS and
+             SUPPORT_EMAIL at the top of this file are what these open. */}
+        <GlassCard>
+          <View style={styles.cardHeaderRow}>
+            <IconSquare>
+              <FileText color={colors.primary} size={18} />
+            </IconSquare>
+            <View style={{ flex: 1 }}>
+              <Text style={styles.cardTitle}>{t('profile.legal')}</Text>
+              <Text style={styles.mutedText}>{t('profile.legalBody')}</Text>
+            </View>
+          </View>
+
+          <Pressable onPress={() => openLink(LEGAL_URLS.privacy)} style={styles.linkRow}>
+            <Shield color={colors.text} size={17} />
+            <Text style={styles.linkText}>{t('profile.privacy')}</Text>
+            <ChevronRight color={colors.textMuted} size={17} />
+          </Pressable>
+
+          <Pressable onPress={() => openLink(LEGAL_URLS.terms)} style={styles.linkRow}>
+            <ScrollText color={colors.text} size={17} />
+            <Text style={styles.linkText}>{t('profile.terms')}</Text>
+            <ChevronRight color={colors.textMuted} size={17} />
+          </Pressable>
+
+          <Pressable onPress={contactSupport} style={styles.linkRow}>
+            <Mail color={colors.text} size={17} />
+            <View style={{ flex: 1 }}>
+              <Text style={styles.linkText}>{t('profile.contact')}</Text>
+              <Text style={styles.mutedText}>{SUPPORT_EMAIL}</Text>
+            </View>
+            <ChevronRight color={colors.textMuted} size={17} />
+          </Pressable>
+
+          <Pressable onPress={deleteAccount} style={styles.ghostBtn}>
+            <Trash2 color={colors.danger} size={16} />
+            <Text style={[styles.ghostBtnText, { color: colors.danger }]}>
+              {t('profile.deleteAccount')}
+            </Text>
+          </Pressable>
+        </GlassCard>
+
         {/* ── Save ── */}
         <Pressable onPress={save} style={({ pressed }) => [{ opacity: pressed ? 0.88 : 1 }]}>
           <LinearGradient
@@ -573,6 +670,13 @@ const styles = StyleSheet.create({
   langChipActive: { backgroundColor: colors.primary, borderColor: colors.primary },
   langChipText: { ...font(600), fontSize: 13.5, color: colors.primary },
 
+  linkRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10,
+    paddingVertical: 13,
+  },
+  linkText: { flex: 1, ...font(600), fontSize: 14.5, color: colors.text },
   ghostBtn: {
     flexDirection: 'row',
     alignItems: 'center',

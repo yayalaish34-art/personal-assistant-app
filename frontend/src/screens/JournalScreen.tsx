@@ -11,7 +11,7 @@ import { api, type Task } from '../lib/api';
 import { parsePriority, withPriority, isLive, toDateStr } from '../lib/tasks';
 import type { RootStackParamList } from '../navigation';
 import { colors, spacing, font, radius, TILES, ROW_TILES, TILE_INK } from '../theme';
-import { t, locale } from '../lib/i18n';
+import { t, locale, alignStart } from '../lib/i18n';
 
 type Nav = NativeStackNavigationProp<RootStackParamList>;
 
@@ -258,16 +258,19 @@ export default function JournalScreen() {
 
               <Pressable
                 style={{ flex: 1 }}
+                // Tap to edit, hold to delete — the form does both, but a
+                // deletion should not be one stray tap away.
+                onPress={() => navigation.navigate('EntryForm', { kind: 'task', id: task.id })}
                 onLongPress={() => confirmDelete(task)}
                 accessibilityRole="button"
               >
                 <Text
-                  style={[styles.rowTitle, task.isDone && styles.rowTitleDone]}
+                  style={[styles.rowTitle, { textAlign: alignStart() }, task.isDone && styles.rowTitleDone]}
                   numberOfLines={1}
                 >
                   {task.title}
                 </Text>
-                <Text style={styles.rowMeta}>{dueLabel(task.dueAt)}</Text>
+                <Text style={[styles.rowMeta, { textAlign: alignStart() }]}>{dueLabel(task.dueAt)}</Text>
               </Pressable>
 
               <Pressable onPress={() => toggleStar(task)} hitSlop={8} accessibilityRole="button">

@@ -4,6 +4,7 @@ import {
   Text,
   Pressable,
   ScrollView,
+  TextInput,
   StyleSheet,
   Animated,
   Easing,
@@ -11,7 +12,7 @@ import {
 import { useNavigation } from '@react-navigation/native';
 import type { NativeStackNavigationProp } from '@react-navigation/native-stack';
 import * as Haptics from 'expo-haptics';
-import { X, Mic, Undo2 } from 'lucide-react-native';
+import { X, Mic, Undo2, RotateCcw, Send } from 'lucide-react-native';
 
 import { Screen } from '../components/ui';
 import { api } from '../lib/api';
@@ -44,9 +45,16 @@ export default function AssistantScreen() {
     };
   }, []);
 
-  const { state, lines, level, error, undoable, toggle, undoLast, end } = useVoiceSession({
-    userName: name || undefined,
-  });
+  const { state, lines, level, error, undoable, toggle, send, undoLast, startOver, end } =
+    useVoiceSession({ userName: name || undefined });
+  const [draft, setDraft] = useState('');
+
+  const submitDraft = () => {
+    const text = draft.trim();
+    if (!text) return;
+    setDraft('');
+    send(text);
+  };
 
   // ── The orb: a slow breath, plus the mic level while she listens ──
   const breath = useRef(new Animated.Value(0)).current;
@@ -131,8 +139,20 @@ export default function AssistantScreen() {
           <X color={colors.text} size={22} />
         </Pressable>
         <Text style={styles.title}>{t('voice.title')}</Text>
-        {/* Balances the close button so the title stays centred. */}
-        <View style={styles.iconBtn} />
+        {/* The thread carries across visits, so there has to be a way to drop
+            it and begin again. */}
+        <Pressable
+          onPress={() => {
+            Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+            startOver();
+            navigation.replace('Assistant');
+          }}
+          style={styles.iconBtn}
+          accessibilityRole="button"
+          accessibilityLabel={t('voice.newChat')}
+        >
+          <RotateCcw color={colors.text} size={19} />
+        </Pressable>
       </View>
 
       <ScrollView
@@ -188,6 +208,30 @@ export default function AssistantScreen() {
 
         <Text style={styles.caption}>{caption}</Text>
         {hint ? <Text style={styles.hint}>{hint}</Text> : null}
+
+        {/* Talking is the point, but typing has to be there too — for a noisy
+            room, a long title, or a name she keeps mishearing. Same thread. */}
+        <View style={styles.composer}>
+          <TextInput
+            value={draft}
+            onChangeText={setDraft}
+            placeholder={t('assistant.placeholder')}
+            placeholderTextColor={colors.textMuted}
+            style={styles.composerInput}
+            returnKeyType="send"
+            onSubmitEditing={submitDraft}
+            editable={state !== 'unavailable' || error === 'microphone'}
+          />
+          <Pressable
+            onPress={submitDraft}
+            disabled={!draft.trim()}
+            style={[styles.sendBtn, !draft.trim() && styles.sendBtnIdle]}
+            accessibilityRole="button"
+            accessibilityLabel={t('assistant.send')}
+          >
+            <Send color={colors.primaryText} size={18} />
+          </Pressable>
+        </View>
 
         {state === 'stopped' ? (
           <Pressable
@@ -277,6 +321,32 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
   },
+  composer: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    alignSelf: 'stretch',
+    marginTop: spacing.md,
+  },
+  composerInput: {
+    flex: 1,
+    backgroundColor: colors.surface,
+    borderRadius: 100,
+    paddingHorizontal: 18,
+    paddingVertical: 14,
+    fontSize: 15,
+    ...font(400),
+    color: colors.text,
+  },
+  sendBtn: {
+    width: 46,
+    height: 46,
+    borderRadius: 23,
+    backgroundColor: colors.primary,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  sendBtnIdle: { opacity: 0.35 },
   caption: { marginTop: spacing.md, fontSize: 17, ...font(600), color: colors.text },
   hint: { fontSize: 14, ...font(400), color: colors.textMuted, textAlign: 'center' },
   restartBtn: {

@@ -1,3 +1,5 @@
+import AsyncStorage from '@react-native-async-storage/async-storage';
+
 import { api, uuid, type Task, type Event } from './api';
 import { getLanguage } from './i18n';
 
@@ -17,6 +19,16 @@ const SPEAK_URL = `${API_BASE}/voice/speak`;
 /** Languages the assistant speaks. Anything else falls back to English. */
 const SPOKEN = new Set(['he', 'en', 'ar', 'es', 'fr', 'it', 'ru']);
 
+/**
+ * The language she listens in, thinks in and answers in — all three, since
+ * they have to agree.
+ *
+ * It follows the interface, because that is the one language choice the person
+ * using the app actually makes. Pinning it to Hebrew told Whisper that every
+ * speaker was talking Hebrew: an English or Arabic sentence came back
+ * transcribed phonetically into Hebrew letters, and she answered in a language
+ * the user had not chosen and might not read.
+ */
 function spokenLanguage(): string {
   const lang = getLanguage();
   return SPOKEN.has(lang) ? lang : 'en';
@@ -50,6 +62,10 @@ export async function transcribe(uri: string): Promise<string> {
     } as unknown as Blob);
   }
 
+  // Whisper guesses the language from the audio otherwise, and guesses badly
+  // on a short Hebrew sentence — often transcribing it as phonetic English.
+  form.append('language', spokenLanguage());
+
   const res = await fetch(TRANSCRIBE_URL, { method: 'POST', body: form });
   if (!res.ok) {
     const body = await res.json().catch(() => null);
@@ -78,6 +94,58 @@ export function speechUrl(text: string): string {
 export type VoiceAction = { tool: string; arguments: Record<string, unknown> };
 
 export type TurnMessage = { role: 'user' | 'assistant'; content: string };
+
+// ── The conversation, kept across visits ────────────────────────────────────
+//
+// Closing the screen ends the listening loop, not the conversation: reopening
+// within the window below picks the same thread back up, so "and move that one
+// too" still means something an hour later.
+
+const CONVERSATION_KEY = '@pa/voiceConversation';
+
+/** After this long without a word, the next visit starts fresh. */
+const RESUME_WINDOW_MS = 6 * 60 * 60 * 1000;
+
+/** How much of the thread is kept on the device. */
+const KEEP_TURNS = 60;
+
+/** How much of it rides along with each request. */
+const SEND_TURNS = 24;
+
+type StoredConversation = { at: number; history: TurnMessage[] };
+
+export async function loadConversation(): Promise<TurnMessage[]> {
+  try {
+    const raw = await AsyncStorage.getItem(CONVERSATION_KEY);
+    if (!raw) return [];
+    const saved = JSON.parse(raw) as StoredConversation;
+    if (!Array.isArray(saved?.history)) return [];
+    if (Date.now() - saved.at > RESUME_WINDOW_MS) return [];
+    return saved.history;
+  } catch {
+    return [];
+  }
+}
+
+export async function saveConversation(history: TurnMessage[]): Promise<void> {
+  try {
+    const trimmed = history.slice(-KEEP_TURNS);
+    await AsyncStorage.setItem(
+      CONVERSATION_KEY,
+      JSON.stringify({ at: Date.now(), history: trimmed } satisfies StoredConversation),
+    );
+  } catch {
+    // Losing the thread is survivable; failing the turn is not.
+  }
+}
+
+export async function clearConversation(): Promise<void> {
+  try {
+    await AsyncStorage.removeItem(CONVERSATION_KEY);
+  } catch {
+    /* nothing to do */
+  }
+}
 
 export interface TurnResult {
   reply: string;
@@ -146,8 +214,10 @@ export async function voiceTurn(
       timezone: Intl.DateTimeFormat().resolvedOptions().timeZone || 'UTC',
       now: new Date().toISOString(),
       ...(userName ? { userName } : {}),
-      // The server caps this; sending the tail keeps the request small.
-      history: history.slice(-10),
+      // The whole point of a running conversation: every turn carries what was
+      // said before it. The tail is sent rather than all of it so a long thread
+      // doesn't grow the request without bound.
+      history: history.slice(-SEND_TURNS),
       snapshot,
     }),
   });

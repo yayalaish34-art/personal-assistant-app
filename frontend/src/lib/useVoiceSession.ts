@@ -1,8 +1,13 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
+import { Platform } from 'react-native';
 
 import { uuid } from './api';
+import { t } from './i18n';
 import {
   applyActions,
+  clearConversation,
+  loadConversation,
+  saveConversation,
   speechUrl,
   transcribe,
   voiceTurn,
@@ -17,12 +22,33 @@ import {
 // would keep listening after the user had already closed the screen.
 
 /**
- * expo-audio calls `requireNativeModule('ExpoAudio')` in its own module body,
- * so it only resolves where the native module is bundled. It is required
- * lazily and guarded, so a build without it shows "voice unavailable" instead
- * of failing to render the screen at all.
+ * expo-audio ships native code, so `requireNativeModule('ExpoAudio')` in its
+ * module body throws where that code isn't present. The require is wrapped so
+ * such a build shows "voice unavailable" instead of failing to render at all.
+ *
+ * The literal in `require('expo-audio')` is load-bearing: Metro finds
+ * dependencies by reading require calls at build time, so assigning `require`
+ * to a variable first — as this file used to — leaves the module out of the
+ * bundle entirely and every build fails with "Requiring unknown module". The
+ * native side was never the problem.
  */
 type AudioApi = typeof import('expo-audio');
+
+/**
+ * Flattens a recording preset into what the native recorder takes.
+ *
+ * The presets keep their platform settings nested under `ios` / `android` /
+ * `web`, and the native side expects the ones for this platform merged into
+ * the top level. expo-audio does that in `createRecordingOptions`, which it
+ * does not export, so the shape is reproduced here — handing over the raw
+ * preset gets the nested objects and none of the settings that matter.
+ */
+function recordingOptions(audio: AudioApi): Record<string, unknown> {
+  const preset = audio.RecordingPresets.HIGH_QUALITY as unknown as Record<string, unknown>;
+  const { ios, android, web, ...common } = preset;
+  const forPlatform = Platform.OS === 'ios' ? ios : Platform.OS === 'android' ? android : web;
+  return { ...common, ...(forPlatform as object | undefined), isMeteringEnabled: true };
+}
 
 type Recorder = {
   prepareToRecordAsync: (options?: Record<string, unknown>) => Promise<void>;
@@ -46,8 +72,8 @@ let cachedAudio: AudioApi | null | undefined;
 function getAudio(): AudioApi | null {
   if (cachedAudio !== undefined) return cachedAudio;
   try {
-    const load = require as (id: string) => AudioApi;
-    cachedAudio = load('expo-audio');
+    // eslint-disable-next-line @typescript-eslint/no-require-imports
+    cachedAudio = require('expo-audio') as AudioApi;
   } catch {
     cachedAudio = null;
   }
@@ -67,6 +93,8 @@ const MAX_LISTEN_MS = 25_000;
 const POLL_MS = 150;
 /** Metering is optional; if none arrives by now, fall back to tap-to-stop. */
 const METERING_GRACE_MS = 1200;
+/** Failures in a row before the conversation is treated as genuinely broken. */
+const MAX_CONSECUTIVE_FAILURES = 3;
 
 /**
  * The turn the assistant opens with. The server recognises this exact string
@@ -95,7 +123,11 @@ export interface VoiceSession {
   undoable: AppliedChange[];
   /** Interrupt her and listen, or stop listening and answer now. */
   toggle: () => void;
+  /** Same conversation, typed instead of spoken. */
+  send: (text: string) => void;
   undoLast: () => void;
+  /** Forget the thread and start over from a greeting. */
+  startOver: () => void;
   end: () => void;
 }
 
@@ -205,14 +237,19 @@ export function useVoiceSession(options: {
 
     await audio.setAudioModeAsync({ allowsRecording: true, playsInSilentMode: true });
 
-    const Ctor = (audio as unknown as { AudioRecorder?: new (options: unknown) => Recorder })
-      .AudioRecorder;
+    // The recorder class hangs off the native module, not off the package
+    // root: `expo-audio` exports hooks, `createAudioPlayer` and the presets
+    // from its index, and nothing called AudioRecorder. Read from the root it
+    // came back undefined, so every attempt to listen threw here — before the
+    // microphone was ever opened. The greeting still played, because speaking
+    // only needs `createAudioPlayer`, which made it look like a transcription
+    // problem rather than a recorder that never existed.
+    const Ctor = (
+      audio as unknown as { AudioModule?: { AudioRecorder?: new (options: unknown) => Recorder } }
+    ).AudioModule?.AudioRecorder;
     if (typeof Ctor !== 'function') throw new Error('The audio module loaded without a recorder.');
 
-    const recorder = new Ctor({
-      ...audio.RecordingPresets.HIGH_QUALITY,
-      isMeteringEnabled: true,
-    });
+    const recorder = new Ctor(recordingOptions(audio));
     recorderRef.current = recorder;
     await recorder.prepareToRecordAsync();
     recorder.record();
@@ -293,7 +330,10 @@ export function useVoiceSession(options: {
       // into the history — she would read it back and greet them twice.
       const turn: TurnMessage[] = said === SESSION_START ? [] : [{ role: 'user', content: said }];
       if (result.reply) turn.push({ role: 'assistant', content: result.reply });
-      historyRef.current = [...historyRef.current, ...turn].slice(-12);
+      historyRef.current = [...historyRef.current, ...turn];
+      // Persisted after every turn, so closing the screen mid-thought and
+      // coming back does not lose what was already said.
+      void saveConversation(historyRef.current);
 
       if (result.actions.length > 0) {
         const applied = await applyActions(result.actions);
@@ -324,19 +364,41 @@ export function useVoiceSession(options: {
     doneRef.current = false;
 
     (async () => {
-      try {
-        const { granted } = await audio.AudioModule.requestRecordingPermissionsAsync();
-        if (cancelled || doneRef.current) return;
-        if (!granted) {
-          setPhase('unavailable');
-          setError('microphone');
-          return;
-        }
+      const { granted } = await audio.AudioModule.requestRecordingPermissionsAsync().catch(
+        () => ({ granted: false }),
+      );
+      if (cancelled || doneRef.current) return;
+      if (!granted) {
+        setPhase('unavailable');
+        setError('microphone');
+        return;
+      }
 
-        // She speaks first, so the user knows she is listening.
-        await runTurn(SESSION_START);
+      // Pick the thread back up if there is a recent one. Only a conversation
+      // that has gone cold gets a greeting — otherwise she would say hello
+      // again in the middle of it.
+      const earlier = await loadConversation();
+      if (cancelled || doneRef.current) return;
+      if (earlier.length > 0) {
+        historyRef.current = earlier;
+        setLines(
+          earlier.map((m) => ({ id: uuid(), role: m.role, text: m.content })),
+        );
+      }
 
-        while (!cancelled && !doneRef.current) {
+      // A turn can fail on its own — a dropped request, a transcription that
+      // times out — without the conversation being over. Only a run of them
+      // means something is actually wrong, so one failure just costs a turn.
+      let consecutiveFailures = 0;
+
+      while (!cancelled && !doneRef.current) {
+        try {
+          if (historyRef.current.length === 0) {
+            // She speaks first, so the user knows she is listening.
+            await runTurn(SESSION_START);
+            if (cancelled || doneRef.current) break;
+          }
+
           const uri = await listen();
           if (cancelled || doneRef.current) break;
           if (!uri) continue; // silence — keep the mic open
@@ -348,11 +410,25 @@ export function useVoiceSession(options: {
 
           addLine('user', said);
           await runTurn(said);
+          consecutiveFailures = 0;
+        } catch (e) {
+          if (cancelled || doneRef.current) break;
+          consecutiveFailures += 1;
+          setError((e as Error).message);
+          // The line the user sees says only that the turn was lost, and the
+          // screen shows `error` for nothing but a refused microphone — so
+          // without this the actual reason reached no one, and a recorder that
+          // never loaded looked exactly like a bad connection.
+          console.warn('[voice] turn failed:', (e as Error)?.message ?? e);
+          if (consecutiveFailures >= MAX_CONSECUTIVE_FAILURES) {
+            setPhase('stopped');
+            break;
+          }
+          // Say so and carry on listening, rather than dropping the user into
+          // a dead screen because one request failed.
+          addLine('assistant', t('voice.hiccup'));
+          await new Promise((r) => setTimeout(r, 700));
         }
-      } catch (e) {
-        if (cancelled || doneRef.current) return;
-        setError((e as Error).message);
-        setPhase('stopped');
       }
     })();
 
@@ -411,7 +487,39 @@ export function useVoiceSession(options: {
     setPhase('stopped');
   }, [setPhase, stopPolling, stopSpeaking]);
 
+  /**
+   * A typed turn. It joins the same thread as a spoken one — same history,
+   * same tools, same voice coming back — so the two can be mixed freely in
+   * one conversation.
+   */
+  const send = useCallback(
+    (text: string) => {
+      const said = text.trim();
+      if (!said || stateRef.current === 'thinking') return;
+      // Typing while she talks means the user is done listening.
+      stopSpeaking();
+      stopListeningRef.current?.('stopped');
+      addLine('user', said);
+      void (async () => {
+        try {
+          await runTurn(said);
+        } catch (e) {
+          setError((e as Error).message);
+          addLine('assistant', t('voice.hiccup'));
+        }
+      })();
+    },
+    [addLine, runTurn, stopSpeaking],
+  );
+
+  const startOver = useCallback(() => {
+    historyRef.current = [];
+    setLines([]);
+    setUndoable([]);
+    void clearConversation();
+  }, []);
+
   useEffect(() => () => stopPolling(), [stopPolling]);
 
-  return { state, lines, level, error, undoable, toggle, undoLast, end };
+  return { state, lines, level, error, undoable, toggle, send, undoLast, startOver, end };
 }

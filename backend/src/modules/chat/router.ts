@@ -324,6 +324,15 @@ function toOpenAIMessages(
     history.filter((m) => m.role === 'tool' && m.toolCallId).map((m) => m.toolCallId as string),
   );
 
+  // The mirror image of the rule above: a `tool` message is only legal if some
+  // *earlier* assistant message in this very payload announced its
+  // `tool_call_id`. Two things break that in practice — the proposal falling
+  // outside the 50-message history window while its result stays inside, and a
+  // pendingAction saved without a `toolCallId` (handleConfirm then falls back
+  // to the row id, which is not a tool_call id and can never match). Either way
+  // OpenAI rejects the entire request, so track what actually went out.
+  const emittedToolCallIds = new Set<string>();
+
   for (const m of history) {
     if (m.role === 'user') {
       out.push({ role: 'user', content: m.content });
@@ -338,6 +347,7 @@ function toOpenAIMessages(
       const answered = calls?.filter((c) => answeredToolCallIds.has(c.id)) ?? [];
       if (answered.length > 0) {
         base.tool_calls = answered;
+        for (const c of answered) emittedToolCallIds.add(c.id);
       } else if (!base.content) {
         // A proposal with nothing answered and no prose carries no information
         // the model needs, and an assistant message must have content or
@@ -346,7 +356,10 @@ function toOpenAIMessages(
       }
       out.push(base);
     } else if (m.role === 'tool') {
-      if (!m.toolCallId) continue; // shouldn't happen, but skip malformed
+      // Dropping it loses nothing the model can use: without the call it
+      // answers, the result has no question attached. The row still exists for
+      // the client to render.
+      if (!m.toolCallId || !emittedToolCallIds.has(m.toolCallId)) continue;
       out.push({
         role: 'tool',
         tool_call_id: m.toolCallId,

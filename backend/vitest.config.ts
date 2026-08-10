@@ -11,5 +11,8 @@ export default defineConfig({
     poolOptions: {
       forks: { singleFork: true }, // one Postgres DB — no parallel writers
     },
+    // `npm test` loads .env, which says development. Everything in one fork
+    // shares one rate-limit bucket, so the suite has to declare itself.
+    env: { NODE_ENV: 'test' },
   },
 });

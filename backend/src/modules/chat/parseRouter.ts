@@ -172,6 +172,13 @@ parseRouter.post(
       throw new ValidationError('Unsupported audio format. Accepted: m4a, webm, mp3, wav.');
     }
 
+    // An ISO-639-1 hint. Whisper detects the language on its own, but on a
+    // short sentence it detects badly — Hebrew comes back transcribed as
+    // phonetic English often enough to matter. Anything unrecognised is
+    // dropped rather than passed through to the provider.
+    const hinted = typeof req.body?.language === 'string' ? req.body.language : undefined;
+    const language = hinted && /^[a-z]{2}$/.test(hinted) ? hinted : undefined;
+
     const client = getOpenAI();
     const file = await toFile(req.file.buffer, req.file.originalname, {
       type: req.file.mimetype,
@@ -179,6 +186,7 @@ parseRouter.post(
     const transcription = await client.audio.transcriptions.create({
       model: 'whisper-1',
       file,
+      ...(language ? { language } : {}),
     });
 
     // Release the buffer as soon as it has been sent.

@@ -362,7 +362,7 @@ Request:
 }
 ```
 - `text` required, 1–2000 chars. `language` one of `he` `en` `ar` `es` `fr`
-  `it` `ru` (default `en`) — she always answers in it.
+  `it` `ru` (**default `he`**) — she always answers in it.
 - `text` of exactly `"[SESSION START]"` means "the user just opened you":
   she greets them and summarises the day instead of answering anything.
 - `history` — up to 20 earlier turns, oldest first, `user`/`assistant` only.
@@ -397,6 +397,8 @@ Rate limit: 30/min and 500/day per caller.
 ### `GET /voice/speak?text=<text>&language=<lang>`
 Response `200`: `audio/mpeg` (the mp3 itself, with `Content-Length`).
 - `text` max 900 chars — a spoken answer, not a document.
+- `language` defaults to `he`. Only `eleven_v3` speaks Hebrew; the other
+  languages use the faster flash model.
 - Returns audio a media player can stream directly; the client passes this URL
   to the player rather than buffering the body.
 - `400` when speech is not configured on the server, or generation failed.
@@ -437,6 +439,12 @@ Response `200`:
 ## Change log
 
 - `2026-07-23` — Initial contract (aligns with `SPEC_BACKEND_V1.2.md`).
+- `2026-08-01` — The voice assistant answers in Hebrew by default:
+  `language` on `POST /voice/turn` and `GET /voice/speak` now defaults to
+  `he` instead of `en`. `POST /transcribe` accepts an optional `language`
+  field (ISO-639-1) as a hint to the speech-to-text model; unrecognised
+  values are ignored rather than forwarded. Not breaking — callers that send
+  `language` are unaffected.
 - `2026-07-30` — Added the voice assistant: `POST /voice/turn` and
   `GET /voice/speak`. Stateless and unauthenticated, like `POST /parse` — the
   client applies the returned `actions` to its own storage. Nothing in the

@@ -233,6 +233,55 @@ const ID_SOURCE: Partial<Record<ActionName, 'tasks' | 'events'>> = {
   delete_event: 'events',
 };
 
+/** The day an ISO timestamp falls on, or null when there isn't one. */
+function dayOf(iso: string | null | undefined, timezone: string): string | null {
+  if (!iso) return null;
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return null;
+  return new Intl.DateTimeFormat('en-CA', {
+    timeZone: timezone,
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+  }).format(d);
+}
+
+/**
+ * Is this create just re-adding something already on the agenda?
+ *
+ * Asked to add one task and describe the day, the model would sometimes
+ * "add" an entry it had merely read out, leaving a duplicate behind. Same
+ * title on the same day is not a second thing to do — it is the same thing
+ * twice, and the user hears one confirmation either way.
+ *
+ * A finished task is not in the way: the snapshot carries completed rows so
+ * she can say what got done, and someone who ticked off "buy milk" this
+ * morning and asks for it again this evening means it.
+ */
+export function alreadyOnAgenda(
+  name: ActionName,
+  args: Record<string, unknown>,
+  snapshot: Snapshot,
+  timezone: string,
+): boolean {
+  const title = normalizeTitle(String(args.title ?? ''));
+  if (!title) return false;
+
+  if (name === 'create_task') {
+    const day = dayOf(args.dueAt as string | undefined, timezone);
+    return snapshot.tasks.some(
+      (t) => !t.isDone && normalizeTitle(t.title) === title && dayOf(t.dueAt, timezone) === day,
+    );
+  }
+  if (name === 'create_event') {
+    const day = dayOf(args.startsAt as string | undefined, timezone);
+    return snapshot.events.some(
+      (e) => normalizeTitle(e.title) === title && dayOf(e.startsAt, timezone) === day,
+    );
+  }
+  return false;
+}
+
 export interface VoiceAction {
   tool: ActionName;
   arguments: Record<string, unknown>;
@@ -352,7 +401,9 @@ function buildSystemPrompt(input: {
     '- A request can need several tools at once. Call all of them.',
     '- Touch only what was asked for. Never rewrite an entry the user did not',
     '  mention, and never "tidy up" times or titles on your own.',
-    '- Answering a question about the schedule needs no tool: the agenda is below.',
+    '- Answering a question about the schedule needs no tool: the agenda is',
+    '  below. Everything on it already exists — reading an entry out loud is',
+    '  never a reason to create it.',
     '- Ids come only from the agenda below. Never invent one.',
     '- Act on an entry only when its title is clearly the one the user named.',
     '  If nothing in the agenda matches, say so — never fall back to the closest',
@@ -437,7 +488,12 @@ export async function runVoiceTurn(input: VoiceTurnInput): Promise<VoiceTurnResu
 
     for (const call of toolCalls) {
       if (call.type !== 'function') continue;
-      const outcome = collectAction(call.function.name, call.function.arguments, input.snapshot);
+      const outcome = collectAction(
+        call.function.name,
+        call.function.arguments,
+        input.snapshot,
+        input.timezone,
+      );
       if (outcome.action) actions.push(outcome.action);
       // Every tool_call must be answered or the next request is rejected.
       messages.push({
@@ -463,11 +519,16 @@ function normalizeTitle(title: string): string {
 /**
  * Validates one tool call. Returns the action to send to the device, plus the
  * result string the model sees next round.
+ *
+ * Exported for tests: this is the gate every hallucinated id, bogus argument
+ * and duplicate has to fail at, and it is worth checking without paying for a
+ * round trip to the model to get here.
  */
-function collectAction(
+export function collectAction(
   name: string,
   rawArguments: string,
   snapshot: Snapshot,
+  timezone: string,
 ): { action: VoiceAction | null; result: string } {
   if (!isActionName(name)) {
     logger.warn({ name }, 'voice agent invoked an unknown tool');
@@ -517,8 +578,21 @@ function collectAction(
     }
   }
 
+  const args = validated.data as Record<string, unknown>;
+
+  if (alreadyOnAgenda(name, args, snapshot, timezone)) {
+    logger.warn({ name, title: args.title }, 'voice agent tried to re-add an existing entry');
+    return {
+      action: null,
+      result: JSON.stringify({
+        ok: false,
+        error: `"${args.title}" is already on the agenda for that day. Mention it rather than adding it again.`,
+      }),
+    };
+  }
+
   return {
-    action: { tool: name, arguments: validated.data as Record<string, unknown> },
+    action: { tool: name, arguments: args },
     result: JSON.stringify({ ok: true }),
   };
 }

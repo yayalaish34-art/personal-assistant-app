@@ -24,11 +24,16 @@ const LANGUAGES = ['he', 'en', 'ar', 'es', 'fr', 'it', 'ru'] as const;
 const turnBody = z.object({
   /** What the user said, already transcribed. */
   text: z.string().min(1).max(2000),
-  language: z.enum(LANGUAGES).default('en'),
+  /** The language she answers in. Hebrew unless the caller says otherwise. */
+  language: z.enum(LANGUAGES).default('he'),
   timezone: z.string().min(1).max(64).default('UTC'),
   now: z.string().datetime().optional(),
   userName: z.string().max(80).optional(),
-  /** Earlier turns of this conversation, oldest first. */
+  /**
+   * Earlier turns of this conversation, oldest first. The conversation is one
+   * running thread rather than a series of one-shot requests, so this is how
+   * "move that one too" reaches the model with something to point at.
+   */
   history: z
     .array(
       z.object({
@@ -36,7 +41,7 @@ const turnBody = z.object({
         content: z.string().min(1).max(2000),
       }),
     )
-    .max(20)
+    .max(40)
     .default([]),
   snapshot: snapshotSchema.default({ tasks: [], events: [] }),
 });
@@ -80,7 +85,7 @@ voiceRouter.post(
 
 const speakQuery = z.object({
   text: z.string().min(1).max(MAX_SPEECH_CHARS),
-  language: z.enum(LANGUAGES).default('en'),
+  language: z.enum(LANGUAGES).default('he'),
 });
 
 voiceRouter.get(

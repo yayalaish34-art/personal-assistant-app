@@ -13,6 +13,17 @@
 import { rateLimit, ipKeyGenerator, type RateLimitExceededEventHandler } from 'express-rate-limit';
 import type { RequestHandler } from 'express';
 import { RateLimited } from '../lib/errors.js';
+import { config } from '../config.js';
+
+/**
+ * The counters live in module memory and the whole suite runs in one fork from
+ * one address, so every test file draws on the same bucket: the tests that
+ * happen to run last get a 429 that has nothing to do with what they assert.
+ * No test covers the 429 path, so nothing is lost by standing the limiters
+ * down under NODE_ENV=test — and the enum in config.ts keeps that value out of
+ * production.
+ */
+const disabledForTests = (): boolean => config.NODE_ENV === 'test';
 
 // ---------------------------------------------------------------------------
 // Helper — shared handler factory
@@ -61,6 +72,7 @@ const chatMinuteLimiter: RequestHandler = rateLimit({
   // ipKeyGenerator is called inside userKey — suppress the validation warning
   validate: { keyGeneratorIpFallback: false },
   handler: makeHandler('Chat rate limit exceeded'),
+  skip: disabledForTests,
 });
 
 const chatDayLimiter: RequestHandler = rateLimit({
@@ -71,6 +83,7 @@ const chatDayLimiter: RequestHandler = rateLimit({
   legacyHeaders: false,
   validate: { keyGeneratorIpFallback: false },
   handler: makeHandler('Chat daily rate limit exceeded'),
+  skip: disabledForTests,
 });
 
 /**
@@ -95,6 +108,7 @@ export const speechLimiter: RequestHandler = rateLimit({
   legacyHeaders: false,
   validate: { keyGeneratorIpFallback: false },
   handler: makeHandler('Speech rate limit exceeded'),
+  skip: disabledForTests,
 });
 
 // ---------------------------------------------------------------------------
@@ -112,4 +126,5 @@ export const authLimiter: RequestHandler = rateLimit({
   standardHeaders: true,
   legacyHeaders: false,
   handler: makeHandler('Too many authentication requests'),
+  skip: disabledForTests,
 });

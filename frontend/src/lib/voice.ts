@@ -105,8 +105,23 @@ export async function buildSnapshot(): Promise<{
     return Number.isNaN(t) || (t >= from && t <= to);
   };
 
+  // Finished tasks age out of the agenda after two days.
+  //
+  // She reads the agenda as the list of things that exist, so a task ticked
+  // off weeks ago was still a row she could match on: "add buy milk" found the
+  // old completed one and she treated the errand as already handled instead of
+  // creating it. Two days is long enough to say "actually I haven't done that"
+  // and short enough that finished business stops being in the way.
+  const doneCutoff = Date.now() - 2 * 24 * 60 * 60 * 1000;
+  const stillRelevant = (t: { isDone: boolean; updatedAt: string }) => {
+    if (!t.isDone) return true;
+    const completed = new Date(t.updatedAt).getTime();
+    return Number.isNaN(completed) || completed >= doneCutoff;
+  };
+
   return {
     tasks: live(tasks)
+      .filter(stillRelevant)
       .filter((t) => inWindow(t.dueAt))
       .slice(0, 120)
       .map((t) => ({

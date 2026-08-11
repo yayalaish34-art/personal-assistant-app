@@ -59,10 +59,18 @@ in checklist form.
 
 ## 1. Automated tests (run before manual QA)
 
-- [ ] `npm test` — expect `Test Files 4 passed`, `Tests 66 passed | 3 skipped`
+- [ ] `npm test` — expect `Test Files 6 passed`, `Tests 121 passed | 3 skipped`
 - [ ] Confirm the 3 skipped tests are the chat integration tests that need
       `OPENAI_API_KEY` (they auto-enable once the key is present in `.env`)
-- [ ] If fewer than 66 pass: **stop** and investigate before continuing
+- [ ] If fewer than 121 pass: **stop** and investigate before continuing
+
+**Postgres has to be up first.** `auth.test.ts`, `chat.test.ts` and
+`sync.test.ts` talk to a real database: with the container down, 16 of them
+fail on connection errors and 28 more skip themselves, which reads like a code
+regression and is not one. `docker compose up -d` before you start.
+
+`voice.test.ts` and `reminders.test.ts` need neither a database nor a network —
+OpenAI, ElevenLabs and pg-boss are all mocked in those two files.
 
 ---
 

@@ -8,8 +8,9 @@ export default defineConfig({
     testTimeout: 10_000,
     hookTimeout: 15_000,
     pool: 'forks',
-    poolOptions: {
-      forks: { singleFork: true }, // one Postgres DB — no parallel writers
-    },
+    // One Postgres DB — no parallel writers. This was `poolOptions.forks.
+    // singleFork`, which Vitest 4 removed: the suite had quietly gone back to
+    // running files in parallel against the one database.
+    fileParallelism: false,
   },
 });

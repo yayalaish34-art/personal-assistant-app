@@ -338,6 +338,74 @@ Rate limit: 10/min per user.
 
 ---
 
+## Stateless routes (no auth)
+
+These carry no `Authorization` header and touch no rows. The request brings
+everything the model needs and the response is applied by the client. What
+lives on the server is the OpenAI key. Rate limiting is the only protection,
+so treat the quotas as part of the contract.
+
+### `POST /parse`
+Turns one line of natural language into a single proposed task or event. The
+client decides whether to apply it — nothing is written here.
+
+Request:
+```json
+{
+  "text": "dentist tomorrow at four",
+  "timezone": "Asia/Jerusalem",
+  "now": "2026-07-30T14:00:00.000Z"
+}
+```
+- `text` required, 1–1000 chars.
+- `timezone` IANA name, default `UTC`. Relative dates are meaningless without it.
+- `now` optional ISO-8601; the client's clock, so "tomorrow" resolves against
+  the user's day rather than the server's.
+
+Response `200`:
+```json
+{
+  "proposal": {
+    "kind": "event",
+    "title": "Dentist",
+    "startsAt": "2026-07-31T16:00:00+03:00",
+    "endsAt": "2026-07-31T17:00:00+03:00",
+    "dueAt": null,
+    "notes": null,
+    "priority": null,
+    "message": null
+  }
+}
+```
+- `kind` is `task` · `event` · `clarify`. Every field is always present;
+  optionality is expressed as `null`, not as an absent key.
+- `kind: "clarify"` means the request had no actionable subject — `message`
+  holds the question to put to the user, and the other fields are `null`.
+- `400 VALIDATION_ERROR` when `OPENAI_API_KEY` is not configured on the server,
+  or when the model returns empty or malformed output.
+
+Rate limit: 30/min and 500/day, keyed on IP (there is no user).
+
+### `POST /transcribe`
+The unauthenticated counterpart to `POST /speech/transcribe`. Same contract;
+this is the one the app actually calls, because it needs no account.
+
+Content-Type: `multipart/form-data`
+- `audio` (file, required) — `m4a` · `webm` · `mp3` · `wav` · `mp4`. Max 25 MB.
+
+Response `200`:
+```json
+{ "text": "…" }
+```
+- `400 VALIDATION_ERROR` for a missing `audio` field, an unsupported format, or
+  an unconfigured `OPENAI_API_KEY`.
+- Audio is **not stored**. It is held in memory, streamed to the provider, and
+  the buffer is released as soon as the response is sent.
+
+Rate limit: 10/min, keyed on IP.
+
+---
+
 ## Voice assistant
 
 Stateless and unauthenticated, like `POST /parse`: the device owns the tasks
@@ -441,3 +509,13 @@ Response `200`:
   `GET /voice/speak`. Stateless and unauthenticated, like `POST /parse` — the
   client applies the returned `actions` to its own storage. Nothing in the
   existing contract changed.
+- `2026-08-10` — Documented `POST /parse` and `POST /transcribe`, which the app
+  has been calling all along without ever being written down. No behaviour
+  changed; the contract had a hole in it.
+- `2026-08-10` — **BREAKING (deployments only)** `POST /auth/dev` now requires
+  `NODE_ENV=development` **and** `ENABLE_DEV_AUTH=true`. It used to mount
+  wherever `NODE_ENV !== 'production'`, which included any environment where
+  the variable was simply never set. `NODE_ENV` itself now defaults to
+  `production`. Anywhere else the route is not mounted and returns `404`. No
+  request or response shape changed — this only removes the route from
+  environments that should never have had it.

@@ -42,9 +42,11 @@ export function createApp(): Express {
     res.json({ status: 'ok', version: pkg.version });
   });
 
-  // Dev-only sign-in shortcut; never mounted in production so it cannot
-  // become an auth bypass.
-  if (config.NODE_ENV !== 'production') {
+  // Dev-only sign-in shortcut. Two positive conditions rather than "not
+  // production": an unset environment now defaults to production (config.ts)
+  // and the flag has to be set on purpose, so the route cannot appear by
+  // omission the way it did on Railway.
+  if (config.NODE_ENV === 'development' && config.ENABLE_DEV_AUTH === 'true') {
     app.use('/auth', authLimiter, devAuthRouter);
   }
   app.use('/auth', authLimiter, authRouter);

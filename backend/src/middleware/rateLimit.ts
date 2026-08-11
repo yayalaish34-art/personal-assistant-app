@@ -10,9 +10,44 @@
  * handler returns the API_CONTRACT.md error shape and sets Retry-After.
  */
 
-import { rateLimit, ipKeyGenerator, type RateLimitExceededEventHandler } from 'express-rate-limit';
+import {
+  rateLimit,
+  ipKeyGenerator,
+  MemoryStore,
+  type RateLimitExceededEventHandler,
+} from 'express-rate-limit';
 import type { RequestHandler } from 'express';
 import { RateLimited } from '../lib/errors.js';
+
+// ---------------------------------------------------------------------------
+// Stores
+// ---------------------------------------------------------------------------
+
+/**
+ * The stores are created here rather than left to express-rate-limit so they
+ * can be cleared between tests. Every limiter below is a module-level
+ * singleton and the suite runs its files in one process, so without this the
+ * counters carry across test files and a suite that makes thirty chat calls
+ * starts failing with 429 somewhere in the middle, in whichever file happens
+ * to run last. See `resetRateLimits`.
+ */
+const stores = {
+  chatMinute: new MemoryStore(),
+  chatDay: new MemoryStore(),
+  speech: new MemoryStore(),
+  auth: new MemoryStore(),
+};
+
+/**
+ * Clears every limiter's counters. For tests: call it in `beforeEach` on any
+ * suite that exercises a rate-limited route. It is not a way to disable the
+ * limits — a suite should still assert that the 429 arrives.
+ */
+export function resetRateLimits(): void {
+  for (const store of Object.values(stores)) {
+    store.resetAll();
+  }
+}
 
 // ---------------------------------------------------------------------------
 // Helper — shared handler factory
@@ -55,6 +90,7 @@ function userKey(req: import('express').Request, _res: import('express').Respons
 const chatMinuteLimiter: RequestHandler = rateLimit({
   windowMs: 60 * 1000,          // 1 minute
   limit: 30,
+  store: stores.chatMinute,
   keyGenerator: userKey,
   standardHeaders: true,
   legacyHeaders: false,
@@ -66,6 +102,7 @@ const chatMinuteLimiter: RequestHandler = rateLimit({
 const chatDayLimiter: RequestHandler = rateLimit({
   windowMs: 24 * 60 * 60 * 1000, // 24 hours
   limit: 500,
+  store: stores.chatDay,
   keyGenerator: userKey,
   standardHeaders: true,
   legacyHeaders: false,
@@ -90,6 +127,7 @@ export const chatLimiter: RequestHandler[] = [chatMinuteLimiter, chatDayLimiter]
 export const speechLimiter: RequestHandler = rateLimit({
   windowMs: 60 * 1000, // 1 minute
   limit: 10,
+  store: stores.speech,
   keyGenerator: userKey,
   standardHeaders: true,
   legacyHeaders: false,
@@ -107,6 +145,7 @@ export const speechLimiter: RequestHandler = rateLimit({
 export const authLimiter: RequestHandler = rateLimit({
   windowMs: 60 * 1000, // 1 minute
   limit: 20,
+  store: stores.auth,
   // Use ipKeyGenerator for correct IPv6 subnet handling
   keyGenerator: (req) => ipKeyGenerator(req.ip ?? '127.0.0.1'),
   standardHeaders: true,

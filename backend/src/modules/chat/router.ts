@@ -112,8 +112,11 @@ async function handleConfirm(
     toolCallId: action.toolCallId ?? assistantRow.id,
   });
 
-  // Have the LLM narrate the result in the user's language.
-  const closingAssistant = await runFollowUp(userId);
+  // Have the LLM narrate the result in the user's language. The outcome is
+  // handed over directly rather than read back out of the history: the tool
+  // row is dropped from the LLM feed whenever its assistant half is outside
+  // the history window, and the narration must not depend on that surviving.
+  const closingAssistant = await runFollowUp(userId, toolResultContent);
 
   return closingAssistant ? [toolMsg, closingAssistant] : [toolMsg];
 }
@@ -275,7 +278,10 @@ async function handleUserTurn(
 
 // ─── Follow-up narration (after confirmed action) ──────────────────────────
 
-async function runFollowUp(userId: string): Promise<ChatMessage | null> {
+async function runFollowUp(
+  userId: string,
+  outcome: string,
+): Promise<ChatMessage | null> {
   const dbUser = await prisma.user.findUnique({
     where: { id: userId },
     select: { name: true, language: true, timezone: true },
@@ -291,6 +297,12 @@ async function runFollowUp(userId: string): Promise<ChatMessage | null> {
 
   const history = await getRecentHistory(userId);
   const messages = toOpenAIMessages(systemPrompt, history);
+  messages.push({
+    role: 'system',
+    content:
+      `The action the user confirmed has just been carried out. Result: ${outcome}\n` +
+      'Tell them what happened in one short sentence, in their language.',
+  });
 
   // In the follow-up we don't want the LLM to fire another tool_call —
   // just narrate. If it does, we ignore and save the text.
@@ -314,15 +326,30 @@ function toOpenAIMessages(
     { role: 'system', content: systemPrompt },
   ];
 
-  // The API rejects the whole request if an assistant message carries
-  // `tool_calls` that no later `tool` message answers:
-  //   "must be followed by tool messages responding to each tool_call_id"
-  // That happens routinely here, because a proposal waits for the user to
-  // confirm and is never answered if they decline. Collect the ids that do
-  // have a response so unanswered ones can be sent without `tool_calls`.
+  // The API rejects the whole request if the two halves of a tool exchange
+  // don't line up, and it rejects it in both directions:
+  //
+  //   - an `assistant` carrying `tool_calls` that no later `tool` answers
+  //     ("must be followed by tool messages responding to each tool_call_id")
+  //   - a `tool` whose `tool_call_id` no earlier `assistant` announced
+  //     ("messages with role 'tool' must be a response to a preceding message
+  //     with 'tool_calls'")
+  //
+  // Both happen routinely. The first because a proposal waits for the user to
+  // confirm and is never answered if they decline. The second because
+  // getRecentHistory returns a fixed-size window: once the conversation passes
+  // that many rows, the assistant half falls out of the window while its tool
+  // reply is still inside — and every later turn 500s until the tool row
+  // scrolls out too. It also happens on confirm, where the tool message can be
+  // keyed on the message-row id rather than a real tool_call id.
   const answeredToolCallIds = new Set(
     history.filter((m) => m.role === 'tool' && m.toolCallId).map((m) => m.toolCallId as string),
   );
+
+  // Ids actually announced by an assistant message we are sending. A `tool`
+  // row is only sendable if its id is in here by the time we reach it, which
+  // enforces the ordering as well as the pairing.
+  const sentToolCallIds = new Set<string>();
 
   for (const m of history) {
     if (m.role === 'user') {
@@ -338,6 +365,7 @@ function toOpenAIMessages(
       const answered = calls?.filter((c) => answeredToolCallIds.has(c.id)) ?? [];
       if (answered.length > 0) {
         base.tool_calls = answered;
+        for (const c of answered) sentToolCallIds.add(c.id);
       } else if (!base.content) {
         // A proposal with nothing answered and no prose carries no information
         // the model needs, and an assistant message must have content or
@@ -347,6 +375,14 @@ function toOpenAIMessages(
       out.push(base);
     } else if (m.role === 'tool') {
       if (!m.toolCallId) continue; // shouldn't happen, but skip malformed
+      if (!sentToolCallIds.has(m.toolCallId)) {
+        // Orphaned: the assistant half is outside the window, or was dropped,
+        // or the id was never a tool_call id. The outcome is already narrated
+        // in the assistant messages around it, so dropping it loses nothing
+        // the model needs — and keeping it costs the whole request.
+        logger.debug({ toolCallId: m.toolCallId }, 'dropping orphaned tool message');
+        continue;
+      }
       out.push({
         role: 'tool',
         tool_call_id: m.toolCallId,

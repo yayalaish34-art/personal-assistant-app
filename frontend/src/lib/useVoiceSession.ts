@@ -5,6 +5,7 @@ import { uuid } from './api';
 import { t } from './i18n';
 import {
   applyActions,
+  generateImage,
   clearConversation,
   loadConversation,
   saveConversation,
@@ -84,8 +85,14 @@ function getAudio(): AudioApi | null {
 
 /** Above this (dBFS) counts as someone talking rather than room noise. */
 const SPEECH_DB = -38;
-/** How long a pause has to last before her turn starts. */
-const SILENCE_MS = 1400;
+/**
+ * How long a pause has to last before her turn starts.
+ *
+ * Long enough to think in. At 1.4s she answered the gap between "tomorrow
+ * at..." and the hour, which is what made talking to her feel like dictating
+ * one sentence at a time rather than holding a conversation.
+ */
+const SILENCE_MS = 2600;
 /** Don't cut anyone off mid-thought, even if they started quietly. */
 const MIN_LISTEN_MS = 900;
 /** A recording this long is someone who forgot to stop, or a noisy room. */
@@ -111,7 +118,15 @@ export type VoiceState =
   | 'stopped'
   | 'unavailable';
 
-export type Line = { id: string; role: 'user' | 'assistant'; text: string };
+export type Line = {
+  id: string;
+  role: 'user' | 'assistant';
+  text: string;
+  /** A drawing that has been asked for but has not arrived. */
+  drawing?: boolean;
+  /** `file://` uri of a picture she drew. */
+  imageUri?: string;
+};
 
 export interface VoiceSession {
   state: VoiceState;
@@ -335,8 +350,41 @@ export function useVoiceSession(options: {
       // coming back does not lose what was already said.
       void saveConversation(historyRef.current);
 
-      if (result.actions.length > 0) {
-        const applied = await applyActions(result.actions);
+      // Drawing is pulled out of the action list and run on its own. It takes
+      // ten to twenty seconds — awaited here it would hold up the reply, the
+      // speech and the next turn of listening, and she would appear to have
+      // frozen. The placeholder goes in now and fills itself later.
+      const drawings = result.actions.filter((a) => a.tool === 'create_image');
+      const rest = result.actions.filter((a) => a.tool !== 'create_image');
+
+      for (const draw of drawings) {
+        const prompt = typeof draw.arguments?.prompt === 'string' ? draw.arguments.prompt : '';
+        if (!prompt) continue;
+        const shape =
+          typeof draw.arguments?.shape === 'string' ? draw.arguments.shape : undefined;
+        const id = uuid();
+        setLines((prev) => [...prev, { id, role: 'assistant', text: '', drawing: true }]);
+
+        void generateImage(prompt, shape)
+          .then((imageUri) => {
+            if (doneRef.current) return;
+            setLines((prev) =>
+              prev.map((l) => (l.id === id ? { ...l, drawing: false, imageUri } : l)),
+            );
+          })
+          .catch((e: unknown) => {
+            console.warn('[voice] drawing failed:', (e as Error)?.message ?? e);
+            if (doneRef.current) return;
+            setLines((prev) =>
+              prev.map((l) =>
+                l.id === id ? { ...l, drawing: false, text: t('voice.drawFailed') } : l,
+              ),
+            );
+          });
+      }
+
+      if (rest.length > 0) {
+        const applied = await applyActions(rest);
         if (applied.length > 0) {
           setUndoable(applied);
           onChanged?.();

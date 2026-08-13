@@ -8,6 +8,8 @@ import {
   StyleSheet,
   Animated,
   Easing,
+  Image,
+  ActivityIndicator,
 } from 'react-native';
 import { useNavigation } from '@react-navigation/native';
 import type { NativeStackNavigationProp } from '@react-navigation/native-stack';
@@ -161,16 +163,43 @@ export default function AssistantScreen() {
         contentContainerStyle={styles.transcriptContent}
         showsVerticalScrollIndicator={false}
       >
-        {lines.map((line) => (
-          <View
-            key={line.id}
-            style={[line.role === 'user' ? styles.userBubble : styles.herBubble]}
-          >
-            <Text style={line.role === 'user' ? styles.userText : styles.herText}>
-              {line.text}
-            </Text>
-          </View>
-        ))}
+        {lines.map((line) => {
+          // A picture is its own bubble: the frame is the message, so the
+          // padding and the background that carry text would only box it in.
+          if (line.imageUri) {
+            return (
+              <View key={line.id} style={styles.imageBubble}>
+                <Image
+                  source={{ uri: line.imageUri }}
+                  style={styles.image}
+                  resizeMode="cover"
+                  accessibilityRole="image"
+                  accessibilityLabel={t('voice.drawing')}
+                />
+              </View>
+            );
+          }
+
+          if (line.drawing) {
+            return (
+              <View key={line.id} style={[styles.herBubble, styles.drawingBubble]}>
+                <ActivityIndicator size="small" color={colors.textMuted} />
+                <Text style={styles.herText}>{t('voice.drawing')}</Text>
+              </View>
+            );
+          }
+
+          return (
+            <View
+              key={line.id}
+              style={[line.role === 'user' ? styles.userBubble : styles.herBubble]}
+            >
+              <Text style={line.role === 'user' ? styles.userText : styles.herText}>
+                {line.text}
+              </Text>
+            </View>
+          );
+        })}
       </ScrollView>
 
       {deleted.length > 0 ? (
@@ -270,6 +299,19 @@ const styles = StyleSheet.create({
 
   transcript: { flex: 1 },
   transcriptContent: { paddingVertical: spacing.md, gap: spacing.sm },
+  imageBubble: {
+    alignSelf: 'flex-start',
+    maxWidth: '88%',
+    borderRadius: 22,
+    borderStartStartRadius: 6,
+    overflow: 'hidden',
+    backgroundColor: colors.surfaceAlt,
+  },
+  // Square, because that is the shape asked for unless the user says otherwise,
+  // and a fixed aspect keeps the thread from jumping as pictures load.
+  image: { width: 240, aspectRatio: 1 },
+  drawingBubble: { flexDirection: 'row', alignItems: 'center', gap: 10 },
+
   herBubble: {
     alignSelf: 'flex-start',
     maxWidth: '88%',

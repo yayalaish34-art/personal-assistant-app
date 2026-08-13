@@ -1,7 +1,7 @@
 import AsyncStorage from '@react-native-async-storage/async-storage';
+import { Directory, File, Paths } from 'expo-file-system';
 
 import { api, uuid, type Task, type Event } from './api';
-import { getLanguage } from './i18n';
 
 // The voice assistant's side of the wire.
 //
@@ -15,23 +15,24 @@ const API_BASE = 'https://personal-assistant-api-production-618a.up.railway.app'
 const TRANSCRIBE_URL = `${API_BASE}/transcribe`;
 const TURN_URL = `${API_BASE}/voice/turn`;
 const SPEAK_URL = `${API_BASE}/voice/speak`;
-
-/** Languages the assistant speaks. Anything else falls back to English. */
-const SPOKEN = new Set(['he', 'en', 'ar', 'es', 'fr', 'it', 'ru']);
+const IMAGE_URL = `${API_BASE}/image`;
 
 /**
  * The language she listens in, thinks in and answers in — all three, since
  * they have to agree.
  *
- * It follows the interface, because that is the one language choice the person
- * using the app actually makes. Pinning it to Hebrew told Whisper that every
- * speaker was talking Hebrew: an English or Arabic sentence came back
- * transcribed phonetically into Hebrew letters, and she answered in a language
- * the user had not chosen and might not read.
+ * Hebrew, whatever the interface is set to. She was following the interface,
+ * which meant a phone running in English got an English assistant even from
+ * someone speaking Hebrew to it; asked for a Hebrew assistant, this is the
+ * setting that decides it.
+ *
+ * The cost is real and worth knowing: this is also the hint Whisper gets, so a
+ * sentence spoken in another language comes back transcribed into Hebrew
+ * letters phonetically rather than understood. Returning `getLanguage()` here
+ * puts her back on the interface.
  */
 function spokenLanguage(): string {
-  const lang = getLanguage();
-  return SPOKEN.has(lang) ? lang : 'en';
+  return 'he';
 }
 
 // ── Speech in ───────────────────────────────────────────────────────────────
@@ -92,6 +93,45 @@ export function speechUrl(text: string): string {
 // ── The turn ────────────────────────────────────────────────────────────────
 
 export type VoiceAction = { tool: string; arguments: Record<string, unknown> };
+
+/**
+ * Asks for a picture and keeps it, returning a `file://` uri.
+ *
+ * The bytes go to a file rather than into the conversation: AsyncStorage is a
+ * key-value store meant for small strings, and a single generated image is
+ * over a megabyte before base64 adds a third on top. The thread keeps the
+ * path, which is what makes a picture survive closing the app without the
+ * store having to carry it.
+ *
+ * Lives in the document directory, not the cache, so the system cannot delete
+ * it out from under a conversation that still shows it.
+ */
+export async function generateImage(
+  prompt: string,
+  shape?: string,
+): Promise<string> {
+  const res = await fetch(IMAGE_URL, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ prompt, ...(shape ? { shape } : {}) }),
+  });
+
+  if (!res.ok) {
+    const body = await res.json().catch(() => null);
+    throw new Error(body?.error?.message ?? `The picture could not be drawn (${res.status})`);
+  }
+
+  const { image } = (await res.json()) as { image: string };
+  if (!image) throw new Error('The picture came back empty');
+
+  const folder = new Directory(Paths.document, 'images');
+  if (!folder.exists) folder.create({ intermediates: true });
+
+  const file = new File(folder, `${uuid()}.png`);
+  file.create();
+  file.write(image, { encoding: 'base64' });
+  return file.uri;
+}
 
 export type TurnMessage = { role: 'user' | 'assistant'; content: string };
 

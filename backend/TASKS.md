@@ -377,3 +377,51 @@ TTS both returned playable mp3.
 
 tsc: clean. npm test: 66 passed / 3 failed — the same 3 that fail on a clean
 checkout here, all of which need a live database.
+
+---
+
+## Phase 8 — Pictures
+
+### T8.1 — Image generation
+DONE (local, uncommitted)
+
+**Outside the frozen scope.** `CLAUDE.md` §1 freezes the build at
+`SPEC_MVP_V1.1.md` and says to stop and ask rather than build past it. It was
+raised as out of scope and then explicitly requested, so it is here, marked,
+and easy to find later.
+
+What to do: let the user ask the assistant for a picture and get one back.
+
+Files: `src/modules/image/router.ts` (new) · `src/middleware/rateLimit.ts`
+(added `imageLimiter`) · `src/app.ts` (mount) · `src/modules/voice/agent.ts`
+(`create_image` in `ACTION_TOOLS` and `ARG_SCHEMAS`) · `tests/image.test.ts`
+(new) · `tests/voice.test.ts` (5 cases) · `API_CONTRACT.md`.
+
+Shape: `POST /image` takes a prompt and returns base64 png. The model calls
+`create_image`, which reaches the device as an ordinary entry in `actions` —
+the device then asks `/image` separately. It is the one action that writes no
+row, so it is checked against neither the ownership gate nor the duplicate
+gate; both key on fields it does not have, and `tests/voice.test.ts` 21–25 pin
+that down rather than leaving it to inspection.
+
+Measured, not estimated: **~35 s** per image and **~1.3 MB** per png, against
+the live API with the project key. Both numbers drove the design — 35 s inside
+a conversational turn would have looked like a hang, so generation is fired
+alongside the reply and filled in when it lands; 1.3 MB is far past what
+AsyncStorage is for, so the client writes a file and keeps the path.
+
+Rate limit is deliberately the tightest in the app (4/min, 30/day): a picture
+costs orders of magnitude more than a chat turn, and at 35 s a second tap is
+more likely to be impatience than intent.
+
+Tests: `tests/image.test.ts` 5 validation cases (none reach OpenAI — that is
+the point of them), `tests/voice.test.ts` 21–25 for the tool gate.
+tsc clean. 41 passed across the two suites.
+
+Not verified: a generated picture rendering on a real device. The client points
+at the Railway deployment, which does not have this code — see the remaining
+risk below.
+
+**Remaining risk:** `/image` 404s in production until the backend is deployed.
+Nothing else in this phase can be exercised end-to-end from the app before
+that.

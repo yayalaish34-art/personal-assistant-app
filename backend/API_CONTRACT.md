@@ -384,6 +384,12 @@ Response `200`:
   Tools: `create_task` · `update_task` · `complete_task` · `delete_task` ·
   `create_event` · `update_event` · `delete_event`. Times are ISO-8601 with an
   explicit offset.
+- `create_image` also arrives in `actions`, and is the one that changes no
+  storage: `{ "tool": "create_image", "arguments": { "prompt": "…",
+  "shape": "square" } }`. The client is expected to call `POST /image` with
+  those arguments **separately**, and to keep talking while it waits — see the
+  timing note there. It carries no `matchTitle` and no id, because it names
+  nothing in the snapshot.
 - Every action that names an existing entry carries `matchTitle`, the title as
   it appears in the snapshot. The server rejects the action when the id and the
   title disagree, so a misidentified entry never reaches the device.
@@ -405,6 +411,38 @@ Response `200`: `audio/mpeg` (the mp3 itself, with `Content-Length`).
 - Nothing is stored: the audio is generated per request and discarded.
 
 Rate limit: 10/min per caller.
+
+---
+
+## Images
+
+### `POST /image`
+Request:
+```json
+{ "prompt": "a cat asleep on a windowsill", "shape": "square" }
+```
+- `prompt` required, 1–1000 chars, English. This is what gets drawn.
+- `shape` one of `square` (default) · `portrait` · `landscape`, mapping to
+  1024×1024, 1024×1536 and 1536×1024.
+
+Response `200`:
+```json
+{ "image": "<base64 png>", "mimeType": "image/png" }
+```
+- Base64 rather than a URL, so the client owns the bytes and has nothing that
+  expires. Measured: a 1024×1024 png is roughly **1.3 MB** before base64 adds a
+  third on top. Write it to a file — it is far too large for a key-value store.
+- **Measured generation time: about 35 seconds.** Do not await this inside a
+  conversational turn; ask for it alongside and fill the result in when it
+  lands.
+- `400` when image generation is not configured on the server, or the model
+  returned nothing.
+
+Rate limit: 4/min and 30/day per caller — deliberately tighter than the rest,
+because a picture costs orders of magnitude more than a chat turn and takes
+long enough that a double tap is more likely than a genuine second request.
+
+Unauthenticated and stateless: nothing is stored server-side.
 
 ---
 
@@ -438,6 +476,11 @@ Response `200`:
 
 ## Change log
 
+- `2026-08-13` — Added image generation: `POST /image`, and a `create_image`
+  tool that arrives in the `actions` of `POST /voice/turn`. Stateless and
+  unauthenticated like the rest of the assistant. Not breaking — a client that
+  ignores an unknown tool in `actions` behaves as before. **Outside the frozen
+  MVP v1.1 scope** (`CLAUDE.md` §1); built on an explicit request.
 - `2026-07-23` — Initial contract (aligns with `SPEC_BACKEND_V1.2.md`).
 - `2026-08-01` — The voice assistant answers in Hebrew by default:
   `language` on `POST /voice/turn` and `GET /voice/speak` now defaults to

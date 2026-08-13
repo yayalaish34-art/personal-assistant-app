@@ -64,6 +64,30 @@ export const ACTION_TOOLS = [
   {
     type: 'function' as const,
     function: {
+      name: 'create_image',
+      description:
+        'Draw a picture, when the user asks for one — an image, a drawing, an illustration. Not for anything that belongs on the agenda.',
+      parameters: {
+        type: 'object',
+        properties: {
+          prompt: {
+            type: 'string',
+            description:
+              "What to draw, in English and in full, however the user phrased it. Say what is in the picture and how it looks; do not name a style unless the user did.",
+          },
+          shape: {
+            type: 'string',
+            enum: ['square', 'portrait', 'landscape'],
+            description: 'Omit unless the user asked for a shape.',
+          },
+        },
+        required: ['prompt'],
+      },
+    },
+  },
+  {
+    type: 'function' as const,
+    function: {
       name: 'create_task',
       description: 'Add a new task (something to do, with an optional due date).',
       parameters: {
@@ -186,6 +210,12 @@ export const ACTION_TOOLS = [
 const isoString = z.string().min(4);
 
 const ARG_SCHEMAS = {
+  // Owns no row, so it is checked against nothing: no id to verify, and
+  // nothing on the agenda it could duplicate.
+  create_image: z.object({
+    prompt: z.string().min(1).max(1000),
+    shape: z.enum(['square', 'portrait', 'landscape']).optional(),
+  }),
   create_task: z.object({
     title: z.string().min(1),
     dueAt: isoString.optional(),

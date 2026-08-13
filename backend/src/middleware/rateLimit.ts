@@ -112,6 +112,39 @@ export const speechLimiter: RequestHandler = rateLimit({
 });
 
 // ---------------------------------------------------------------------------
+// imageLimiter — 4 req/min AND 30 req/day
+// ---------------------------------------------------------------------------
+//
+// Tighter than anything else here, because a generated image costs orders of
+// magnitude more than a chat turn and takes long enough that a user tapping
+// twice is far more likely than a user genuinely wanting two.
+
+const imageMinuteLimiter: RequestHandler = rateLimit({
+  windowMs: 60 * 1000,
+  limit: 4,
+  keyGenerator: userKey,
+  standardHeaders: true,
+  legacyHeaders: false,
+  validate: { keyGeneratorIpFallback: false },
+  handler: makeHandler('Image rate limit exceeded'),
+  skip: disabledForTests,
+});
+
+const imageDayLimiter: RequestHandler = rateLimit({
+  windowMs: 24 * 60 * 60 * 1000,
+  limit: 30,
+  keyGenerator: userKey,
+  standardHeaders: true,
+  legacyHeaders: false,
+  validate: { keyGeneratorIpFallback: false },
+  handler: makeHandler('Image daily rate limit exceeded'),
+  skip: disabledForTests,
+});
+
+/** imageLimiter — apply to POST /image. */
+export const imageLimiter: RequestHandler[] = [imageMinuteLimiter, imageDayLimiter];
+
+// ---------------------------------------------------------------------------
 // authLimiter — 20 req/min, per IP
 // ---------------------------------------------------------------------------
 

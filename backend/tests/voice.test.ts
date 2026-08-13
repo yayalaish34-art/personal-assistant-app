@@ -210,6 +210,45 @@ describe('collectAction — duplicates', () => {
   });
 });
 
+// ─── Drawing owns no row, and must not be checked as though it did ──────────
+
+describe('collectAction — create_image', () => {
+  it('21. a prompt is enough', () => {
+    const { action } = call('create_image', { prompt: 'a cat asleep on a windowsill' });
+    expect(action).toEqual({
+      tool: 'create_image',
+      arguments: { prompt: 'a cat asleep on a windowsill' },
+    });
+  });
+
+  it('22. an empty prompt → refused', () => {
+    const { action } = call('create_image', { prompt: '' });
+    expect(action).toBeNull();
+  });
+
+  it('23. a shape it does not offer → refused', () => {
+    const { action } = call('create_image', { prompt: 'a cat', shape: 'panoramic' });
+    expect(action).toBeNull();
+  });
+
+  it('24. an agenda holding the same words does not block it', () => {
+    // The duplicate check keys on `title`, which this tool has none of. Asking
+    // twice for a picture is a normal thing to do.
+    const { action } = call(
+      'create_image',
+      { prompt: 'Buy milk' },
+      snapshot({ tasks: [task({ title: 'Buy milk' })] }),
+    );
+    expect(action).not.toBeNull();
+  });
+
+  it('25. it is never asked for an id', () => {
+    const { action } = call('create_image', { prompt: 'a red bicycle', shape: 'landscape' });
+    expect(action?.arguments).not.toHaveProperty('id');
+    expect(action?.arguments).toMatchObject({ shape: 'landscape' });
+  });
+});
+
 // ─── The day boundary is the user's, not UTC's ───────────────────────────────
 
 describe('alreadyOnAgenda — which day an instant falls on', () => {

@@ -3,16 +3,7 @@ import { ScrollView, View, Text, TextInput, Pressable, StyleSheet, Alert } from 
 import { useNavigation, useRoute, type RouteProp } from '@react-navigation/native';
 import type { NativeStackNavigationProp } from '@react-navigation/native-stack';
 import * as Haptics from 'expo-haptics';
-import {
-  X,
-  Check,
-  Calendar as CalendarIcon,
-  Clock,
-  Folder,
-  ChevronDown,
-  Plus,
-  Trash2,
-} from 'lucide-react-native';
+import { X, Check, Calendar as CalendarIcon, Clock, Trash2 } from 'lucide-react-native';
 
 import { Screen, Button } from '../components/ui';
 import { api, uuid } from '../lib/api';
@@ -32,8 +23,6 @@ import { t } from '../lib/i18n';
 
 type Nav = NativeStackNavigationProp<RootStackParamList, 'EntryForm'>;
 type Route = RouteProp<RootStackParamList, 'EntryForm'>;
-
-const PROJECTS = ['Personal', 'Work', 'Website Redesign'];
 
 // Input with a leading icon, matching the mockup's date/time fields.
 function IconInput({
@@ -61,14 +50,13 @@ export default function EntryFormScreen() {
   const [title, setTitle] = useState('');
   const [body, setBody] = useState('');
   const [priority, setPriority] = useState<Priority | null>('Medium');
+  /** Tasks only: when work on it begins. Left blank if there is none. */
+  const [startDate, setStartDate] = useState('');
+  const [startTime, setStartTime] = useState('');
   const [date, setDate] = useState(toDateStr(new Date()));
   const [time, setTime] = useState('');
   /** Events only. Left blank on a new event, which then runs an hour. */
   const [endTime, setEndTime] = useState('');
-  const [project, setProject] = useState(0);
-  const [tags, setTags] = useState<string[]>(['Design', 'UI/UX', 'Work']);
-  const [addingTag, setAddingTag] = useState(false);
-  const [newTag, setNewTag] = useState('');
   const [saving, setSaving] = useState(false);
 
   // Editing: pull the row in and fill the fields from it.
@@ -92,6 +80,14 @@ export default function EntryFormScreen() {
           } else {
             setDate('');
             setTime('');
+          }
+          if (row.startAt) {
+            const s = new Date(row.startAt);
+            setStartDate(toDateStr(s));
+            setStartTime(toTimeStr(s));
+          } else {
+            setStartDate('');
+            setStartTime('');
           }
         } else {
           const { events } = await api.listEvents();
@@ -129,12 +125,21 @@ export default function EntryFormScreen() {
       const notes = withPriority(body, priority);
 
       if (isTask) {
-        // An undated task is valid: dueAt is nullable.
+        // An undated task is valid: startAt and dueAt are both nullable.
+        const startAt = startDate.trim()
+          ? toUtcIso(startDate.trim(), startTime.trim() || '09:00')
+          : undefined;
         const dueAt = date.trim() ? toUtcIso(date.trim(), time.trim() || '09:00') : undefined;
         if (isEditing) {
-          await api.updateTask(id, { title: title.trim(), notes, dueAt: dueAt ?? null, updatedAt });
+          await api.updateTask(id, {
+            title: title.trim(),
+            notes,
+            startAt: startAt ?? null,
+            dueAt: dueAt ?? null,
+            updatedAt,
+          });
         } else {
-          await api.createTask({ id, title: title.trim(), notes, dueAt, updatedAt });
+          await api.createTask({ id, title: title.trim(), notes, startAt, dueAt, updatedAt });
         }
       } else {
         if (!date.trim()) {
@@ -255,6 +260,36 @@ export default function EntryFormScreen() {
 
         {(
           <>
+            {/* A task can carry a start date as well as a due date; an event's
+                start lives in the date/time fields below instead. */}
+            {isTask ? (
+              <>
+                <Text style={styles.label}>{t('form.startDate')}</Text>
+                <View style={styles.rowGap}>
+                  <View style={{ flex: 1.4 }}>
+                    <IconInput
+                      icon={<CalendarIcon color={colors.text} size={17} />}
+                      value={startDate}
+                      onChangeText={setStartDate}
+                      placeholder="2026-07-25"
+                      autoCapitalize="none"
+                      autoCorrect={false}
+                    />
+                  </View>
+                  <View style={{ flex: 1 }}>
+                    <IconInput
+                      icon={<Clock color={colors.text} size={17} />}
+                      value={startTime}
+                      onChangeText={setStartTime}
+                      placeholder="09:00"
+                      autoCapitalize="none"
+                      autoCorrect={false}
+                    />
+                  </View>
+                </View>
+              </>
+            ) : null}
+
             {/* ── Due Date & time — dueAt for tasks, startsAt for events ── */}
             <Text style={styles.label}>{t('form.dueDate')}</Text>
             <View style={styles.rowGap}>
@@ -323,66 +358,6 @@ export default function EntryFormScreen() {
               })}
             </View>
 
-            {/* ── Project ── */}
-            <Text style={styles.label}>{t('form.project')}</Text>
-            <Pressable
-              onPress={() => {
-                Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
-                setProject((p) => (p + 1) % PROJECTS.length);
-              }}
-              style={styles.projectRow}
-            >
-              <Folder color={colors.text} size={18} />
-              <Text style={styles.projectText}>{PROJECTS[project]}</Text>
-              <View style={{ flex: 1 }} />
-              <ChevronDown color={colors.textMuted} size={18} />
-            </Pressable>
-
-            {/* ── Tags ── */}
-            <Text style={styles.label}>{t('form.tags')}</Text>
-            <View style={styles.tagsRow}>
-              {tags.map((t) => (
-                <Pressable
-                  key={t}
-                  onPress={() => {
-                    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
-                    setTags((prev) => prev.filter((x) => x !== t));
-                  }}
-                  style={styles.tagChip}
-                >
-                  <Text style={styles.tagText}>{t}</Text>
-                  <X color={colors.primary} size={13} />
-                </Pressable>
-              ))}
-              {addingTag ? (
-                <TextInput
-                  value={newTag}
-                  onChangeText={setNewTag}
-                  autoFocus
-                  placeholder="Tag"
-                  placeholderTextColor={colors.textMuted}
-                  style={styles.tagInput}
-                  onSubmitEditing={() => {
-                    const t = newTag.trim();
-                    if (t && !tags.includes(t)) setTags((prev) => [...prev, t]);
-                    setNewTag('');
-                    setAddingTag(false);
-                  }}
-                  onBlur={() => setAddingTag(false)}
-                />
-              ) : (
-                <Pressable
-                  onPress={() => {
-                    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
-                    setAddingTag(true);
-                  }}
-                  style={[styles.tagChip, styles.tagAdd]}
-                >
-                  <Plus color={colors.text} size={13} />
-                  <Text style={[styles.tagText, { color: colors.text }]}>Add</Text>
-                </Pressable>
-              )}
-            </View>
           </>
         )}
 
@@ -465,43 +440,4 @@ const styles = StyleSheet.create({
     backgroundColor: '#FFFFFF',
   },
   priorityText: { ...font(500), fontSize: 14 },
-
-  projectRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 10,
-    backgroundColor: '#FFFFFF',
-    borderRadius: 16,
-    paddingHorizontal: 14,
-    paddingVertical: 17,
-    marginBottom: spacing.md + 2,
-  },
-  projectText: { ...font(500), fontSize: 14, color: colors.text },
-
-  tagsRow: { flexDirection: 'row', flexWrap: 'wrap', gap: 9, alignItems: 'center' },
-  tagChip: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 6,
-    borderWidth: 1.2,
-    borderColor: '#C9BCF7',
-    backgroundColor: '#FFFFFF',
-    borderRadius: 50,
-    paddingHorizontal: 13,
-    paddingVertical: 9,
-  },
-  tagText: { ...font(500), fontSize: 13, color: colors.primary },
-  tagAdd: { borderColor: '#DDD6E4' },
-  tagInput: {
-    minWidth: 70,
-    borderWidth: 1.2,
-    borderColor: '#C9BCF7',
-    backgroundColor: '#FFFFFF',
-    borderRadius: 50,
-    paddingHorizontal: 13,
-    paddingVertical: 9,
-    ...font(400),
-    fontSize: 13,
-    color: colors.text,
-  },
 });

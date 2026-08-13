@@ -72,6 +72,7 @@ export type Task = {
   id: string;
   title: string;
   notes: string | null;
+  startAt: string | null;
   dueAt: string | null;
   isDone: boolean;
   createdAt: string;
@@ -232,6 +233,7 @@ async function seedOnce(): Promise<void> {
         id: uuid(),
         title,
         notes,
+        startAt: null,
         dueAt: on(day, hour),
         // What is behind us is mostly done, and part of today is too — a day
         // with nothing ticked off leaves the completion card and the
@@ -254,6 +256,7 @@ async function seedOnce(): Promise<void> {
       id: uuid(),
       title,
       notes,
+      startAt: null,
       dueAt: null,
       isDone: false,
       createdAt: stamp,
@@ -316,6 +319,7 @@ export const api = {
     id: string;
     title: string;
     notes?: string;
+    startAt?: string;
     dueAt?: string;
     updatedAt: string;
   }) => {
@@ -328,6 +332,7 @@ export const api = {
       id: t.id,
       title: t.title,
       notes: t.notes ?? null,
+      startAt: t.startAt ?? null,
       dueAt: t.dueAt ?? null,
       isDone: false,
       createdAt: nowIso(),
@@ -343,7 +348,7 @@ export const api = {
 
   updateTask: async (
     id: string,
-    patch: Partial<Pick<Task, 'title' | 'notes' | 'dueAt' | 'isDone'>> & {
+    patch: Partial<Pick<Task, 'title' | 'notes' | 'startAt' | 'dueAt' | 'isDone'>> & {
       updatedAt?: string;
     },
   ) => {

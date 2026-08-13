@@ -193,12 +193,17 @@ function BottomBar({ state, descriptors, navigation }: BottomTabBarProps) {
         // No visible label any more, so the tab name only survives here.
         accessibilityLabel={label}
       >
-        <Icon
-          color={active ? NAV_BAR.activeIcon : NAV_BAR.inactiveIcon}
-          fill={active ? NAV_BAR.activeWash : 'transparent'}
-          size={24}
-          strokeWidth={active ? 2.2 : 1.8}
-        />
+        {/* A tinted disc behind the selected glyph. Colour alone was carrying
+            the selection, which is thin at this size and gone entirely for
+            anyone who cannot separate the two hues; a shape is not. */}
+        <View style={[styles.tabDisc, active && styles.tabDiscActive]}>
+          <Icon
+            color={active ? NAV_BAR.activeIcon : NAV_BAR.inactiveIcon}
+            fill={active ? NAV_BAR.activeWash : 'transparent'}
+            size={23}
+            strokeWidth={active ? 2.2 : 1.7}
+          />
+        </View>
       </Pressable>
     );
   };
@@ -355,6 +360,14 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
   },
+  tabDisc: {
+    width: 40,
+    height: 40,
+    borderRadius: 13,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  tabDiscActive: { backgroundColor: NAV_BAR.activeSurface },
   notchGap: { width: SHOULDER_X * 2 },
   fab: {
     alignSelf: 'center',

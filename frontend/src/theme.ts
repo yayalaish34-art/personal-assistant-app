@@ -26,6 +26,26 @@ export const colors = {
   lime: '#DCE8C0',
 };
 
+// ── The day card ──────────────────────────────────────────────────────────
+// The one big surface on the home screen. It changes with the sky rather than
+// staying one colour all day: a pale morning blue, and a dusk that is still
+// light enough to keep near-black type on it, because the app has no dark
+// surface anywhere else and one would read as a mistake.
+export const DAY_CARD = {
+  day: {
+    colors: ['#CFE1F2', '#E8F1FA'] as const,
+    ink: '#14150F',
+    sub: 'rgba(20, 21, 15, 0.62)',
+    glyph: '#4E82B4',
+  },
+  night: {
+    colors: ['#D5D8EA', '#ECEDF5'] as const,
+    ink: '#14150F',
+    sub: 'rgba(20, 21, 15, 0.62)',
+    glyph: '#5F6796',
+  },
+} as const;
+
 /** The three pastel tiles everything is built from, plus a neutral. */
 export const TILES = {
   green: '#DCE8C0',
@@ -103,6 +123,8 @@ export const NAV_BAR = {
   activeIcon: '#F4753A',
   /** Faint accent inside the active glyph, so it reads filled but stays legible. */
   activeWash: 'rgba(244, 117, 58, 0.16)',
+  /** The disc behind the selected glyph — shape carrying what colour alone did. */
+  activeSurface: 'rgba(244, 117, 58, 0.10)',
   inactiveIcon: '#9A9A93',
 };
 

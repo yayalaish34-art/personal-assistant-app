@@ -62,11 +62,18 @@ async function readCache<T extends { at: number }>(key: string, ttl: number): Pr
   }
 }
 
-/** The city half of the timezone: `Asia/Jerusalem` → `Jerusalem`. */
+/**
+ * The city half of the timezone: `Asia/Jerusalem` → `Jerusalem`.
+ *
+ * Only zones that actually name a place qualify. A device reporting `UTC`,
+ * `GMT` or an `Etc/…` offset has told us nothing about where it is, and
+ * sending those to a geocoder returns whatever happens to match the letters.
+ */
 function cityFromTimezone(): string | null {
   try {
     const tz = Intl.DateTimeFormat().resolvedOptions().timeZone;
-    const city = tz?.split('/').pop()?.replace(/_/g, ' ');
+    if (!tz || !tz.includes('/') || tz.startsWith('Etc/')) return null;
+    const city = tz.split('/').pop()?.replace(/_/g, ' ');
     return city && city.length > 1 ? city : null;
   } catch {
     return null;

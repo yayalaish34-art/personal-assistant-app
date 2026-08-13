@@ -2,11 +2,10 @@ import { useCallback, useMemo, useState } from 'react';
 import { ScrollView, View, Text, Pressable, StyleSheet } from 'react-native';
 import { useFocusEffect, useNavigation } from '@react-navigation/native';
 import type { NativeStackNavigationProp } from '@react-navigation/native-stack';
-import Svg, { Circle, Path } from 'react-native-svg';
 import * as Haptics from 'expo-haptics';
+import { LinearGradient } from 'expo-linear-gradient';
 import {
   Plus,
-  Check,
   CalendarDays,
   ChevronsRight,
   CalendarClock,
@@ -35,7 +34,7 @@ import {
   type AgendaItem,
 } from '../lib/tasks';
 import type { RootStackParamList } from '../navigation';
-import { colors, spacing, font, radius, TILES, TILE_INK, ROW_TILES } from '../theme';
+import { colors, spacing, font, radius, TILES, DAY_CARD } from '../theme';
 import { t, locale, alignStart } from '../lib/i18n';
 import { getWeather, isDaylightNow, type Sky, type Weather } from '../lib/weather';
 
@@ -69,51 +68,6 @@ function skyIcon(sky: Sky, isDay: boolean) {
     default:
       return Cloud;
   }
-}
-
-/**
- * The productivity sparkline: a rising line drawn through the day's completion
- * so far. Points are evenly spaced; only the shape matters at this size.
- */
-function Sparkline({ points, width = 118, height = 40 }: { points: number[]; width?: number; height?: number }) {
-  const max = Math.max(1, ...points);
-  const step = points.length > 1 ? width / (points.length - 1) : width;
-  const d = points
-    .map((v, i) => {
-      const x = i * step;
-      const y = height - (v / max) * (height - 8) - 4;
-      return `${i === 0 ? 'M' : 'L'}${x.toFixed(1)},${y.toFixed(1)}`;
-    })
-    .join(' ');
-  const lastX = (points.length - 1) * step;
-  const lastY = height - (points[points.length - 1] / max) * (height - 8) - 4;
-
-  return (
-    <Svg width={width} height={height}>
-      <Path d={d} stroke={TILE_INK.green} strokeWidth={2.4} fill="none" strokeLinecap="round" strokeLinejoin="round" />
-      <Circle cx={lastX} cy={lastY} r={4} fill={TILE_INK.green} />
-    </Svg>
-  );
-}
-
-/** The little checklist drawn inside the Tasks tile. */
-function ChecklistMark() {
-  return (
-    <View style={styles.checklist}>
-      {[0, 1, 2].map((i) => (
-        <View key={i} style={styles.checklistRow}>
-          {i < 2 ? (
-            <Check color={colors.text} size={13} strokeWidth={3} />
-          ) : (
-            <View style={styles.checklistCircle}>
-              <Check color={colors.text} size={9} strokeWidth={3} />
-            </View>
-          )}
-          <View style={styles.checklistLine} />
-        </View>
-      ))}
-    </View>
-  );
 }
 
 /** "Good morning" / "Good afternoon" / "Good evening", by the clock. */
@@ -173,22 +127,6 @@ export default function TodayScreen() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [items]);
 
-  /** Cumulative completions across the day, for the sparkline. */
-  const trend = useMemo(() => {
-    const buckets = [0, 0, 0, 0, 0, 0, 0];
-    for (const i of items) {
-      if (statusOf(i, now) !== 'done') continue;
-      const h = i.time ? parseInt(i.time.split(':')[0], 10) : 9;
-      const idx = Math.min(6, Math.max(0, Math.floor(((Number.isNaN(h) ? 9 : h) - 7) / 2)));
-      buckets[idx] += 1;
-    }
-    let running = 0;
-    // A flat line reads as broken, so an empty day still shows a gentle rise.
-    const cumulative = buckets.map((b) => (running += b));
-    return cumulative.every((v) => v === 0) ? [0, 1, 1, 2, 2, 3, 4] : cumulative;
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [items]);
-
   /** The next thing on the clock today, or the first one if the day is over. */
   const upcoming = useMemo(() => {
     const timed = items
@@ -198,13 +136,6 @@ export default function TodayScreen() {
     return timed.find((i) => i.time >= nowTime) ?? timed[0] ?? null;
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [items]);
-
-  /** Everything on today's plate, timed entries first, in clock order. */
-  const plannedToday = useMemo(
-    () =>
-      [...items].sort((a, b) => (a.time || '99:99').localeCompare(b.time || '99:99')),
-    [items],
-  );
 
   // Titles arrive in whatever language they were typed in; their labels are
   // always translated. Left to itself each picks its own edge and the pair
@@ -226,72 +157,55 @@ export default function TodayScreen() {
       />
 
       <ScrollView showsVerticalScrollIndicator={false} contentContainerStyle={styles.content}>
-        {/* ── The day itself: date, and the sky over it ──
-            The sun or moon shows from the first frame, off the clock, and the
-            provider's daylight flag replaces the guess when the reading lands.
-            Temperature appears only if it was actually fetched — a dash where
-            a number belongs is worse than no number. */}
-        <View style={styles.dayStrip}>
-          <Text style={[styles.dayDate, start]} numberOfLines={1}>
-            {now.toLocaleDateString(locale(), {
-              weekday: 'long',
-              day: 'numeric',
-              month: 'long',
-            })}
-          </Text>
-          <View style={styles.dayWeather}>
-            {weather ? (
-              <Text style={styles.dayTemp}>{weather.temperature}°</Text>
-            ) : null}
-            {(() => {
-              const isDay = weather?.isDay ?? isDaylightNow();
-              const Icon = weather ? skyIcon(weather.sky, isDay) : isDay ? Sun : Moon;
-              return <Icon color={colors.text} size={20} strokeWidth={1.9} />;
-            })()}
-          </View>
-        </View>
-
-        <Text style={styles.headline}>
-          {t('today.headline.line1')}
-          {'\n'}
-          {t('today.headline.line2')}
-        </Text>
-
-        {/* ── Two columns of tiles ── */}
-        <View style={styles.tileRow}>
-          <View style={[styles.tile, styles.tileTall, { backgroundColor: TILES.green }]}>
-            <Text style={[styles.tileNumber, { textAlign: alignStart() }]}>{stats.tasks}</Text>
-            <Text style={styles.tileLabel}>{t('today.tile.tasks')}</Text>
-            <Text style={styles.tileLabel}>{t('today.tile.today')}</Text>
-            <View style={styles.checklistCard}>
-              <ChecklistMark />
-            </View>
-          </View>
-
-          <View style={styles.tileColumn}>
-            <View style={[styles.tile, { backgroundColor: TILES.blue }]}>
-              <View style={styles.tileHeadRow}>
-                <View style={{ flex: 1 }}>
-                  <Text style={[styles.tileNumber, { textAlign: alignStart() }]}>{stats.events}</Text>
-                  <Text style={styles.tileLabel}>{t('today.tile.events')}</Text>
-                  <Text style={styles.tileLabel}>{t('today.tile.today')}</Text>
-                </View>
-                {/* The white square is what stops the icon reading as part of
-                    the number beside it. */}
-                <View style={styles.tileIcon}>
-                  <CalendarDays color={colors.text} size={22} strokeWidth={1.8} />
-                </View>
+        {/* ── The day, at the size it deserves ──
+            The one large surface on this screen. The sun or moon is on it from
+            the first frame, off the clock, and the provider's daylight flag
+            replaces that guess when the reading lands. The temperature appears
+            only if it was actually fetched: a dash where a number belongs is
+            worse than no number, so without it the card is simply a date. */}
+        {(() => {
+          const isDay = weather?.isDay ?? isDaylightNow();
+          const skin = isDay ? DAY_CARD.day : DAY_CARD.night;
+          const Icon = weather ? skyIcon(weather.sky, isDay) : isDay ? Sun : Moon;
+          return (
+            <LinearGradient
+              colors={skin.colors}
+              start={{ x: 0, y: 0 }}
+              end={{ x: 1, y: 1 }}
+              style={styles.dayCard}
+            >
+              <View style={styles.dayCardText}>
+                <Text style={[styles.dayWeekday, { color: skin.ink }, start]} numberOfLines={1}>
+                  {now.toLocaleDateString(locale(), { weekday: 'long' })}
+                </Text>
+                <Text style={[styles.dayDate, { color: skin.sub }, start]} numberOfLines={1}>
+                  {now.toLocaleDateString(locale(), { day: 'numeric', month: 'long' })}
+                </Text>
               </View>
-            </View>
-
-            <View style={[styles.tile, { backgroundColor: TILES.neutral }]}>
-              <Text style={[styles.tileNumber, { textAlign: alignStart() }]}>{stats.productivity}%</Text>
-              <Text style={styles.tileLabel}>{t('today.tile.productivity')}</Text>
-              <View style={styles.sparkWrap}>
-                <Sparkline points={trend} />
+              <View style={styles.dayCardSky}>
+                <Icon color={skin.glyph} size={46} strokeWidth={1.6} />
+                {weather ? (
+                  <Text style={[styles.dayTemp, { color: skin.ink }]}>{weather.temperature}°</Text>
+                ) : null}
               </View>
+            </LinearGradient>
+          );
+        })()}
+
+        {/* ── Three numbers, one line ── */}
+        <View style={styles.statRow}>
+          {[
+            { value: String(stats.tasks), label: t('today.tile.tasks'), tile: TILES.green },
+            { value: String(stats.events), label: t('today.tile.events'), tile: TILES.blue },
+            { value: `${stats.productivity}%`, label: t('today.tile.productivity'), tile: TILES.yellow },
+          ].map((s) => (
+            <View key={s.label} style={[styles.stat, { backgroundColor: s.tile }]}>
+              <Text style={[styles.statNumber, { textAlign: alignStart() }]}>{s.value}</Text>
+              <Text style={[styles.statLabel, start]} numberOfLines={1}>
+                {s.label}
+              </Text>
             </View>
-          </View>
+          ))}
         </View>
 
         {/* ── The next thing in the diary ── */}
@@ -323,59 +237,10 @@ export default function TodayScreen() {
           </View>
         </Pressable>
 
-        {/* ── Completed count ── */}
-        <View style={[styles.wideCard, { backgroundColor: TILES.green }]}>
-          <View style={{ flex: 1 }}>
-            <Text style={[styles.wideCardTitle, start]}>{t('tab.tasks')}</Text>
-            <Text style={[styles.wideCardMeta, start]}>
-              {t('today.completedDone', { count: stats.done })}
-            </Text>
-          </View>
-          <View style={styles.checkCircle}>
-            <Check color={colors.text} size={22} strokeWidth={2.6} />
-          </View>
-        </View>
-
-        {/* ── Everything on today, events and tasks together, in time order.
-               Tapping one opens it; holding is left to the list screens. ── */}
-        {plannedToday.length > 0 ? (
-          <>
-            <Text style={styles.sectionTitle}>{t('today.planned')}</Text>
-            {plannedToday.map((item, index) => {
-              const done = statusOf(item, now) === 'done';
-              return (
-                <Pressable
-                  key={`${item.kind}-${item.id}`}
-                  onPress={() =>
-                    navigation.navigate('EntryForm', { kind: item.kind, id: item.id })
-                  }
-                  style={[
-                    styles.planRow,
-                    { backgroundColor: TILES[ROW_TILES[index % ROW_TILES.length]] },
-                  ]}
-                >
-                  <View style={styles.planTimeBox}>
-                    <Text style={styles.planTime}>
-                      {item.time ? to12h(item.time) : t('today.allDay')}
-                    </Text>
-                  </View>
-                  <View style={{ flex: 1 }}>
-                    <Text
-                      style={[styles.planTitle, start, done && styles.planTitleDone]}
-                      numberOfLines={1}
-                    >
-                      {item.title}
-                    </Text>
-                    <Text style={[styles.planKind, start]}>
-                      {item.kind === 'event' ? t('today.type.event') : t('today.type.task')}
-                    </Text>
-                  </View>
-                  {done ? <Check color={colors.text} size={18} strokeWidth={2.6} /> : null}
-                </Pressable>
-              );
-            })}
-          </>
-        ) : null}
+        {/* The completed count moved into the row above, and the list of
+            everything on today came off this screen entirely: it repeated the
+            Tasks tab a scroll below the fold, which is where the yellow bar
+            had been pushed to. */}
 
         {/* ── The one action on this screen: hand it to her ── */}
         <Pressable
@@ -401,63 +266,25 @@ export default function TodayScreen() {
 const styles = StyleSheet.create({
   content: { paddingTop: spacing.lg, paddingBottom: spacing.md },
 
-  dayStrip: {
+  dayCard: {
     flexDirection: 'row',
     alignItems: 'center',
-    gap: 10,
-    marginBottom: spacing.sm,
+    gap: spacing.md,
+    borderRadius: radius.lg,
+    paddingVertical: 22,
+    paddingHorizontal: spacing.md + 2,
+    marginBottom: 12,
   },
-  dayDate: { flex: 1, fontSize: 14, ...font(600), color: colors.textMuted },
-  dayWeather: { flexDirection: 'row', alignItems: 'center', gap: 6 },
-  dayTemp: { fontSize: 15, ...font(700), color: colors.text },
+  dayCardText: { flex: 1 },
+  dayWeekday: { fontSize: 26, ...font(700), letterSpacing: -0.5 },
+  dayDate: { fontSize: 15, ...font(500), marginTop: 2 },
+  dayCardSky: { alignItems: 'center', gap: 2 },
+  dayTemp: { fontSize: 26, ...font(700), letterSpacing: -0.5 },
 
-  headline: {
-    fontSize: 34,
-    lineHeight: 40,
-    ...font(700),
-    color: colors.text,
-    letterSpacing: -0.8,
-    marginBottom: spacing.lg,
-  },
-
-  tileRow: { flexDirection: 'row', gap: 12, marginBottom: 12 },
-  tileColumn: { flex: 1, gap: 12 },
-  tile: { flex: 1, borderRadius: radius.lg, padding: spacing.md },
-  tileTall: { flex: 1 },
-  tileHeadRow: { flexDirection: 'row', alignItems: 'flex-start', gap: 8 },
-  tileNumber: { fontSize: 32, ...font(700), color: colors.text, letterSpacing: -0.5 },
-  tileLabel: { fontSize: 14, ...font(500), color: colors.text, lineHeight: 18 },
-  tileIcon: {
-    width: 40,
-    height: 40,
-    borderRadius: 13,
-    backgroundColor: colors.surface,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-
-  checklistCard: {
-    // Pinned to the foot of the tile rather than trailing the text, so the
-    // column reads as one filled block instead of a label with a gap under it.
-    marginTop: 'auto',
-    paddingTop: spacing.sm,
-    backgroundColor: colors.surface,
-    borderRadius: radius.md,
-    padding: 12,
-  },
-  checklist: { gap: 7 },
-  checklistRow: { flexDirection: 'row', alignItems: 'center', gap: 7 },
-  checklistCircle: {
-    width: 14,
-    height: 14,
-    borderRadius: 7,
-    borderWidth: 1.5,
-    borderColor: colors.text,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  checklistLine: { flex: 1, height: 5, borderRadius: 3, backgroundColor: TILES.green },
-  sparkWrap: { marginTop: 4, alignItems: 'flex-end' },
+  statRow: { flexDirection: 'row', gap: 10, marginBottom: 12 },
+  stat: { flex: 1, borderRadius: radius.md, paddingVertical: 14, paddingHorizontal: 12 },
+  statNumber: { fontSize: 26, ...font(700), color: colors.text, letterSpacing: -0.5 },
+  statLabel: { fontSize: 12, ...font(500), color: colors.text, opacity: 0.72, marginTop: 1 },
 
   wideCard: {
     flexDirection: 'row',
@@ -478,43 +305,7 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
   },
-  checkCircle: {
-    width: 46,
-    height: 46,
-    borderRadius: 23,
-    backgroundColor: colors.surface,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
 
-  sectionTitle: {
-    fontSize: 18,
-    ...font(700),
-    color: colors.text,
-    marginBottom: 10,
-    marginTop: spacing.xs,
-  },
-  planRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 12,
-    borderRadius: radius.md,
-    paddingHorizontal: 14,
-    paddingVertical: 12,
-    marginBottom: 8,
-  },
-  planTimeBox: {
-    minWidth: 64,
-    backgroundColor: colors.surface,
-    borderRadius: 100,
-    paddingHorizontal: 10,
-    paddingVertical: 6,
-    alignItems: 'center',
-  },
-  planTime: { fontSize: 12, ...font(600), color: colors.text },
-  planTitle: { fontSize: 15, ...font(700), color: colors.text },
-  planTitleDone: { textDecorationLine: 'line-through', opacity: 0.55 },
-  planKind: { fontSize: 12, ...font(500), color: colors.text, opacity: 0.65, marginTop: 1 },
 
   addBar: {
     flexDirection: 'row',

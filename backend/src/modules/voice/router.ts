@@ -5,7 +5,7 @@ import { asyncHandler, parseBody, parseQuery } from '../../lib/http.js';
 import { chatLimiter, speechLimiter } from '../../middleware/rateLimit.js';
 import { ValidationError } from '../../lib/errors.js';
 import { config } from '../../config.js';
-import { runVoiceTurn, snapshotSchema } from './agent.js';
+import { runVoiceTurn, snapshotSchema, profileSchema } from './agent.js';
 import { synthesize, isSpeechConfigured, MAX_SPEECH_CHARS } from './tts.js';
 
 /**
@@ -59,6 +59,12 @@ const turnBody = z.object({
     .max(40)
     .default([]),
   snapshot: snapshotSchema.default({ tasks: [], events: [] }),
+  /**
+   * What the opening questionnaire learned. Optional on purpose: an install
+   * from before it existed, or someone who skipped it, still gets a full turn
+   * — just one tuned to nobody in particular.
+   */
+  profile: profileSchema.optional(),
 });
 
 // ── POST /voice/turn ────────────────────────────────────────────────────────
@@ -81,6 +87,7 @@ voiceRouter.post(
       userName: body.userName,
       history: body.history,
       snapshot: body.snapshot,
+      profile: body.profile,
     });
 
     res.json({

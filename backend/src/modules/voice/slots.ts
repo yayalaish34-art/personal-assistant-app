@@ -12,11 +12,32 @@ export interface SlotEvent {
   endsAt?: string | null;
 }
 
+/**
+ * The part of someone's questionnaire that this file can act on mechanically.
+ *
+ * Sleep and buffer only. Working hours are deliberately *not* here: enforcing
+ * them would mean someone who works 9–5 could never be offered a seven o'clock
+ * dinner, which is worse than the problem it solves. They go into the prompt
+ * instead, where she can say "that is outside your hours, is that alright?" —
+ * judgement, rather than a rule that cannot see what kind of thing is being
+ * scheduled.
+ */
+export interface SlotPrefs {
+  /** Asleep from → to, local hours. Crosses midnight when start > end. */
+  sleepStartHour: number;
+  sleepEndHour: number;
+  /** Clear air kept either side of anything already in the diary. */
+  bufferMinutes: number;
+}
+
 /** Slots start on the hour or the half hour. */
 const SLOT_MINUTES = 30;
-/** Nothing is offered before this hour, local. */
+/**
+ * The window used when no profile came with the turn — an install from before
+ * the questionnaire existed, or someone who skipped it. Kept exactly as it was
+ * so behaviour without a profile is unchanged.
+ */
 const DAY_START_HOUR = 8;
-/** Nothing is offered that runs past this hour, local. */
 const DAY_END_HOUR = 21;
 /** An event with no end is treated as this long — the same default as create. */
 const DEFAULT_MINUTES = 60;
@@ -162,6 +183,19 @@ function overlaps(start: number, end: number, busy: Busy[]): boolean {
   return busy.some((b) => start < b.end && end > b.start);
 }
 
+/**
+ * Is this local hour inside the sleep window?
+ *
+ * Written against the hour rather than the instant so that a window crossing
+ * midnight — which is the normal case — is one comparison instead of two date
+ * ranges. Equal start and end means nobody said, so nothing is excluded.
+ */
+function sleeping(hour: number, startHour: number, endHour: number): boolean {
+  if (startHour === endHour) return false;
+  if (startHour < endHour) return hour >= startHour && hour < endHour;
+  return hour >= startHour || hour < endHour;
+}
+
 /** The event already sitting across the requested time, if there is one. */
 export function findClash<T extends SlotEvent>(
   requestedAtIso: string,
@@ -205,6 +239,8 @@ export function findFreeSlots(
   limit = 4,
   /** Anything already past is not an alternative. Defaults to the clock. */
   now: number = Date.now(),
+  /** From the questionnaire. Omitted, the fixed 08:00–21:00 window applies. */
+  prefs?: SlotPrefs,
 ): string[] {
   const wanted = instantOf(requestedAtIso);
   if (wanted === null) return [];
@@ -213,8 +249,21 @@ export function findFreeSlots(
   const earliest = now + LEAD_MINUTES * MINUTE;
   const minutes = Math.min(MAX_MINUTES, Math.max(MIN_MINUTES, Math.round(durationMinutes)));
   const span = minutes * MINUTE;
-  const busy = busyIntervals(events);
+  // Padded by the gap this person asked to keep, so a slot butting up against
+  // an existing meeting is not offered as free. Only the offers are padded —
+  // `findClash` still reports a real overlap, because "you already have
+  // something then" and "that leaves you no gap" are different sentences.
+  const pad = Math.max(0, prefs?.bufferMinutes ?? 0) * MINUTE;
+  const busy = busyIntervals(events).map((b) => ({
+    start: b.start - pad,
+    end: b.end + pad,
+  }));
   const asked = localParts(wanted, timeZone);
+
+  // With a profile the whole clock is walked and sleep is what carves it up;
+  // without one, the fixed daytime window stands.
+  const firstHour = prefs ? 0 : DAY_START_HOUR;
+  const lastHour = prefs ? 23 : DAY_END_HOUR;
 
   const candidates: number[] = [];
 
@@ -229,7 +278,7 @@ export function findFreeSlots(
     // Walk the day in half hours by wall clock rather than by adding
     // milliseconds, so a day that gains or loses an hour still produces real
     // local times instead of drifting off the grid.
-    for (let hour = DAY_START_HOUR; hour <= DAY_END_HOUR; hour++) {
+    for (let hour = firstHour; hour <= lastHour; hour++) {
       for (let minute = 0; minute < 60; minute += SLOT_MINUTES) {
         const start = fromLocal(y, m, d, hour, minute, timeZone);
         // Never the hour that was asked for. This is only ever called because
@@ -241,15 +290,28 @@ export function findFreeSlots(
         if (start < earliest) continue;
         const end = start + span;
 
-        // It has to finish inside the day too, not merely begin inside it.
-        const endParts = localParts(end, timeZone);
-        const endsSameDay =
-          endParts.year === y && endParts.month === m && endParts.day === d;
-        const endsInHours =
-          endsSameDay &&
-          (endParts.hour < DAY_END_HOUR ||
-            (endParts.hour === DAY_END_HOUR && endParts.minute === 0));
-        if (!endsInHours) continue;
+        if (prefs) {
+          // Never while they are asleep — at either end. The end is measured a
+          // moment before it lands, so a meeting finishing exactly as sleep
+          // begins still counts as finishing before it.
+          const last = localParts(end - 1, timeZone);
+          if (
+            sleeping(hour, prefs.sleepStartHour, prefs.sleepEndHour) ||
+            sleeping(last.hour, prefs.sleepStartHour, prefs.sleepEndHour)
+          ) {
+            continue;
+          }
+        } else {
+          // It has to finish inside the day too, not merely begin inside it.
+          const endParts = localParts(end, timeZone);
+          const endsSameDay =
+            endParts.year === y && endParts.month === m && endParts.day === d;
+          const endsInHours =
+            endsSameDay &&
+            (endParts.hour < DAY_END_HOUR ||
+              (endParts.hour === DAY_END_HOUR && endParts.minute === 0));
+          if (!endsInHours) continue;
+        }
 
         if (overlaps(start, end, busy)) continue;
         candidates.push(start);

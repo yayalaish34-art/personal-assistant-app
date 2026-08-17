@@ -6,6 +6,8 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
 const KEYS = {
   settings: '@pa/settings',
   entryCount: '@pa/entryCount',
+  profile: '@pa/profile',
+  onboarded: '@pa/onboarded',
 } as const;
 
 export type Settings = {
@@ -16,6 +18,50 @@ export type Settings = {
 export const defaultSettings: Settings = {
   displayName: '',
   notifications: true,
+};
+
+/** The kinds of thing a diary is made of. Keys, not labels — they are translated. */
+export const EVENT_TYPES = [
+  'work',
+  'study',
+  'family',
+  'health',
+  'sport',
+  'social',
+  'errands',
+] as const;
+
+export type EventType = (typeof EVENT_TYPES)[number];
+
+/**
+ * What the opening questionnaire learns about someone.
+ *
+ * This is not decoration: it rides along with every voice turn and is what
+ * stops her offering a meeting at two in the morning or back-to-back with
+ * something else. Hours are local wall-clock, 0–23, because that is the only
+ * form in which "I work until six" means anything.
+ */
+export type Profile = {
+  workStartHour: number;
+  workEndHour: number;
+  /** Asleep from → to. Crosses midnight when `sleepStartHour > sleepEndHour`. */
+  sleepStartHour: number;
+  sleepEndHour: number;
+  /** Minutes she keeps clear either side of a meeting. */
+  bufferMinutes: number;
+  eventTypes: EventType[];
+  /** Whatever repeats and cannot move, in the user's own words. */
+  fixedCommitments: string;
+};
+
+export const defaultProfile: Profile = {
+  workStartHour: 9,
+  workEndHour: 18,
+  sleepStartHour: 23,
+  sleepEndHour: 7,
+  bufferMinutes: 15,
+  eventTypes: ['work'],
+  fixedCommitments: '',
 };
 
 async function getJSON<T>(key: string, fallback: T): Promise<T> {
@@ -45,6 +91,24 @@ export const storage = {
     };
   },
   saveSettings: (s: Settings) => setJSON(KEYS.settings, s),
+
+  // Merged over the defaults for the same reason as settings, and because a
+  // profile saved by a build with fewer questions must still answer all of
+  // them — an unset buffer reading as `undefined` would reach the slot finder
+  // as NaN and quietly widen every gap it checks.
+  async getProfile(): Promise<Profile> {
+    return {
+      ...defaultProfile,
+      ...(await getJSON<Partial<Profile>>(KEYS.profile, {})),
+    };
+  },
+  saveProfile: (p: Profile) => setJSON(KEYS.profile, p),
+
+  /** Whether the opening questionnaire has been through once. */
+  async isOnboarded(): Promise<boolean> {
+    return getJSON<boolean>(KEYS.onboarded, false);
+  },
+  setOnboarded: (done: boolean) => setJSON(KEYS.onboarded, done),
 
   async getEntryCount(): Promise<number> {
     return getJSON<number>(KEYS.entryCount, 0);

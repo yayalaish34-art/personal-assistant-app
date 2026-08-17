@@ -49,6 +49,28 @@ export const snapshotSchema = z.object({
 
 export type Snapshot = z.infer<typeof snapshotSchema>;
 
+// ─── Profile: what the opening questionnaire learned ────────────────────────
+
+/**
+ * The answers from onboarding, as the device holds them.
+ *
+ * Every field has a default, because the questionnaire can be skipped and
+ * because an install from before it existed sends nothing at all. Nothing here
+ * is required for a turn to work — it makes her answers fit the person rather
+ * than the average one.
+ */
+export const profileSchema = z.object({
+  workStartHour: z.number().int().min(0).max(23).default(9),
+  workEndHour: z.number().int().min(0).max(23).default(18),
+  sleepStartHour: z.number().int().min(0).max(23).default(23),
+  sleepEndHour: z.number().int().min(0).max(23).default(7),
+  bufferMinutes: z.number().int().min(0).max(120).default(15),
+  eventTypes: z.array(z.string().max(40)).max(20).default([]),
+  fixedCommitments: z.string().max(500).default(''),
+});
+
+export type Profile = z.infer<typeof profileSchema>;
+
 // ─── Tools the device executes ──────────────────────────────────────────────
 
 /**
@@ -455,12 +477,43 @@ function describeDays(now: Date, timezone: string): string {
   return lines.join('\n');
 }
 
+/**
+ * The profile as a few lines of instruction.
+ *
+ * Working hours are here rather than in the slot finder on purpose: whether an
+ * evening is acceptable depends on what the thing *is*, which is a judgement,
+ * and a hard rule would refuse someone a dinner because they clock off at six.
+ * Sleep and the buffer are enforced mechanically as well — those need no
+ * judgement — and saying so here keeps her explanation and the offered times
+ * telling the same story.
+ */
+function describeProfile(p: Profile): string {
+  const hour = (h: number) => `${String(h).padStart(2, '0')}:00`;
+  const lines = [
+    `- Works ${hour(p.workStartHour)}–${hour(p.workEndHour)}. Prefer these hours for anything`,
+    '  work-shaped, and if they ask for something well outside them, say so in passing',
+    '  rather than refusing — evenings and weekends are theirs to use.',
+    `- Asleep ${hour(p.sleepStartHour)}–${hour(p.sleepEndHour)}. Never propose anything in there.`,
+    `- Likes ${p.bufferMinutes} minutes between one thing and the next.`,
+  ];
+  if (p.eventTypes.length) {
+    lines.push(`- Their days are mostly: ${p.eventTypes.join(', ')}.`);
+  }
+  if (p.fixedCommitments.trim()) {
+    lines.push(
+      `- Standing commitments, in their words: "${p.fixedCommitments.trim()}". Plan around these.`,
+    );
+  }
+  return lines.join('\n');
+}
+
 function buildSystemPrompt(input: {
   language: string;
   timezone: string;
   now: Date;
   userName?: string;
   snapshot: Snapshot;
+  profile?: Profile;
 }): string {
   const languageName = LANGUAGE_NAMES[input.language] ?? 'English';
   const localNow = new Intl.DateTimeFormat('en-US', {
@@ -523,6 +576,9 @@ function buildSystemPrompt(input: {
     'not keep the entry on its old date and change only the time.',
     describeDays(input.now, input.timezone),
     '',
+    ...(input.profile
+      ? ['HOW THEIR WEEK IS SHAPED:', describeProfile(input.profile), '']
+      : []),
     "THE USER'S CURRENT AGENDA:",
     describeSnapshot(input.snapshot, input.timezone),
   ].join('\n');
@@ -539,6 +595,8 @@ export interface VoiceTurnInput {
   userName?: string;
   history: { role: 'user' | 'assistant'; content: string }[];
   snapshot: Snapshot;
+  /** Absent for an install that predates the questionnaire, or a skipped one. */
+  profile?: Profile;
 }
 
 export interface VoiceTurnResult {
@@ -600,7 +658,13 @@ export async function runVoiceTurn(input: VoiceTurnInput): Promise<VoiceTurnResu
       // keep. That check reaches a geocoder, so it cannot live inside
       // `collectAction`, which is synchronous and stays that way.
       const reviewed = outcome.action
-        ? await reviewProposedTime(outcome.action, input.snapshot, input.timezone, input.now.getTime())
+        ? await reviewProposedTime(
+            outcome.action,
+            input.snapshot,
+            input.timezone,
+            input.now.getTime(),
+            input.profile,
+          )
         : null;
 
       if (reviewed) {
@@ -643,6 +707,7 @@ async function reviewProposedTime(
   snapshot: Snapshot,
   timeZone: string,
   now: number,
+  profile?: Profile,
 ): Promise<{ action: VoiceAction; result: string } | null> {
   if (action.tool !== 'create_event' && action.tool !== 'update_event') return null;
 
@@ -672,7 +737,20 @@ async function reviewProposedTime(
       (typeof args.location === 'string' && args.location) || moving?.location || null,
   };
 
-  const verdict = await reviewSchedule(proposed, known, timeZone, movingId, now);
+  const verdict = await reviewSchedule(
+    proposed,
+    known,
+    timeZone,
+    movingId,
+    now,
+    profile
+      ? {
+          sleepStartHour: profile.sleepStartHour,
+          sleepEndHour: profile.sleepEndHour,
+          bufferMinutes: profile.bufferMinutes,
+        }
+      : undefined,
+  );
   if (verdict.ok) return null;
 
   const offer: VoiceAction = {

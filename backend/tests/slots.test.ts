@@ -176,6 +176,89 @@ describe('findFreeSlots', () => {
 // Every case below was a real defect found by reading this implementation
 // rather than by imagining it.
 
+// ─── The profile from the opening questionnaire ─────────────────────────────
+//
+// Without one the fixed 08:00–21:00 window applies and nothing above changes.
+// With one, two rules become mechanical: never while they are asleep, and
+// never so tight against an existing entry that the gap they asked for is
+// gone. Working hours are deliberately absent — they are guidance in the
+// prompt, not a rule here, because refusing someone a seven o'clock dinner
+// for finishing work at six would be worse than the problem it solves.
+
+describe('findFreeSlots — the profile', () => {
+  const nowAt = (iso: string) => new Date(iso).getTime();
+  const earlyBird = { sleepStartHour: 22, sleepEndHour: 6, bufferMinutes: 0 };
+
+  it('37. nothing is offered while they are asleep', () => {
+    const out = findFreeSlots(
+      day('23:00'),
+      60,
+      [],
+      TZ,
+      8,
+      nowAt(day('07:00')),
+      earlyBird,
+    );
+    expect(out.length).toBeGreaterThan(0);
+    for (const iso of out) {
+      const hour = Number(at(iso).slice(0, 2));
+      expect(hour, `offered ${at(iso)} — inside 22:00–06:00`).toBeGreaterThanOrEqual(6);
+      expect(hour, `offered ${at(iso)} — inside 22:00–06:00`).toBeLessThan(22);
+    }
+  });
+
+  it('38. a slot that would run into the small hours is not offered either', () => {
+    // 21:30 + 2h ends at 23:30, which is asleep even though it starts awake.
+    const out = findFreeSlots(day('21:30'), 120, [], TZ, 8, nowAt(day('07:00')), earlyBird);
+    for (const iso of out) {
+      const end = new Date(new Date(iso).getTime() + 120 * 60_000).toISOString();
+      const endHour = Number(at(end).slice(0, 2));
+      expect(endHour, `${at(iso)} → ${at(end)} runs into sleep`).toBeLessThanOrEqual(22);
+    }
+  });
+
+  it('39. hours the old fixed window refused are offered once they say they are awake', () => {
+    // 06:30 is before the hardcoded eight, and perfectly fine for someone who
+    // is up at six. This is the whole point of asking.
+    const out = findFreeSlots(day('06:30'), 30, [], TZ, 8, nowAt(day('05:00')), earlyBird);
+    expect(out.some((iso) => Number(at(iso).slice(0, 2)) < 8)).toBe(true);
+  });
+
+  it('40. the gap they asked for is kept either side of what is already there', () => {
+    const busy = [{ startsAt: day('10:00'), endsAt: day('11:00') }];
+    const tight = findFreeSlots(day('10:00'), 30, busy, TZ, 8, nowAt(day('06:00')), {
+      ...earlyBird,
+      bufferMinutes: 30,
+    });
+    for (const iso of tight) {
+      const start = new Date(iso).getTime();
+      const end = start + 30 * 60_000;
+      const busyStart = new Date(day('10:00')).getTime();
+      const busyEnd = new Date(day('11:00')).getTime();
+      // Thirty minutes of air on whichever side it lands.
+      const clear = end <= busyStart - 30 * 60_000 || start >= busyEnd + 30 * 60_000;
+      expect(clear, `${at(iso)} leaves no gap around 10:00–11:00`).toBe(true);
+    }
+  });
+
+  it('41. with no buffer, the half hour right after a meeting is fair game', () => {
+    const busy = [{ startsAt: day('10:00'), endsAt: day('11:00') }];
+    const out = findFreeSlots(day('10:00'), 30, busy, TZ, 8, nowAt(day('06:00')), earlyBird);
+    expect(out.map(at)).toContain('11:00');
+  });
+
+  it('42. someone who declared no sleep at all still gets a whole day offered', () => {
+    // Equal start and end means nobody said; excluding everything would leave
+    // the list empty and read as "there is no time all week".
+    const out = findFreeSlots(day('10:00'), 60, busyAll(), TZ, 4, nowAt(day('06:00')), {
+      sleepStartHour: 0,
+      sleepEndHour: 0,
+      bufferMinutes: 0,
+    });
+    expect(out.length).toBeGreaterThan(0);
+  });
+});
+
 describe('findFreeSlots — inputs it must survive', () => {
   const nowAt = (iso: string) => new Date(iso).getTime();
 

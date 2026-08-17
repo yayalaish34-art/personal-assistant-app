@@ -483,6 +483,68 @@ still the old bundle. That ordering is deliberate — the backend had to accept
 the new language codes before an app that sends them goes out, and it now
 does.
 
+### T7.4 — The opening questionnaire
+DONE (local, uncommitted)
+
+**Outside the frozen scope.** `CLAUDE.md` §1 freezes the build at
+`SPEC_MVP_V1.1.md`, and onboarding is not in it — it comes from a later spec
+document (§2.1, "אונבורדינג ושאלון היכרות"). Requested explicitly, so it is
+here and marked, same as `create_image` and `create_note`.
+
+What to do: a short questionnaire on first launch that maps the user's
+preferences, producing a profile that feeds the decision engine for the rest
+of the time they use the app. Language is asked **first**, and everything
+after it — interface and assistant alike — is in the language chosen.
+
+Frontend files: `src/screens/OnboardingScreen.tsx` (new) · `App.tsx` (gate) ·
+`src/lib/storage.ts` (`Profile`, `EVENT_TYPES`, `getProfile`/`saveProfile`,
+`isOnboarded`/`setOnboarded`) · `src/lib/voice.ts` (sends the profile) ·
+`src/lib/i18n/*.ts` (32 new keys × 25 languages).
+Backend files: `src/modules/voice/agent.ts` (`profileSchema`, `describeProfile`
+in the prompt, threaded into the schedule review) · `src/modules/voice/slots.ts`
+(`SlotPrefs`) · `src/modules/voice/schedule.ts` (passes them through) ·
+`src/modules/voice/router.ts` (optional `profile`) · `tests/slots.test.ts`
+(37–42) · `tests/voice.test.ts` (26b, 26c) · `API_CONTRACT.md`.
+
+Seven steps: language, name, work hours, sleep hours, gap between meetings,
+what fills their days, standing commitments. Skippable, and every answer has a
+default.
+
+Three decisions worth keeping:
+
+1. **Language is asked first for a mechanical reason, not a cosmetic one.**
+   Switching between an LTR and an RTL language flips a native flag that is
+   only read when a surface starts, so it can restart the app mid-
+   questionnaire. Asking it first means a restart costs nothing — the language
+   is already saved and nothing else has been answered. The questionnaire then
+   comes back up in the new language. `loadLanguage()` also falls back to the
+   device language, so the first question arrives pre-answered with a good
+   guess rather than in English for everyone.
+
+2. **Working hours are guidance, not a rule.** Sleep hours and the buffer are
+   enforced mechanically in `slots.ts`; working hours only reach the prompt.
+   Enforcing them would mean someone who finishes at six could never be
+   offered a seven o'clock dinner — worse than the problem it solves. Whether
+   an evening is acceptable depends on what is being scheduled, which is a
+   judgement, so it belongs with the model.
+
+3. **The profile is opt-in all the way down.** `findFreeSlots` keeps its fixed
+   08:00–21:00 window when no prefs are passed, so an install that predates the
+   questionnaire behaves exactly as before — and the 37 existing slot tests
+   still pass untouched, which is what proves it.
+
+tsc: clean on both sides. `tests/slots.test.ts` 43 passed (37 pre-existing +
+6 new); voice/slots/image together 92 passed / 2 skipped. The 16 failures in
+the full run are `Can't reach database server at localhost:5432` from the
+auth/chat/sync suites — those are Phase 1–4 leftovers for routes this
+local-first app no longer uses, and are unrelated to this task.
+Translation checker: 25/25 dictionaries at 227/227 keys.
+
+Not verified: the questionnaire on a device, including the RTL restart path
+(picking Hebrew, Arabic or Persian from an LTR language), and the 32 new
+strings in the 24 non-English dictionaries were machine-translated without
+native review.
+
 ---
 
 ## Phase 8 — Pictures

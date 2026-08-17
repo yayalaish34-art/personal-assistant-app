@@ -358,6 +358,15 @@ Request:
   "snapshot": {
     "tasks": [{ "id": "…", "title": "…", "notes": null, "dueAt": null, "isDone": false }],
     "events": [{ "id": "…", "title": "…", "note": null, "startsAt": "…", "endsAt": "…" }]
+  },
+  "profile": {
+    "workStartHour": 9,
+    "workEndHour": 18,
+    "sleepStartHour": 23,
+    "sleepEndHour": 7,
+    "bufferMinutes": 15,
+    "eventTypes": ["work", "family"],
+    "fixedCommitments": "Gym Mon & Wed at 6am"
   }
 }
 ```
@@ -375,6 +384,19 @@ Request:
 - `history` — up to 20 earlier turns, oldest first, `user`/`assistant` only.
 - `snapshot` — up to 200 tasks and 200 events. This is the whole of what she
   can see; ids come from here.
+- `profile` — **optional**, the answers from the opening questionnaire. Every
+  field has a default and each is filled in independently, so a partial object
+  is valid and a missing one is fine (an install from before the questionnaire,
+  or someone who skipped it). Hours are local wall-clock integers `0–23`;
+  `bufferMinutes` is `0–120`; `eventTypes` is up to 20 short strings;
+  `fixedCommitments` is free text up to 500 chars. Out-of-range values are a
+  `400` rather than being clamped.
+
+  Two of these change the times the server will offer in `offer_times`:
+  **sleep hours** are never proposed, and **`bufferMinutes`** is kept clear
+  either side of anything already in the diary. **Working hours are guidance
+  only** — they reach the model, not the slot finder, so an evening can still
+  be offered when the request calls for one.
 
 Response `200`:
 ```json
@@ -491,6 +513,13 @@ Response `200`:
 
 ## Change log
 
+- `2026-08-17` — `POST /voice/turn` accepts an optional `profile`, the output
+  of the new opening questionnaire. Sleep hours and the preferred gap between
+  meetings now shape the times returned in `offer_times`; working hours,
+  event types and standing commitments reach the model as guidance. Not
+  breaking — the field is optional and omitting it gives exactly the previous
+  behaviour. **Outside the frozen MVP v1.1 scope** (`CLAUDE.md` §1); built on
+  an explicit request, same as `create_image` and `create_note`.
 - `2026-08-16` — The interface ships in 25 languages, and `language` on
   `POST /voice/turn` is no longer a fixed enum: any two-letter ISO-639-1 code
   is accepted, and one the server has no name for greets in English instead of

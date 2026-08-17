@@ -3,6 +3,7 @@ import { Directory, File, Paths } from 'expo-file-system';
 
 import { api, uuid, type Task, type Event } from './api';
 import { getLanguage } from './i18n';
+import { storage } from './storage';
 
 // The voice assistant's side of the wire.
 //
@@ -307,6 +308,9 @@ export async function voiceTurn(
   userName?: string,
 ): Promise<TurnResult> {
   const snapshot = await buildSnapshot();
+  // The questionnaire's answers, sent every turn: they are what keep her out
+  // of the middle of the night and honest about the gaps between things.
+  const profile = await storage.getProfile();
 
   const res = await fetch(TURN_URL, {
     method: 'POST',
@@ -324,6 +328,7 @@ export async function voiceTurn(
       // doesn't grow the request without bound.
       history: history.slice(-SEND_TURNS),
       snapshot,
+      profile,
     }),
   });
 

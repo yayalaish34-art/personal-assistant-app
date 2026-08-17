@@ -383,6 +383,35 @@ describe('POST /voice/turn — validation', () => {
     expect(res.status).toBe(400);
   });
 
+  it('26b. a profile hour outside the clock → 400', async () => {
+    // The questionnaire cannot produce this, but the request is not the
+    // questionnaire — anything can post here, and an hour of 27 would walk
+    // straight into the slot finder's wall-clock arithmetic.
+    for (const profile of [
+      { workStartHour: 27 },
+      { sleepEndHour: -1 },
+      { bufferMinutes: 5000 },
+      { fixedCommitments: 'x'.repeat(501) },
+    ]) {
+      const res = await request(app)
+        .post('/voice/turn')
+        .send({ text: 'hi', profile });
+      expect(res.status, JSON.stringify(profile)).toBe(400);
+      expect(res.body.error.code).toBe('VALIDATION_ERROR');
+    }
+  });
+
+  it('26c. a partial profile is filled in rather than rejected', async () => {
+    // Someone who skipped most of the questionnaire still gets a turn. The
+    // body is invalid on `history` so it stops before any provider call — the
+    // assertion is that `profile` is not what it complains about.
+    const res = await request(app)
+      .post('/voice/turn')
+      .send({ text: 'hi', profile: { bufferMinutes: 30 }, history: 'not-an-array' });
+    expect(res.status).toBe(400);
+    expect(JSON.stringify(res.body.error.details)).not.toContain('profile');
+  });
+
   it('27. a snapshot row without an id → 400', async () => {
     const res = await request(app)
       .post('/voice/turn')

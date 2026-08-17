@@ -1,4 +1,4 @@
-import { findFreeSlots, findClash, type SlotEvent } from './slots.js';
+import { findFreeSlots, findClash, type SlotEvent, type SlotPrefs } from './slots.js';
 import { findImpossibleLeg, type TravelLeg } from './travel.js';
 
 /**
@@ -85,6 +85,8 @@ export async function reviewSchedule(
   ignoreId?: string,
   /** Threaded from the turn, so offers are never in the past. */
   now: number = Date.now(),
+  /** From the questionnaire: what hours to keep clear, and how much air to leave. */
+  prefs?: SlotPrefs,
 ): Promise<ScheduleVerdict> {
   const start = new Date(proposed.startsAt).getTime();
   if (Number.isNaN(start)) return { ok: true };
@@ -101,7 +103,15 @@ export async function reviewSchedule(
 
   // Free by the clock first, then genuinely reachable. The pool is deliberately
   // wider than what gets offered, because the travel filter removes some.
-  const pool = findFreeSlots(proposed.startsAt, minutes, others, timeZone, CANDIDATE_POOL, now);
+  const pool = findFreeSlots(
+    proposed.startsAt,
+    minutes,
+    others,
+    timeZone,
+    CANDIDATE_POOL,
+    now,
+    prefs,
+  );
   const options: string[] = [];
   for (const candidate of pool) {
     if (options.length >= OFFERED) break;

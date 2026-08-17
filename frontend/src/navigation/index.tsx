@@ -1,10 +1,10 @@
-import { useMemo } from 'react';
-import { View, Pressable, StyleSheet, useWindowDimensions } from 'react-native';
+import { useMemo, useRef } from 'react';
+import { View, Pressable, StyleSheet, Animated, Easing, useWindowDimensions } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { createBottomTabNavigator, type BottomTabBarProps } from '@react-navigation/bottom-tabs';
 import { createNativeStackNavigator } from '@react-navigation/native-stack';
 import * as Haptics from 'expo-haptics';
-import { House, Calendar, ClipboardList, User, Plus } from 'lucide-react-native';
+import { House, Calendar, StickyNote, User, Mic } from 'lucide-react-native';
 import { LinearGradient } from 'expo-linear-gradient';
 import Svg, {
   Path,
@@ -17,8 +17,9 @@ import Svg, {
 
 import { colors, NAV_BAR } from '../theme';
 import { t } from '../lib/i18n';
+import { playTapSound } from '../lib/tapSound';
 import TodayScreen from '../screens/TodayScreen';
-import JournalScreen from '../screens/JournalScreen';
+import NotesScreen from '../screens/NotesScreen';
 import CalendarScreen from '../screens/CalendarScreen';
 import SettingsScreen from '../screens/SettingsScreen';
 import EntryFormScreen from '../screens/EntryFormScreen';
@@ -38,7 +39,7 @@ const Stack = createNativeStackNavigator<RootStackParamList>();
 const ICONS = {
   Today: House,
   Calendar: Calendar,
-  Journal: ClipboardList,
+  Notes: StickyNote,
   Settings: User,
 } as const;
 
@@ -127,11 +128,11 @@ function barPath(width: number, dy = 0) {
 }
 
 /**
- * Bottom bar: four outline icons around a raised orange + in the middle.
+ * Bottom bar: four outline icons around a raised orange mic button in the middle.
  *
- * The + isn't a slot in the row — it floats above the bar, and the bar's top
- * edge scoops down to clear it. The scoop is centred on the bar, so it lands
- * under the button at any width without measuring anything.
+ * The button isn't a slot in the row — it floats above the bar, and the bar's
+ * top edge scoops down to clear it. The scoop is centred on the bar, so it
+ * lands under the button at any width without measuring anything.
  *
  * The panel is drawn in SVG rather than as a styled View because a View's
  * shadow follows its bounding box: it would smear straight across the scoop
@@ -168,8 +169,38 @@ function BottomBar({ state, descriptors, navigation }: BottomTabBarProps) {
     }
   };
 
+  // ── The mic button's own reaction, separate from the press-and-hold scale
+  // above: a ring that blips outward and a quick pop on the glyph, so opening
+  // her feels like something switched on rather than just a screen changing. ──
+  const ring = useRef(new Animated.Value(0)).current;
+  const pop = useRef(new Animated.Value(1)).current;
+
   const openAssistant = () => {
     Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
+    playTapSound();
+
+    ring.setValue(0);
+    Animated.timing(ring, {
+      toValue: 1,
+      duration: 380,
+      easing: Easing.out(Easing.ease),
+      useNativeDriver: true,
+    }).start();
+    Animated.sequence([
+      Animated.timing(pop, {
+        toValue: 1.16,
+        duration: 90,
+        easing: Easing.out(Easing.quad),
+        useNativeDriver: true,
+      }),
+      Animated.timing(pop, {
+        toValue: 1,
+        duration: 170,
+        easing: Easing.out(Easing.quad),
+        useNativeDriver: true,
+      }),
+    ]).start();
+
     // The tab navigator's helpers aren't typed for the parent stack's routes;
     // the navigation itself bubbles up fine.
     (navigation as unknown as { navigate: (name: string) => void }).navigate('Assistant');
@@ -227,14 +258,28 @@ function BottomBar({ state, descriptors, navigation }: BottomTabBarProps) {
         accessibilityRole="button"
         accessibilityLabel={t('voice.title')}
       >
-        <LinearGradient
-          colors={NAV_BAR.accentGradient}
-          start={{ x: 0.15, y: 0 }}
-          end={{ x: 0.85, y: 1 }}
-          style={styles.fabFill}
-        >
-          <Plus color={NAV_BAR.accentIcon} size={28} strokeWidth={2.5} />
-        </LinearGradient>
+        {/* The blip: a ring of the button's own colour that blooms outward
+            and fades, behind the glyph rather than clipped to it. */}
+        <Animated.View
+          pointerEvents="none"
+          style={[
+            styles.fabRing,
+            {
+              opacity: ring.interpolate({ inputRange: [0, 1], outputRange: [0.45, 0] }),
+              transform: [{ scale: ring.interpolate({ inputRange: [0, 1], outputRange: [1, 1.8] }) }],
+            },
+          ]}
+        />
+        <Animated.View style={[styles.fabFillWrap, { transform: [{ scale: pop }] }]}>
+          <LinearGradient
+            colors={NAV_BAR.accentGradient}
+            start={{ x: 0.15, y: 0 }}
+            end={{ x: 0.85, y: 1 }}
+            style={styles.fabFill}
+          >
+            <Mic color={NAV_BAR.accentIcon} size={26} strokeWidth={2.5} />
+          </LinearGradient>
+        </Animated.View>
       </Pressable>
 
       <View style={styles.bar}>
@@ -306,7 +351,7 @@ function Tabs() {
         component={CalendarScreen}
         options={{ title: t('tab.calendar') }}
       />
-      <Tab.Screen name="Journal" component={JournalScreen} options={{ title: t('tab.tasks') }} />
+      <Tab.Screen name="Notes" component={NotesScreen} options={{ title: t('tab.notes') }} />
       <Tab.Screen
         name="Settings"
         component={SettingsScreen}
@@ -389,6 +434,16 @@ const styles = StyleSheet.create({
     elevation: 10,
   },
   fabPressed: { transform: [{ scale: 0.94 }], shadowOpacity: 0.2 },
+  fabRing: {
+    position: 'absolute',
+    top: 0,
+    insetInlineStart: 0,
+    insetInlineEnd: 0,
+    bottom: 0,
+    borderRadius: FAB_R,
+    backgroundColor: NAV_BAR.accent,
+  },
+  fabFillWrap: { width: '100%', height: '100%' },
   fabFill: {
     width: '100%',
     height: '100%',

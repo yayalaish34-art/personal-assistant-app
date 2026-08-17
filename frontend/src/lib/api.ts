@@ -20,6 +20,7 @@ import {
 const KEYS = {
   tasks: '@pa/tasks',
   events: '@pa/events',
+  notes: '@pa/notes',
   chat: '@pa/chat',
   user: '@pa/user',
   seeded: '@pa/seeded',
@@ -84,9 +85,20 @@ export type Event = {
   id: string;
   title: string;
   note: string | null;
+  /** Where it happens, as typed. Used to check a journey is possible. */
+  location: string | null;
   startsAt: string;
   endsAt: string;
   reminderMinutesBefore: number | null;
+  createdAt: string;
+  updatedAt: string;
+  deletedAt: string | null;
+};
+
+/** A filed note — free text with nothing to do and nothing to schedule. */
+export type Note = {
+  id: string;
+  text: string;
   createdAt: string;
   updatedAt: string;
   deletedAt: string | null;
@@ -276,6 +288,7 @@ async function seedOnce(): Promise<void> {
         id: uuid(),
         title,
         note,
+        location: null,
         startsAt: on(day, hour, minute),
         endsAt: on(day, hour + 1, minute),
         reminderMinutesBefore: 15,
@@ -382,6 +395,7 @@ export const api = {
     id: string;
     title: string;
     note?: string;
+    location?: string;
     startsAt: string;
     endsAt?: string;
     reminderMinutesBefore?: number | null;
@@ -395,6 +409,7 @@ export const api = {
       id: e.id,
       title: e.title,
       note: e.note ?? null,
+      location: e.location ?? null,
       startsAt: e.startsAt,
       // Default duration matches what the old backend applied.
       endsAt:
@@ -413,7 +428,7 @@ export const api = {
   updateEvent: async (
     id: string,
     patch: Partial<
-      Pick<Event, 'title' | 'note' | 'startsAt' | 'endsAt' | 'reminderMinutesBefore'>
+      Pick<Event, 'title' | 'note' | 'location' | 'startsAt' | 'endsAt' | 'reminderMinutesBefore'>
     > & { updatedAt?: string },
   ) => {
     const rows = await readList<Event>(KEYS.events);
@@ -432,6 +447,36 @@ export const api = {
       rows.filter((r) => r.id !== id),
     );
     void cancelReminder(id);
+  },
+
+  // ── Notes ──
+  listNotes: async () => ({
+    notes: live(await readList<Note>(KEYS.notes)),
+  }),
+
+  createNote: async (n: { id: string; text: string; updatedAt: string }) => {
+    const rows = await readList<Note>(KEYS.notes);
+    // Same id twice is a no-op, keeping the old create-is-idempotent rule.
+    const existing = rows.find((r) => r.id === n.id);
+    if (existing) return existing;
+
+    const note: Note = {
+      id: n.id,
+      text: n.text,
+      createdAt: nowIso(),
+      updatedAt: n.updatedAt,
+      deletedAt: null,
+    };
+    await writeList(KEYS.notes, [note, ...rows]);
+    return note;
+  },
+
+  deleteNote: async (id: string) => {
+    const rows = await readList<Note>(KEYS.notes);
+    await writeList(
+      KEYS.notes,
+      rows.filter((r) => r.id !== id),
+    );
   },
 
   // ── Agenda: events and tasks for a day or range, in local time ──
@@ -476,7 +521,7 @@ export const api = {
 
   /** Wipes every stored row. Used by "Clear all data" in Profile. */
   clearAll: async () => {
-    await AsyncStorage.multiRemove([KEYS.tasks, KEYS.events, KEYS.chat]);
+    await AsyncStorage.multiRemove([KEYS.tasks, KEYS.events, KEYS.notes, KEYS.chat]);
     // Rows are gone, so their alarms must go with them.
     await cancelAllReminders();
   },

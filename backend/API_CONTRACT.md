@@ -361,8 +361,15 @@ Request:
   }
 }
 ```
-- `text` required, 1–2000 chars. `language` one of `he` `en` `ar` `es` `fr`
-  `it` `ru` (**default `he`**) — she always answers in it.
+- `text` required, 1–2000 chars.
+- `language` — **any ISO-639-1 code** (two lowercase letters, default `he`).
+  It sets the language of the **opening greeting only**. Every other turn is
+  answered in whatever language `text` is in, and switching language
+  mid-conversation switches the answers with it.
+  Only the shape is validated, not the particular language: a code the server
+  has no name for greets in English rather than failing the turn, so a client
+  may ship a new interface language ahead of a server deploy. Malformed codes
+  (`zzz`, `EN`, `e1`, `""`) are still `400`.
 - `text` of exactly `"[SESSION START]"` means "the user just opened you":
   she greets them and summarises the day instead of answering anything.
 - `history` — up to 20 earlier turns, oldest first, `user`/`assistant` only.
@@ -379,11 +386,17 @@ Response `200`:
   "canSpeak": true
 }
 ```
-- `reply` — one or two spoken sentences, plain text, in `language`.
+- `reply` — one or two spoken sentences, plain text, in the language of `text`
+  (or of `language`, for the greeting turn).
 - `actions` — what the **client** must apply to its own storage, in order.
   Tools: `create_task` · `update_task` · `complete_task` · `delete_task` ·
-  `create_event` · `update_event` · `delete_event`. Times are ISO-8601 with an
-  explicit offset.
+  `create_event` · `update_event` · `delete_event` · `create_note`. Times are
+  ISO-8601 with an explicit offset.
+- `create_note` files free text with no due date and nothing to complete:
+  `{ "tool": "create_note", "arguments": { "text": "…" } }`. It carries no
+  `matchTitle` and no id — there is no `update_note` or `delete_note` tool, and
+  no `notes` array in `snapshot`; the model only ever adds one, it never reads
+  or changes an existing one.
 - `create_image` also arrives in `actions`, and is the one that changes no
   storage: `{ "tool": "create_image", "arguments": { "prompt": "…",
   "shape": "square" } }`. The client is expected to call `POST /image` with
@@ -400,11 +413,13 @@ Response `200`:
 
 Rate limit: 30/min and 500/day per caller.
 
-### `GET /voice/speak?text=<text>&language=<lang>`
+### `GET /voice/speak?text=<text>`
 Response `200`: `audio/mpeg` (the mp3 itself, with `Content-Length`).
 - `text` max 900 chars — a spoken answer, not a document.
-- `language` defaults to `he`. Only `eleven_v3` speaks Hebrew; the other
-  languages use the faster flash model.
+- `language` is **no longer part of this route**. A client still appending it
+  is neither rejected nor affected by it. The voice model is chosen from the
+  text itself: Hebrew script gets `eleven_v3`, the only model that speaks it;
+  everything else gets the faster flash model.
 - Returns audio a media player can stream directly; the client passes this URL
   to the player rather than buffering the body.
 - `400` when speech is not configured on the server, or generation failed.
@@ -476,6 +491,29 @@ Response `200`:
 
 ## Change log
 
+- `2026-08-16` — The interface ships in 25 languages, and `language` on
+  `POST /voice/turn` is no longer a fixed enum: any two-letter ISO-639-1 code
+  is accepted, and one the server has no name for greets in English instead of
+  returning `400`. The enum tied a list living in the client to a server
+  deploy — an app shipping a new interface language ahead of the server would
+  have lost the whole turn, not just the greeting the code was for.
+  `GET /voice/speak` no longer declares `language` at all; a client still
+  appending it is unaffected. Not breaking: every previously valid request
+  stays valid.
+- `2026-08-15` — Added a `create_note` tool to the `actions` of
+  `POST /voice/turn`, for filing free-text notes that are neither a task nor
+  an event. No id, no `matchTitle`, no `update_note`/`delete_note`, and no
+  `notes` array added to `snapshot` — the model only ever files a new one. Not
+  breaking — a client that ignores an unknown tool in `actions` behaves as
+  before. **Outside the frozen MVP v1.1 scope** (`CLAUDE.md` §1); built on an
+  explicit request, same as `create_image`.
+- `2026-08-13` — The voice assistant speaks every language: replies mirror the
+  language of `text` on `POST /voice/turn`, and `language` there now sets only
+  the opening greeting. On `GET /voice/speak` the `language` parameter is
+  accepted but ignored — the voice model is picked from the text's script
+  (Hebrew → `eleven_v3`, otherwise flash). Wire shapes are unchanged and old
+  callers keep working, so not breaking; only the answering language moved,
+  from "always `language`" to "the language spoken to her".
 - `2026-08-13` — Added image generation: `POST /image`, and a `create_image`
   tool that arrives in the `actions` of `POST /voice/turn`. Stateless and
   unauthenticated like the rest of the assistant. Not breaking — a client that

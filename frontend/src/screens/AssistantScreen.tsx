@@ -20,10 +20,44 @@ import { Screen } from '../components/ui';
 import { api } from '../lib/api';
 import { useVoiceSession } from '../lib/useVoiceSession';
 import type { RootStackParamList } from '../navigation';
-import { colors, spacing, font, TILES } from '../theme';
-import { t } from '../lib/i18n';
+import { colors, spacing, font, TILES, TILE_INK } from '../theme';
+import { t, locale, alignStart } from '../lib/i18n';
 
 type Nav = NativeStackNavigationProp<RootStackParamList, 'Assistant'>;
+
+const MINUTE = 60_000;
+
+/**
+ * "09:30–10:30". The range rather than a single time, so a tile answers "does
+ * it fit" without a duration label beside it.
+ *
+ * Wrapped in isolates: a clock range is left-to-right whatever the paragraph
+ * around it is doing, and without them the two halves swap in Hebrew.
+ */
+function clockRange(iso: string, durationMinutes: number): string {
+  const fmt = new Intl.DateTimeFormat(locale(), { hour: '2-digit', minute: '2-digit' });
+  const start = new Date(iso);
+  const end = new Date(start.getTime() + durationMinutes * MINUTE);
+  return `⁦${fmt.format(start)}–${fmt.format(end)}⁩`;
+}
+
+/**
+ * Which day it lands on, in the reader's own language.
+ *
+ * Today needs no label — the time alone is unambiguous — but the column would
+ * go ragged without one, so it takes the weekday like the rest. Everything is
+ * formatted by Intl rather than translated by hand: seven languages of
+ * "tomorrow evening" is seven chances to get it wrong.
+ */
+function whenLabel(iso: string): string {
+  const d = new Date(iso);
+  const days = Math.round(
+    (new Date(d).setHours(0, 0, 0, 0) - new Date().setHours(0, 0, 0, 0)) / 86_400_000,
+  );
+  return days < 7
+    ? d.toLocaleDateString(locale(), { weekday: 'long' })
+    : d.toLocaleDateString(locale(), { weekday: 'short', day: 'numeric', month: 'short' });
+}
 
 /**
  * The assistant, out loud.
@@ -47,7 +81,7 @@ export default function AssistantScreen() {
     };
   }, []);
 
-  const { state, lines, level, error, undoable, toggle, send, undoLast, startOver, end } =
+  const { state, lines, level, error, undoable, toggle, send, chooseTime, undoLast, startOver, end } =
     useVoiceSession({ userName: name || undefined });
   const [draft, setDraft] = useState('');
 
@@ -189,14 +223,63 @@ export default function AssistantScreen() {
             );
           }
 
+          const offer = line.offer;
+          const showOffer = offer && offer.options.length > 0;
+
           return (
             <View
               key={line.id}
-              style={[line.role === 'user' ? styles.userBubble : styles.herBubble]}
+              style={[
+                line.role === 'user' ? styles.userBubble : styles.herBubble,
+                showOffer && styles.offerBubble,
+              ]}
             >
-              <Text style={line.role === 'user' ? styles.userText : styles.herText}>
-                {line.text}
-              </Text>
+              {line.text ? (
+                <Text style={line.role === 'user' ? styles.userText : styles.herText}>
+                  {line.text}
+                </Text>
+              ) : null}
+
+              {/* The times sit inside her own bubble rather than in a card of
+                  their own: this is the end of what she said, not a form the
+                  app put in the way. */}
+              {showOffer ? (
+                <View style={[styles.offerStack, line.text ? styles.offerStackSpaced : null]}>
+                  {offer.options.map((iso) => {
+                    const taken = line.chosen === iso;
+                    const spent = Boolean(line.chosen) && !taken;
+                    return (
+                      <Pressable
+                        key={iso}
+                        onPress={() => chooseTime(line.id, iso)}
+                        disabled={Boolean(line.chosen)}
+                        style={({ pressed }) => [
+                          styles.offerRow,
+                          taken && styles.offerRowTaken,
+                          spent && styles.offerRowSpent,
+                          pressed && styles.offerRowPressed,
+                        ]}
+                        accessibilityRole="button"
+                        accessibilityState={{ selected: taken, disabled: Boolean(line.chosen) }}
+                        accessibilityLabel={`${offer.title} — ${clockRange(iso, offer.durationMinutes)}, ${whenLabel(iso)}`}
+                      >
+                        <Text
+                          style={[styles.offerTime, taken && styles.offerTimeTaken]}
+                          numberOfLines={1}
+                        >
+                          {clockRange(iso, offer.durationMinutes)}
+                        </Text>
+                        <Text
+                          style={[styles.offerWhen, taken && styles.offerWhenTaken]}
+                          numberOfLines={1}
+                        >
+                          {whenLabel(iso)}
+                        </Text>
+                      </Pressable>
+                    );
+                  })}
+                </View>
+              ) : null}
             </View>
           );
         })}
@@ -299,6 +382,35 @@ const styles = StyleSheet.create({
 
   transcript: { flex: 1 },
   transcriptContent: { paddingVertical: spacing.md, gap: spacing.sm },
+  // Fixed rather than max width, so every offer lines up under a short
+  // sentence and the four rows share one edge.
+  offerBubble: { width: '88%' },
+  offerStack: { gap: 8, alignSelf: 'stretch' },
+  offerStackSpaced: { marginTop: 10 },
+  offerRow: {
+    height: 52,
+    borderRadius: 14,
+    backgroundColor: TILES.blue,
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingHorizontal: 14,
+    gap: 10,
+  },
+  offerRowPressed: { opacity: 0.72 },
+  // Near-black is already this app's "selected"; a faded pastel reads as broken.
+  offerRowTaken: { backgroundColor: colors.primary },
+  offerRowSpent: { opacity: 0.4 },
+  offerTime: {
+    fontSize: 20,
+    ...font(700),
+    color: colors.text,
+    letterSpacing: -0.3,
+    flexShrink: 0,
+  },
+  offerTimeTaken: { color: colors.primaryText },
+  offerWhen: { flex: 1, fontSize: 14, ...font(600), color: TILE_INK.blue, textAlign: 'right' },
+  offerWhenTaken: { color: 'rgba(255,255,255,0.75)' },
+
   imageBubble: {
     alignSelf: 'flex-start',
     maxWidth: '88%',

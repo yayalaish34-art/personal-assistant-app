@@ -4,11 +4,14 @@ import { useFocusEffect, useNavigation } from '@react-navigation/native';
 import type { NativeStackNavigationProp } from '@react-navigation/native-stack';
 import * as Haptics from 'expo-haptics';
 import { LinearGradient } from 'expo-linear-gradient';
+import Svg, { Path } from 'react-native-svg';
 import {
   Plus,
   CalendarDays,
   ChevronsRight,
   CalendarClock,
+  CircleCheckBig,
+  Circle,
   Sun,
   Moon,
   Cloud,
@@ -34,7 +37,7 @@ import {
   type AgendaItem,
 } from '../lib/tasks';
 import type { RootStackParamList } from '../navigation';
-import { colors, spacing, font, radius, TILES, DAY_CARD } from '../theme';
+import { colors, spacing, font, radius, TILES, TILE_INK, DAY_CARD } from '../theme';
 import { t, locale, alignStart } from '../lib/i18n';
 import { getWeather, isDaylightNow, type Sky, type Weather } from '../lib/weather';
 
@@ -76,6 +79,22 @@ function greetingNow(): string {
   if (h < 12) return t('today.greeting.morning');
   if (h < 17) return t('today.greeting.afternoon');
   return t('today.greeting.evening');
+}
+
+/** A quiet upward trend — decorative, not plotted from real history. */
+function Sparkline({ color }: { color: string }) {
+  return (
+    <Svg width={64} height={26} viewBox="0 0 64 26">
+      <Path
+        d="M1,23 L10,18 L19,20 L28,12 L37,14 L46,6 L55,8 L63,2"
+        stroke={color}
+        strokeWidth={2.4}
+        strokeLinecap="round"
+        strokeLinejoin="round"
+        fill="none"
+      />
+    </Svg>
+  );
 }
 
 export default function TodayScreen() {
@@ -147,6 +166,13 @@ export default function TodayScreen() {
     navigation.navigate('Assistant');
   };
 
+  const goToTab = (screen: string) =>
+    (
+      navigation as unknown as {
+        navigate: (name: string, params: { screen: string }) => void;
+      }
+    ).navigate('Tabs', { screen });
+
   return (
     <Screen>
       <GreetingHeader
@@ -157,12 +183,18 @@ export default function TodayScreen() {
       />
 
       <ScrollView showsVerticalScrollIndicator={false} contentContainerStyle={styles.content}>
+        {/* ── The headline the rest of the page is in service of ── */}
+        <View style={styles.headlineBlock}>
+          <Text style={[styles.headline, start]}>{t('today.headline.line1')}</Text>
+          <Text style={[styles.headline, start]}>{t('today.headline.line2')}</Text>
+        </View>
+
         {/* ── The day, at the size it deserves ──
-            The one large surface on this screen. The sun or moon is on it from
-            the first frame, off the clock, and the provider's daylight flag
-            replaces that guess when the reading lands. The temperature appears
-            only if it was actually fetched: a dash where a number belongs is
-            worse than no number, so without it the card is simply a date. */}
+            The sun or moon is on it from the first frame, off the clock, and
+            the provider's daylight flag replaces that guess when the reading
+            lands. The temperature appears only if it was actually fetched: a
+            dash where a number belongs is worse than no number, so without it
+            the card is simply a date. */}
         {(() => {
           const isDay = weather?.isDay ?? isDaylightNow();
           const skin = isDay ? DAY_CARD.day : DAY_CARD.night;
@@ -183,7 +215,7 @@ export default function TodayScreen() {
                 </Text>
               </View>
               <View style={styles.dayCardSky}>
-                <Icon color={skin.glyph} size={46} strokeWidth={1.6} />
+                <Icon color={skin.glyph} size={40} strokeWidth={1.6} />
                 {weather ? (
                   <Text style={[styles.dayTemp, { color: skin.ink }]}>{weather.temperature}°</Text>
                 ) : null}
@@ -192,33 +224,62 @@ export default function TodayScreen() {
           );
         })()}
 
-        {/* ── Three numbers, one line ── */}
-        <View style={styles.statRow}>
-          {[
-            { value: String(stats.tasks), label: t('today.tile.tasks'), tile: TILES.green },
-            { value: String(stats.events), label: t('today.tile.events'), tile: TILES.blue },
-            { value: `${stats.productivity}%`, label: t('today.tile.productivity'), tile: TILES.yellow },
-          ].map((s) => (
-            <View key={s.label} style={[styles.stat, { backgroundColor: s.tile }]}>
-              <Text style={[styles.statNumber, { textAlign: alignStart() }]}>{s.value}</Text>
-              <Text style={[styles.statLabel, start]} numberOfLines={1}>
-                {s.label}
+        {/* ── Two rows of two: counts up top, texture underneath ── */}
+        <View style={styles.grid}>
+          <View style={styles.gridRow}>
+            <View style={[styles.gridTile, { backgroundColor: TILES.green }]}>
+              <Text style={[styles.gridNumber, start]}>{stats.tasks}</Text>
+              <Text style={[styles.gridLabelPrimary, start]} numberOfLines={1}>
+                {t('today.tile.tasks')}
+              </Text>
+              <Text style={[styles.gridLabelSecondary, start]} numberOfLines={1}>
+                {t('today.tile.today')}
               </Text>
             </View>
-          ))}
+
+            <View style={[styles.gridTile, { backgroundColor: TILES.blue }]}>
+              <View style={styles.gridTileTop}>
+                <Text style={[styles.gridNumber, start]}>{stats.events}</Text>
+                <CalendarDays color={TILE_INK.blue} size={22} strokeWidth={1.8} />
+              </View>
+              <Text style={[styles.gridLabelPrimary, start]} numberOfLines={1}>
+                {t('today.tile.events')}
+              </Text>
+              <Text style={[styles.gridLabelSecondary, start]} numberOfLines={1}>
+                {t('today.tile.today')}
+              </Text>
+            </View>
+          </View>
+
+          <View style={styles.gridRow}>
+            <View style={[styles.gridTile, styles.checklistTile, { backgroundColor: TILES.green }]}>
+              {(['78%', '58%', '42%'] as const).map((w, i) => (
+                <View key={i} style={styles.checklistRow}>
+                  {i < 2 ? (
+                    <CircleCheckBig color={TILE_INK.green} size={18} strokeWidth={2} />
+                  ) : (
+                    <Circle color={TILE_INK.green} size={18} strokeWidth={2} />
+                  )}
+                  <View style={[styles.checklistBar, { width: w }]} />
+                </View>
+              ))}
+            </View>
+
+            <View style={[styles.gridTile, styles.productivityTile, { backgroundColor: TILES.neutral }]}>
+              <View>
+                <Text style={[styles.gridNumber, start]}>{stats.productivity}%</Text>
+                <Text style={[styles.gridLabelPrimary, start]} numberOfLines={1}>
+                  {t('today.tile.productivity')}
+                </Text>
+              </View>
+              <Sparkline color={colors.success} />
+            </View>
+          </View>
         </View>
 
         {/* ── The next thing in the diary ── */}
         <Pressable
-          onPress={() =>
-            // Jump to the day it sits on rather than to the tab navigator's
-            // current state, which would go nowhere.
-            (
-              navigation as unknown as {
-                navigate: (name: string, params: { screen: string }) => void;
-              }
-            ).navigate('Tabs', { screen: 'Calendar' })
-          }
+          onPress={() => goToTab('Calendar')}
           style={[styles.wideCard, { backgroundColor: TILES.blue }]}
         >
           <View style={{ flex: 1 }}>
@@ -237,10 +298,24 @@ export default function TodayScreen() {
           </View>
         </Pressable>
 
-        {/* The completed count moved into the row above, and the list of
-            everything on today came off this screen entirely: it repeated the
-            Tasks tab a scroll below the fold, which is where the yellow bar
-            had been pushed to. */}
+        {/* ── How much of today is already behind her ──
+            Links to Calendar rather than a dedicated task list: today's tasks
+            live in that day's agenda alongside its events now that My Tasks
+            has become Notes. */}
+        <Pressable
+          onPress={() => goToTab('Calendar')}
+          style={[styles.wideCard, { backgroundColor: TILES.green }]}
+        >
+          <View style={{ flex: 1 }}>
+            <Text style={[styles.wideCardKicker, start]}>{t('today.tile.tasks')}</Text>
+            <Text style={[styles.wideCardTitle, start]} numberOfLines={1}>
+              {t('today.completedDone', { count: stats.done })}
+            </Text>
+          </View>
+          <View style={styles.wideCardIcon}>
+            <CircleCheckBig color={TILE_INK.green} size={30} strokeWidth={1.6} />
+          </View>
+        </Pressable>
 
         {/* ── The one action on this screen: hand it to her ── */}
         <Pressable
@@ -266,25 +341,37 @@ export default function TodayScreen() {
 const styles = StyleSheet.create({
   content: { paddingTop: spacing.lg, paddingBottom: spacing.md },
 
+  headlineBlock: { marginBottom: spacing.md },
+  headline: { fontSize: 30, ...font(700), color: colors.text, letterSpacing: -0.7, lineHeight: 34 },
+
   dayCard: {
     flexDirection: 'row',
     alignItems: 'center',
     gap: spacing.md,
     borderRadius: radius.lg,
-    paddingVertical: 22,
+    paddingVertical: 18,
     paddingHorizontal: spacing.md + 2,
     marginBottom: 12,
   },
   dayCardText: { flex: 1 },
-  dayWeekday: { fontSize: 26, ...font(700), letterSpacing: -0.5 },
-  dayDate: { fontSize: 15, ...font(500), marginTop: 2 },
+  dayWeekday: { fontSize: 22, ...font(700), letterSpacing: -0.5 },
+  dayDate: { fontSize: 14, ...font(500), marginTop: 2 },
   dayCardSky: { alignItems: 'center', gap: 2 },
-  dayTemp: { fontSize: 26, ...font(700), letterSpacing: -0.5 },
+  dayTemp: { fontSize: 22, ...font(700), letterSpacing: -0.5 },
 
-  statRow: { flexDirection: 'row', gap: 10, marginBottom: 12 },
-  stat: { flex: 1, borderRadius: radius.md, paddingVertical: 14, paddingHorizontal: 12 },
-  statNumber: { fontSize: 26, ...font(700), color: colors.text, letterSpacing: -0.5 },
-  statLabel: { fontSize: 12, ...font(500), color: colors.text, opacity: 0.72, marginTop: 1 },
+  grid: { gap: 10, marginBottom: 10 },
+  gridRow: { flexDirection: 'row', gap: 10 },
+  gridTile: { flex: 1, minHeight: 108, borderRadius: radius.md, padding: 14 },
+  gridTileTop: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' },
+  gridNumber: { fontSize: 30, ...font(700), color: colors.text, letterSpacing: -0.5 },
+  gridLabelPrimary: { fontSize: 14, ...font(600), color: colors.text, marginTop: 6 },
+  gridLabelSecondary: { fontSize: 13, ...font(500), color: colors.text, opacity: 0.55, marginTop: 1 },
+
+  checklistTile: { justifyContent: 'center', gap: 12 },
+  checklistRow: { flexDirection: 'row', alignItems: 'center', gap: 8 },
+  checklistBar: { height: 8, borderRadius: 4, backgroundColor: 'rgba(20, 21, 15, 0.16)' },
+
+  productivityTile: { justifyContent: 'space-between' },
 
   wideCard: {
     flexDirection: 'row',
@@ -305,7 +392,6 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
   },
-
 
   addBar: {
     flexDirection: 'row',

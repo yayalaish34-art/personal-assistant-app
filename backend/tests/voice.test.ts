@@ -22,6 +22,8 @@ import request from 'supertest';
 
 import { app } from '../src/app.js';
 import { collectAction, alreadyOnAgenda, type Snapshot } from '../src/modules/voice/agent.js';
+import { modelFor } from '../src/modules/voice/tts.js';
+import { config } from '../src/config.js';
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -249,6 +251,39 @@ describe('collectAction — create_image', () => {
   });
 });
 
+// ─── Notes own no row either, and there is no update or delete tool for one ──
+
+describe('collectAction — create_note', () => {
+  it('36. text is enough', () => {
+    const { action } = call('create_note', { text: 'the wifi password is on the fridge' });
+    expect(action).toEqual({
+      tool: 'create_note',
+      arguments: { text: 'the wifi password is on the fridge' },
+    });
+  });
+
+  it('37. empty text → refused', () => {
+    const { action } = call('create_note', { text: '' });
+    expect(action).toBeNull();
+  });
+
+  it('38. an agenda holding the same words does not block it', () => {
+    // The duplicate check keys on `title`, which this tool has none of — a
+    // note is never "already on the agenda".
+    const { action } = call(
+      'create_note',
+      { text: 'Buy milk' },
+      snapshot({ tasks: [task({ title: 'Buy milk' })] }),
+    );
+    expect(action).not.toBeNull();
+  });
+
+  it('39. it is never asked for an id', () => {
+    const { action } = call('create_note', { text: 'call the plumber back' });
+    expect(action?.arguments).not.toHaveProperty('id');
+  });
+});
+
 // ─── The day boundary is the user's, not UTC's ───────────────────────────────
 
 describe('alreadyOnAgenda — which day an instant falls on', () => {
@@ -319,9 +354,16 @@ describe('POST /voice/turn — validation', () => {
     expect(res.status).toBe(400);
   });
 
-  it('24. a language she does not speak → 400', async () => {
-    const res = await request(app).post('/voice/turn').send({ text: 'hi', language: 'zz' });
-    expect(res.status).toBe(400);
+  it('24. a language code of the wrong shape → 400', async () => {
+    // The route checks the shape of an ISO-639-1 code, not which language it
+    // names: the greeting language comes from a list that lives in the client,
+    // and rejecting an unknown-but-well-formed code would fail the whole turn
+    // every time the app shipped a language ahead of the server.
+    for (const language of ['zzz', 'e', 'EN', 'e1', '']) {
+      const res = await request(app).post('/voice/turn').send({ text: 'hi', language });
+      expect(res.status, `language=${JSON.stringify(language)}`).toBe(400);
+      expect(res.body.error.code).toBe('VALIDATION_ERROR');
+    }
   });
 
   it('25. history longer than the cap → 400', async () => {
@@ -377,8 +419,60 @@ describe('GET /voice/speak — validation', () => {
     expect(res.status).toBe(400);
   });
 
-  it('31. a language she does not speak → 400', async () => {
-    const res = await request(app).get('/voice/speak').query({ text: 'hello', language: 'zz' });
-    expect(res.status).toBe(400);
+  // These two would reach ElevenLabs on a machine that has a key, which no
+  // test here is allowed to do — same guard as chat's confirm path. Without a
+  // key the request fails later with the not-configured error, so getting past
+  // the schema (rather than a VALIDATION_ERROR) is what they assert.
+  const speechConfigured = Boolean(process.env['ELEVENLABS_API_KEY']);
+
+  it.skipIf(speechConfigured)(
+    '31. no language at all is fine — the reply text carries its own',
+    async () => {
+      const res = await request(app).get('/voice/speak').query({ text: 'hello' });
+      expect(res.status).toBe(400);
+      expect(res.body.error.message).toMatch(/not configured/i);
+    },
+  );
+
+  it.skipIf(speechConfigured)(
+    '32. a language parameter is ignored, not rejected',
+    async () => {
+      // An older client still appends `language=`. It names a language the
+      // server no longer consults, so it must not be the thing that fails the
+      // request — the schema does not mention it and Zod drops it.
+      const res = await request(app)
+        .get('/voice/speak')
+        .query({ text: 'hello', language: 'zz' });
+      expect(res.status).toBe(400);
+      expect(res.body.error.message).toMatch(/not configured/i);
+    },
+  );
+});
+
+// ─── The voice model is read off the text, not told by the client ────────────
+//
+// The assistant answers in whatever language the user spoke, so the device
+// cannot know which language a reply is in when it builds the audio URL. The
+// text itself decides: Hebrew script needs the full model (flash cannot speak
+// it); every other script the app produces is flash's to keep the latency low.
+
+describe('modelFor — script detection', () => {
+  it('33. Hebrew → the full model', () => {
+    expect(modelFor('קבעתי את הפגישה למחר בארבע.')).toBe(config.ELEVENLABS_MODEL_ID);
+  });
+
+  it('34. English, Spanish, Russian, Arabic → the fast model', () => {
+    for (const text of [
+      'Your meeting is tomorrow at four.',
+      'Tu reunión es mañana a las cuatro.',
+      'Встреча завтра в четыре.',
+      'اجتماعك غدا الساعة الرابعة.',
+    ]) {
+      expect(modelFor(text)).toBe(config.ELEVENLABS_FAST_MODEL_ID);
+    }
+  });
+
+  it('35. a single Hebrew word in a mixed sentence is enough for the full model', () => {
+    expect(modelFor('Done — קבעתי it for tomorrow.')).toBe(config.ELEVENLABS_MODEL_ID);
   });
 });

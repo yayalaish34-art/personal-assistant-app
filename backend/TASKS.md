@@ -378,6 +378,97 @@ TTS both returned playable mp3.
 tsc: clean. npm test: 66 passed / 3 failed — the same 3 that fail on a clean
 checkout here, all of which need a live database.
 
+### T7.2 — Every language, not one
+DONE (local, uncommitted)
+
+What to do: the assistant answers in whatever language the user speaks —
+hearing, thinking and speaking all follow the user instead of a setting.
+Explicitly requested; the previous pin to one language was itself a request
+(see the 2026-08-01 contract entry), which this supersedes.
+
+Files: `src/modules/voice/agent.ts` (prompt: mirror the user's latest message;
+`language` now names only the greeting) · `src/modules/voice/tts.ts`
+(`modelFor` reads the text's script instead of taking a language — Hebrew
+script → `eleven_v3`, else flash) · `src/modules/voice/router.ts` (`language`
+optional and ignored on `/voice/speak`) · `tests/voice.test.ts` (32–35) ·
+`API_CONTRACT.md` (both routes + change log). Frontend, same turn:
+`frontend/src/lib/voice.ts` stops hinting Whisper (auto-detect), sends the
+interface language as the greeting language, and drops `language` from the
+speak URL.
+
+The moving part worth knowing: the device cannot name the reply's language any
+more — it follows the speech, not the settings — so `/voice/speak` decides the
+voice model from the text itself. One Hebrew character is enough to pay for
+`eleven_v3`; anything else rides flash. The known trade on hearing: without
+the Whisper hint, a very short utterance can be detected as the wrong
+language. The hint was the old bug's fix, but it made every unhinted language
+impossible, which is the thing being removed.
+
+tsc: clean on both sides (backend and frontend). `tests/voice.test.ts`: 43
+passed / 1 skipped (test 32 skips itself when `ELEVENLABS_API_KEY` is set, so
+the suite never reaches the provider). Full run: 122 passed / 16 failed — all
+16 are `PrismaClientInitializationError` from auth/chat/sync against a
+localhost Postgres that is not running here, unchanged by this task.
+
+### T7.3 — The interface in 25 languages
+DONE (local, uncommitted)
+
+What to do: ship the app itself in many more languages. T7.2 freed the
+*assistant* to answer in any language; the *interface* was still the seven it
+shipped with, and the interface language is also what picks her greeting.
+Explicitly requested.
+
+Backend files: `src/modules/voice/router.ts` · `src/modules/voice/agent.ts`
+(`LANGUAGE_NAMES` now covers all 25) · `tests/voice.test.ts` (24, 31, 32) ·
+`API_CONTRACT.md`. Frontend, same turn: `src/lib/i18n.ts` split into
+`src/lib/i18n/` — one file per language, plus `types.ts` and `index.ts` —
+with 18 new dictionaries; `src/screens/SettingsScreen.tsx` (collapsible
+picker).
+
+Three things worth knowing:
+
+1. **`language` on `/voice/turn` stopped being an enum.** It listed the seven
+   languages the client shipped with, which tied a client-side list to a
+   server deploy: an app updated with an 8th language would send a code the
+   enum rejected, take a 400, and lose the entire turn — not just the greeting
+   the code was for. It now validates the *shape* of an ISO-639-1 code and
+   greets in English for one it has no name for. `/voice/speak` drops
+   `language` from its schema entirely (Zod ignores unmentioned query keys, so
+   older clients still sending it are unaffected). Test 24 changed from
+   "rejects `zz`" to "rejects malformed codes", because `zz` is now well-formed
+   and would otherwise have reached OpenAI from the test suite.
+
+2. **Translations are checked by the compiler, not by trust.** `Dict` is
+   `Partial<Record<keyof typeof en, string>>`, so a key that is not in English
+   fails the build, while a key missing from a translation is legal and falls
+   back to English at runtime — which is what makes an unfinished dictionary
+   safe to ship. What the compiler cannot see (a key left out, a dropped
+   `{{placeholder}}`, a line left in English) is covered by a checker that
+   walks the TS AST of every dictionary; all 25 report 195/195 keys, no
+   missing, no extra, no placeholder mismatches.
+
+3. **`locale()` was returning invented BCP-47 tags.** It built them by
+   uppercasing the code — right for `it-IT` and `fr-FR` by luck, wrong the
+   moment the region differs from the language. Adding Japanese or Hindi would
+   have produced `ja-JA` and `hi-HI`, which are not locales, and `Intl` falls
+   back to English formatting when handed one — every date and time in the app
+   would have quietly rendered in English. The tag is now spelled out per
+   language in the `LANGUAGES` table.
+
+Languages added: German, Portuguese (BR), Hindi, Chinese (Simplified),
+Japanese, Korean, Turkish, Dutch, Polish, Ukrainian, Romanian, Greek, Swedish,
+Persian (RTL), Indonesian, Vietnamese, Thai, Bengali. Persian brings the RTL
+count to three, and goes through the same `I18nManager` reload path as Hebrew
+and Arabic.
+
+tsc: clean on both sides. `tests/voice.test.ts`: 42 passed / 2 skipped (31 and
+32 skip themselves when `ELEVENLABS_API_KEY` is set, so the suite never reaches
+the provider). Translation checker: 25/25 dictionaries agree with English.
+
+Not verified: the app rendering in each of the 18 new languages on a device,
+and the translations themselves were not reviewed by native speakers — see the
+remaining risk in the final report.
+
 ---
 
 ## Phase 8 — Pictures
@@ -425,3 +516,101 @@ risk below.
 **Remaining risk:** `/image` 404s in production until the backend is deployed.
 Nothing else in this phase can be exercised end-to-end from the app before
 that.
+
+---
+
+## Phase 9 — Notes
+
+### T9.1 — `create_note` tool
+DONE (local, uncommitted)
+
+**Outside the frozen scope.** `CLAUDE.md` §1 freezes the build at
+`SPEC_MVP_V1.1.md` and says to stop and ask rather than build past it. It was
+raised as out of scope and then explicitly requested — the frontend's own
+"My Tasks" tab is being replaced with a Notes screen — so it is here, marked,
+and easy to find later, same as T8.1.
+
+What to do: let the assistant file a short, free-text note the user asks her
+to remember — not a task (no due date, nothing to complete) and not an event.
+
+Files: `src/modules/voice/agent.ts` (`create_note` in `ACTION_TOOLS` and
+`ARG_SCHEMAS`, a routing bullet in the system prompt) · `tests/voice.test.ts`
+(4 cases, 36–39) · `API_CONTRACT.md`.
+
+Shape: mirrors `create_image` — the tool owns no row, so `collectAction`
+checks it against neither the ownership gate (no id) nor the duplicate gate
+(no title). There is deliberately no `update_note` or `delete_note` tool, and
+no `notes` array added to `snapshot`: the model only ever files a new one, it
+never reads or edits an existing one. On the device, `create_note` reaches
+`applyActions` in `frontend/src/lib/voice.ts` and is written to local storage
+via a new `Note` type and `listNotes`/`createNote`/`deleteNote` in
+`frontend/src/lib/api.ts`, exactly like `create_task`.
+
+Tests: `tests/voice.test.ts` 36–39 for the tool gate (text required, refused
+when empty, never asked for an id, not subject to the duplicate check).
+tsc clean (frontend and backend). Backend: voice suite 43 passed / 1 skipped
+(unchanged, pre-existing) — full `npm test` otherwise unaffected; the 16
+failures across 3 suites are the pre-existing DB-backed ones, unreachable
+without a local Postgres, not caused by this change.
+
+Not verified: a note filed by voice on a real device — the client points at
+the Railway deployment, which does not have this code yet (same remaining
+risk as T8.1).
+
+### T8.2 — Clashes, journeys, and times to choose instead
+DONE (local, uncommitted) · **Orchestrator** — spans the tool contract, the
+turn loop and a new wire action.
+
+**Outside the frozen scope**, like T8.1, and requested directly.
+
+What to do: when a meeting cannot be kept, say so and offer times that can.
+
+Two ways it cannot. The hour is taken — any overlap check finds that. Or the
+hour is free and the person would have to be in two places: Jerusalem at nine,
+Haifa at half past ten. Nothing overlaps on the clock, so no overlap check
+finds it, and it is the case that was actually asked for.
+
+Files: `src/modules/voice/slots.ts` (new) · `travel.ts` (new) ·
+`schedule.ts` (new) · `agent.ts` (`location` on the snapshot and on
+create/update_event; `reviewProposedTime`; `offer_times` in `VoiceAction`) ·
+`tests/slots.test.ts` (new, 37) · `API_CONTRACT.md`.
+
+`offer_times` is the one action the model cannot ask for — the server raises it
+in place of the create it refused, so it is in neither `ACTION_TOOLS` nor
+`ARG_SCHEMAS` and nothing untrusted can produce one.
+
+Distance is great-circle, and crude in one direction only: no road is shorter
+than the straight line, so when even that does not fit the gap, the real
+journey certainly does not. The reverse is not claimed. Measured against the
+live geocoder: Jerusalem→Haifa in 30 min flagged, Tel Aviv→Ramat Gan in the
+same 30 min not — the discrimination that matters.
+
+Alternatives are put through both tests. Told a ten o'clock in Haifa is
+impossible because of a nine in Jerusalem, half past ten is equally impossible,
+and offering it would be worse than offering nothing because it looks like an
+answer.
+
+**Four defects were found by an adversarial review of this code and fixed
+before it shipped**, each now pinned by a test (31–36):
+- offers in the past — there was no `now` anywhere in the signature; the router
+  had parsed `now` all along and never threaded it down
+- a trailing sort by clock time threw the ranking away, so widening the
+  candidate pool made the answer *worse*: a 14:00 request answered with 09:30
+- a non-IANA timezone (`Israel Standard Time`, `GMT+2`) threw out of `Intl` and
+  lost the whole turn to a 500; the sibling modules already guard this
+- `new Date('tomorrow at 10')` is not NaN — V8's fallback parser returns a day
+  in 2001 — so the NaN guard passed it and four slots came back in 2001
+
+Also from that review, and taken: ties now go later (a meeting can be pushed
+back more easily than pulled forward), and offers are spaced at least 75
+minutes apart so four options are four answers rather than one restated.
+
+Tests: 37 in `slots.test.ts`; 93 pass across slots/voice/image/reminders.
+tsc clean both sides.
+
+Scenarios verified by hand, distinct from "tests passed": the estimate against
+the live geocoder for four real city pairs.
+
+**Not verified:** the tiles rendering on a device. The frontend cannot bundle —
+`src/navigation/index.tsx` imports `../screens/NotesScreen`, which does not
+exist yet — and that is in-flight work from another thread, not this one.

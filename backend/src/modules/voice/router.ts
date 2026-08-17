@@ -19,13 +19,28 @@ import { synthesize, isSpeechConfigured, MAX_SPEECH_CHARS } from './tts.js';
  */
 export const voiceRouter = Router();
 
-const LANGUAGES = ['he', 'en', 'ar', 'es', 'fr', 'it', 'ru'] as const;
+/**
+ * A language, as an ISO-639-1 code.
+ *
+ * The shape is checked; the particular language is not. This used to be an
+ * enum of the seven the app shipped with, which tied a list living in the
+ * client to a server deploy: a device updated with a new interface language
+ * would send a code the enum had never heard of, get a 400, and lose the whole
+ * turn — not just the greeting the code was for. An unknown code now simply
+ * greets in English (see `LANGUAGE_NAMES` in agent.ts).
+ */
+const languageCode = z
+  .string()
+  .regex(/^[a-z]{2}$/, 'Expected a two-letter ISO-639-1 language code');
 
 const turnBody = z.object({
   /** What the user said, already transcribed. */
   text: z.string().min(1).max(2000),
-  /** The language she answers in. Hebrew unless the caller says otherwise. */
-  language: z.enum(LANGUAGES).default('he'),
+  /**
+   * The language of the opening greeting — the one turn with no user words to
+   * mirror. Every real turn is answered in whatever language the user spoke.
+   */
+  language: languageCode.default('he'),
   timezone: z.string().min(1).max(64).default('UTC'),
   now: z.string().datetime().optional(),
   userName: z.string().max(80).optional(),
@@ -83,18 +98,21 @@ voiceRouter.post(
 // take: the device hands this URL straight to the player instead of buffering
 // a response body it has nowhere to put.
 
+// No `language` here on purpose. The reply's language follows the user's
+// speech, so the device cannot know it, and the voice model is read off the
+// text itself (see tts.ts). Zod ignores query keys a schema does not mention,
+// so a client still sending `language=` is neither rejected nor listened to.
 const speakQuery = z.object({
   text: z.string().min(1).max(MAX_SPEECH_CHARS),
-  language: z.enum(LANGUAGES).default('he'),
 });
 
 voiceRouter.get(
   '/voice/speak',
   speechLimiter,
   asyncHandler(async (req, res) => {
-    const { text, language } = parseQuery(speakQuery, req);
+    const { text } = parseQuery(speakQuery, req);
 
-    const audio = await synthesize(text, language);
+    const audio = await synthesize(text);
 
     res.setHeader('Content-Type', 'audio/mpeg');
     res.setHeader('Content-Length', String(audio.length));

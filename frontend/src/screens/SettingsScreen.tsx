@@ -12,11 +12,9 @@ import {
   Linking,
 } from 'react-native';
 import { useFocusEffect } from '@react-navigation/native';
-import { LinearGradient } from 'expo-linear-gradient';
 import * as Haptics from 'expo-haptics';
 import {
   User,
-  Globe,
   Bell,
   CheckCircle2,
   ListTodo,
@@ -31,13 +29,15 @@ import {
   Mail,
   FileText,
   ChevronRight,
+  ChevronDown,
+  ChevronUp,
 } from 'lucide-react-native';
 
-import { Screen } from '../components/ui';
+import { Screen, GreetingHeader, Card, Button } from '../components/ui';
 import { storage, defaultSettings, Settings } from '../lib/storage';
 import { api, type Task, type Event } from '../lib/api';
 import { toDateStr, isLive } from '../lib/tasks';
-import { colors, spacing, font, ACCENT_GRADIENT, TILES, TILE_INK } from '../theme';
+import { colors, spacing, font, radius, TILES, TILE_INK, type TileColor } from '../theme';
 import { t, LANGUAGES, getLanguage, setLanguage, type Language } from '../lib/i18n';
 
 // Placeholder portrait, matching the Today header avatar.
@@ -51,6 +51,9 @@ const LEGAL_URLS = {
   terms: 'https://example.com/terms',
 };
 const SUPPORT_EMAIL = 'support@example.com';
+
+/** Language chips shown before the list is expanded — about two rows. */
+const COLLAPSED_LANGUAGES = 6;
 
 /** Opens a URL, saying so plainly when the device has nothing to open it. */
 async function openLink(url: string): Promise<void> {
@@ -73,9 +76,13 @@ function initialsOf(name: string): string {
   );
 }
 
-// Lavender icon square, same pattern as the Today's Progress stat rows.
-function IconSquare({ children }: { children: React.ReactNode }) {
-  return <View style={styles.iconSquare}>{children}</View>;
+/** Tinted icon square, same pattern as a card row's leading glyph. */
+function IconSquare({ tile, children }: { tile?: TileColor; children: React.ReactNode }) {
+  return (
+    <View style={[styles.iconSquare, { backgroundColor: tile ? TILES[tile] : TILES.neutral }]}>
+      {children}
+    </View>
+  );
 }
 
 /** One figure in the hero's stat strip. */
@@ -99,34 +106,30 @@ function HeroStat({
   );
 }
 
-/** Glass panel used by every settings card, matching the other screens. */
-function GlassCard({
-  children,
-  style,
-}: {
-  children: React.ReactNode;
-  style?: object;
-}) {
-  return (
-    <LinearGradient
-      colors={[colors.surface, colors.surface, colors.surface]}
-      locations={[0, 0.55, 1]}
-      start={{ x: 0.05, y: 0 }}
-      end={{ x: 0.95, y: 1 }}
-      style={[styles.card, style]}
-    >
-      {children}
-    </LinearGradient>
-  );
-}
-
 export default function SettingsScreen() {
   const [settings, setSettings] = useState<Settings>(defaultSettings);
   const [events, setEvents] = useState<Event[]>([]);
   const [tasks, setTasks] = useState<Task[]>([]);
-  const [online, setOnline] = useState<boolean | null>(null);
-  const [needsAuth, setNeedsAuth] = useState(false);
   const [lang, setLang] = useState<Language>(getLanguage());
+  const [allLanguages, setAllLanguages] = useState(false);
+
+  /**
+   * The languages on show, and how many are folded away.
+   *
+   * The app ships in enough languages now that laying them all out flat turned
+   * this card into several screens of chips and pushed everything below it off
+   * the page. Collapsed, it shows a couple of rows — always including the one
+   * in use, which would otherwise vanish for anyone whose language sorts late
+   * and leave the card looking like it had forgotten their choice.
+   */
+  const { shownLanguages, hiddenCount } = useMemo(() => {
+    const codes = Object.keys(LANGUAGES) as Language[];
+    if (allLanguages) return { shownLanguages: codes, hiddenCount: 0 };
+
+    const head = codes.slice(0, COLLAPSED_LANGUAGES);
+    if (!head.includes(lang)) head[head.length - 1] = lang;
+    return { shownLanguages: head, hiddenCount: codes.length - head.length };
+  }, [allLanguages, lang]);
 
   const pickLanguage = async (code: Language) => {
     if (code === lang) return;
@@ -159,12 +162,8 @@ export default function SettingsScreen() {
         // Sync endpoints include soft-deleted rows; drop them before counting.
         setEvents(evRes.events.filter(isLive));
         setTasks(taskRes.tasks.filter(isLive));
-        setOnline(true);
-        setNeedsAuth(false);
-      } catch (e) {
-        if (!active) return;
-        setOnline(false);
-        setNeedsAuth(false);
+      } catch {
+        /* offline; the local settings already loaded above still render */
       }
     })();
     return () => {
@@ -205,7 +204,6 @@ export default function SettingsScreen() {
     }
     Alert.alert(t('profile.saved'), t('profile.savedBody'));
   };
-
 
   const contactSupport = () =>
     openLink(
@@ -252,30 +250,20 @@ export default function SettingsScreen() {
 
   return (
     <Screen>
-      <ScrollView showsVerticalScrollIndicator={false}>
-        {/* ── Headline: light first line, heavier second ── */}
+      <GreetingHeader
+        name={t('today.hello', { name: settings.displayName || t('today.friend') })}
+        photoUri={PROFILE_PHOTO_URI}
+        onBellPress={() => Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light)}
+      />
+
+      <ScrollView showsVerticalScrollIndicator={false} contentContainerStyle={styles.content}>
         <Text style={styles.headline}>
-          Your{'\n'}
-          <Text style={styles.headlineStrong}>Profile</Text>
+          {t('profile.headline.line1')} {t('profile.headline.line2')}
         </Text>
 
-        {/* ── Hero: purple gradient identity card ── */}
-        <LinearGradient
-          colors={[TILES.green, TILES.green, TILES.green]}
-          locations={[0, 0.5, 1]}
-          start={{ x: 0.05, y: 0 }}
-          end={{ x: 0.95, y: 1 }}
-          style={styles.hero}
-        >
-          {/* Soft highlight so the panel reads as glass, not flat fill. */}
-          <LinearGradient
-            colors={['rgba(255,255,255,0.35)', 'rgba(255,255,255,0)']}
-            start={{ x: 0, y: 0 }}
-            end={{ x: 0.75, y: 0.9 }}
-            style={StyleSheet.absoluteFillObject}
-            pointerEvents="none"
-          />
-
+        {/* ── Hero: the one big surface, flat sage — same weight as the
+            Today screen's day card, not a glass panel of its own. ── */}
+        <View style={[styles.hero, { backgroundColor: TILES.green }]}>
           <View style={styles.heroTop}>
             <View style={styles.avatarRing}>
               <View style={styles.avatar}>
@@ -291,15 +279,8 @@ export default function SettingsScreen() {
               </Text>
               <Text style={styles.heroSub}>{t('profile.workspace')}</Text>
               <View style={styles.statusPill}>
-                <View
-                  style={[
-                    styles.statusDot,
-                    { backgroundColor: TILE_INK.green },
-                  ]}
-                />
-                <Text style={styles.statusText}>
-                  On this device
-                </Text>
+                <View style={[styles.statusDot, { backgroundColor: TILE_INK.green }]} />
+                <Text style={styles.statusText}>{t('profile.onDevice')}</Text>
               </View>
             </View>
           </View>
@@ -311,12 +292,7 @@ export default function SettingsScreen() {
               <Text style={styles.progressPct}>{completion}%</Text>
             </View>
             <View style={styles.progressTrack}>
-              <LinearGradient
-                colors={[colors.surface, colors.surface]}
-                start={{ x: 0, y: 0 }}
-                end={{ x: 1, y: 0 }}
-                style={[styles.progressFill, { width: `${Math.max(completion, 2)}%` }]}
-              />
+              <View style={[styles.progressFill, { width: `${Math.max(completion, 2)}%` }]} />
             </View>
           </View>
 
@@ -328,31 +304,31 @@ export default function SettingsScreen() {
             <HeroStat Icon={Flame} value={stats.streak} label={t('profile.stat.streak')} />
             <HeroStat Icon={CalendarDays} value={stats.events} label={t('profile.stat.events')} />
           </View>
-        </LinearGradient>
+        </View>
 
         {/* ── Quick stat tiles ── */}
         <View style={styles.tileRow}>
-          <GlassCard style={styles.tile}>
-            <View style={[styles.tileIcon, { backgroundColor: TILES.blue }]}>
-              <ListTodo color={colors.primary} size={17} />
+          <View style={[styles.tile, { backgroundColor: TILES.blue }]}>
+            <View style={styles.tileIcon}>
+              <ListTodo color={colors.text} size={17} />
             </View>
             <Text style={styles.tileValue}>{stats.open}</Text>
             <Text style={styles.tileLabel}>{t('profile.openTasks')}</Text>
-          </GlassCard>
-          <GlassCard style={styles.tile}>
-            <View style={[styles.tileIcon, { backgroundColor: TILES.green }]}>
-              <CheckCircle2 color={TILE_INK.green} size={17} />
+          </View>
+          <View style={[styles.tile, { backgroundColor: TILES.yellow }]}>
+            <View style={styles.tileIcon}>
+              <CheckCircle2 color={colors.text} size={17} />
             </View>
             <Text style={styles.tileValue}>{stats.done}</Text>
             <Text style={styles.tileLabel}>{t('profile.completed')}</Text>
-          </GlassCard>
+          </View>
         </View>
 
         {/* ── Display name ── */}
-        <GlassCard>
+        <Card>
           <View style={styles.cardHeaderRow}>
-            <IconSquare>
-              <User color={colors.primary} size={18} />
+            <IconSquare tile="green">
+              <User color={TILE_INK.green} size={18} />
             </IconSquare>
             <Text style={styles.cardTitle}>{t('profile.displayName')}</Text>
           </View>
@@ -366,13 +342,13 @@ export default function SettingsScreen() {
             />
             <Pencil color={colors.textMuted} size={15} style={styles.inputIcon} />
           </View>
-        </GlassCard>
+        </Card>
 
         {/* ── Notifications ── */}
-        <GlassCard>
+        <Card>
           <View style={[styles.cardHeaderRow, { marginBottom: 0 }]}>
-            <IconSquare>
-              <Bell color={colors.primary} size={18} />
+            <IconSquare tile="yellow">
+              <Bell color={TILE_INK.yellow} size={18} />
             </IconSquare>
             <View style={{ flex: 1 }}>
               <Text style={styles.cardTitle}>{t('profile.notifications')}</Text>
@@ -384,17 +360,17 @@ export default function SettingsScreen() {
                 Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
                 setSettings((s) => ({ ...s, notifications }));
               }}
-              trackColor={{ true: colors.primary, false: '#E3E3DE' }}
+              trackColor={{ true: colors.primary, false: colors.surfaceAlt }}
               thumbColor="#FFFFFF"
             />
           </View>
-        </GlassCard>
+        </Card>
 
         {/* ── Language ── */}
-        <GlassCard>
+        <Card>
           <View style={styles.cardHeaderRow}>
-            <IconSquare>
-              <Languages color={colors.primary} size={18} />
+            <IconSquare tile="blue">
+              <Languages color={TILE_INK.blue} size={18} />
             </IconSquare>
             <View style={{ flex: 1 }}>
               <Text style={styles.cardTitle}>{t('profile.language')}</Text>
@@ -402,7 +378,7 @@ export default function SettingsScreen() {
             </View>
           </View>
           <View style={styles.langGrid}>
-            {(Object.keys(LANGUAGES) as Language[]).map((code) => {
+            {shownLanguages.map((code) => {
               const active = code === lang;
               return (
                 <Pressable
@@ -410,26 +386,49 @@ export default function SettingsScreen() {
                   onPress={() => pickLanguage(code)}
                   style={[styles.langChip, active && styles.langChipActive]}
                 >
-                  <Text style={[styles.langChipText, active && { color: '#FFFFFF' }]}>
+                  <Text style={[styles.langChipText, active && styles.langChipTextActive]}>
                     {LANGUAGES[code].native}
                   </Text>
                 </Pressable>
               );
             })}
+            {/* The chip that opens the rest. A count and a chevron rather than
+                a word, so it needs no translation of its own — and the label
+                for it would be the one string on the screen guaranteed to be
+                in a language the user is trying to leave. */}
+            {hiddenCount > 0 || allLanguages ? (
+              <Pressable
+                onPress={() => {
+                  Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+                  setAllLanguages((open) => !open);
+                }}
+                style={[styles.langChip, styles.langChipMore]}
+                accessibilityRole="button"
+                accessibilityLabel={t('profile.language')}
+                accessibilityState={{ expanded: allLanguages }}
+              >
+                {allLanguages ? (
+                  <ChevronUp color={colors.textMuted} size={15} strokeWidth={2.4} />
+                ) : (
+                  <>
+                    <ChevronDown color={colors.textMuted} size={15} strokeWidth={2.4} />
+                    <Text style={styles.langChipMoreText}>{hiddenCount}</Text>
+                  </>
+                )}
+              </Pressable>
+            ) : null}
           </View>
-        </GlassCard>
+        </Card>
 
         {/* ── Local data ── */}
-        <GlassCard>
+        <Card>
           <View style={styles.cardHeaderRow}>
             <IconSquare>
-              <Database color={colors.primary} size={18} />
+              <Database color={colors.textMuted} size={18} />
             </IconSquare>
             <View style={{ flex: 1 }}>
               <Text style={styles.cardTitle}>{t('profile.storage')}</Text>
-              <Text style={styles.mutedText}>
-                {t('profile.storageBody')}
-              </Text>
+              <Text style={styles.mutedText}>{t('profile.storageBody')}</Text>
             </View>
           </View>
           <Pressable onPress={clearData} style={styles.ghostBtn}>
@@ -438,16 +437,16 @@ export default function SettingsScreen() {
               {t('profile.clearData')}
             </Text>
           </Pressable>
-        </GlassCard>
+        </Card>
 
         {/* ── Legal and support ──
              The App Store requires a reachable privacy policy and a way to
              erase everything; the rest is the usual footer. LEGAL_URLS and
              SUPPORT_EMAIL at the top of this file are what these open. */}
-        <GlassCard>
+        <Card>
           <View style={styles.cardHeaderRow}>
-            <IconSquare>
-              <FileText color={colors.primary} size={18} />
+            <IconSquare tile="green">
+              <FileText color={TILE_INK.green} size={18} />
             </IconSquare>
             <View style={{ flex: 1 }}>
               <Text style={styles.cardTitle}>{t('profile.legal')}</Text>
@@ -482,47 +481,32 @@ export default function SettingsScreen() {
               {t('profile.deleteAccount')}
             </Text>
           </Pressable>
-        </GlassCard>
+        </Card>
 
         {/* ── Save ── */}
-        <Pressable onPress={save} style={({ pressed }) => [{ opacity: pressed ? 0.88 : 1 }]}>
-          <LinearGradient
-            colors={ACCENT_GRADIENT.colors as unknown as [string, string]}
-            start={ACCENT_GRADIENT.start}
-            end={ACCENT_GRADIENT.end}
-            style={styles.saveBtn}
-          >
-            <Text style={styles.saveBtnText}>{t('profile.save')}</Text>
-          </LinearGradient>
-        </Pressable>
-
+        <View style={{ height: spacing.xs }} />
+        <Button label={t('profile.save')} onPress={save} />
       </ScrollView>
     </Screen>
   );
 }
 
 const styles = StyleSheet.create({
+  content: { paddingTop: spacing.md, paddingBottom: spacing.md },
+
   headline: {
-    ...font(400),
-    fontSize: 34,
-    lineHeight: 42,
+    fontSize: 32,
+    ...font(700),
     color: colors.text,
-    letterSpacing: -0.6,
-    marginBottom: spacing.lg,
+    letterSpacing: -0.8,
+    marginBottom: spacing.md,
   },
-  headlineStrong: { ...font(600) },
 
   // ── Hero ──
   hero: {
-    borderRadius: 28,
+    borderRadius: radius.lg,
     padding: spacing.md + 4,
-    marginBottom: 14,
-    overflow: 'hidden',
-    shadowColor: '#14150F',
-    shadowOffset: { width: 0, height: 8 },
-    shadowOpacity: 0.06,
-    shadowRadius: 18,
-    elevation: 3,
+    marginBottom: spacing.md,
   },
   heroTop: { flexDirection: 'row', alignItems: 'center' },
   avatarRing: {
@@ -532,7 +516,7 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
     borderWidth: 2,
-    borderColor: 'rgba(255,255,255,0.9)',
+    borderColor: colors.surface,
   },
   avatar: {
     width: 62,
@@ -573,14 +557,14 @@ const styles = StyleSheet.create({
   progressTrack: {
     height: 8,
     borderRadius: 4,
-    backgroundColor: 'rgba(255,255,255,0.6)',
+    backgroundColor: colors.surface,
     overflow: 'hidden',
   },
-  progressFill: { height: '100%', borderRadius: 4 },
+  progressFill: { height: '100%', borderRadius: 4, backgroundColor: colors.text },
 
   heroDivider: {
     height: 1,
-    backgroundColor: 'rgba(20,21,15,0.08)',
+    backgroundColor: colors.border,
     marginVertical: spacing.md,
   },
   heroStatsRow: { flexDirection: 'row', justifyContent: 'space-between' },
@@ -603,31 +587,20 @@ const styles = StyleSheet.create({
     marginTop: 1,
   },
 
-  // ── Cards ──
-  card: {
-    borderRadius: 24,
-    padding: spacing.md + 2,
-    marginBottom: 14,
-    overflow: 'hidden',
-    shadowColor: '#14150F',
-    shadowOffset: { width: 0, height: 6 },
-    shadowOpacity: 0.05,
-    shadowRadius: 16,
-    elevation: 2,
-  },
-
-  tileRow: { flexDirection: 'row', gap: 14 },
-  tile: { flex: 1, padding: spacing.md },
+  // ── Quick tiles ──
+  tileRow: { flexDirection: 'row', gap: 10, marginBottom: spacing.md },
+  tile: { flex: 1, borderRadius: radius.md, padding: spacing.md },
   tileIcon: {
-    width: 36,
-    height: 36,
-    borderRadius: 12,
+    width: 34,
+    height: 34,
+    borderRadius: 11,
+    backgroundColor: colors.surface,
     alignItems: 'center',
     justifyContent: 'center',
     marginBottom: 10,
   },
-  tileValue: { ...font(600), fontSize: 24, color: colors.text, letterSpacing: -0.5 },
-  tileLabel: { ...font(400), fontSize: 12, color: colors.textMuted, marginTop: 1 },
+  tileValue: { ...font(700), fontSize: 22, color: colors.text, letterSpacing: -0.4 },
+  tileLabel: { ...font(500), fontSize: 12, color: colors.text, opacity: 0.7, marginTop: 1 },
 
   cardHeaderRow: {
     flexDirection: 'row',
@@ -639,7 +612,6 @@ const styles = StyleSheet.create({
     width: 38,
     height: 38,
     borderRadius: 12,
-    backgroundColor: TILES.neutral,
     alignItems: 'center',
     justifyContent: 'center',
   },
@@ -656,7 +628,6 @@ const styles = StyleSheet.create({
     fontSize: 15,
     ...font(400),
     color: colors.text,
-
   },
   inputIcon: { position: 'absolute', end: 14 },
 
@@ -667,8 +638,11 @@ const styles = StyleSheet.create({
     borderRadius: 50,
     backgroundColor: TILES.neutral,
   },
-  langChipActive: { backgroundColor: colors.primary, borderColor: colors.primary },
+  langChipActive: { backgroundColor: colors.primary },
   langChipText: { ...font(600), fontSize: 13.5, color: colors.primary },
+  langChipTextActive: { color: colors.primaryText },
+  langChipMore: { flexDirection: 'row', alignItems: 'center', gap: 4 },
+  langChipMoreText: { ...font(600), fontSize: 13.5, color: colors.textMuted },
 
   linkRow: {
     flexDirection: 'row',
@@ -683,22 +657,9 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     gap: 8,
     marginTop: 12,
-    backgroundColor: colors.surface,
+    backgroundColor: colors.surfaceAlt,
     borderRadius: 50,
     paddingVertical: 15,
   },
   ghostBtnText: { ...font(500), fontSize: 14, color: colors.primary },
-
-  saveBtn: {
-    borderRadius: 50,
-    paddingVertical: 19,
-    alignItems: 'center',
-    marginTop: 2,
-    shadowColor: '#14150F',
-    shadowOffset: { width: 0, height: 6 },
-    shadowOpacity: 0.18,
-    shadowRadius: 14,
-    elevation: 4,
-  },
-  saveBtnText: { ...font(600), fontSize: 15.5, color: colors.primaryText },
 });

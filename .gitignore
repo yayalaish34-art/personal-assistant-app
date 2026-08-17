@@ -14,6 +14,9 @@ backend/data/
 .DS_Store
 Thumbs.db
 
+# Design references dropped into the tree while working — not part of the app.
+WhatsApp Image *.jpeg
+
 # Env
 .env
 .env.local

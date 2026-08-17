@@ -4,6 +4,7 @@ import type OpenAI from 'openai';
 import { getOpenAI } from '../chat/llm.js';
 import { config } from '../../config.js';
 import { logger } from '../../lib/logger.js';
+import { reviewSchedule, type KnownEvent, type ProposedEvent } from './schedule.js';
 
 // The voice assistant's turn: what she heard in, what she says back plus the
 // changes to apply.
@@ -38,6 +39,8 @@ export const snapshotSchema = z.object({
         note: z.string().nullish(),
         startsAt: z.string(),
         endsAt: z.string().nullish(),
+        /** Free text, as the user typed it. Geocoded when a journey is checked. */
+        location: z.string().nullish(),
       }),
     )
     .max(200)
@@ -157,6 +160,21 @@ export const ACTION_TOOLS = [
   {
     type: 'function' as const,
     function: {
+      name: 'create_note',
+      description:
+        'File a short note to remember — an idea, a phone number, something to keep, not to do. No due date and nothing to complete: use create_task instead when it is something the user needs to act on.',
+      parameters: {
+        type: 'object',
+        properties: {
+          text: { type: 'string', description: 'The note itself, in full, as the user said it.' },
+        },
+        required: ['text'],
+      },
+    },
+  },
+  {
+    type: 'function' as const,
+    function: {
       name: 'create_event',
       description: 'Put something in the calendar at a set time.',
       parameters: {
@@ -166,6 +184,11 @@ export const ACTION_TOOLS = [
           startsAt: { type: 'string', description: 'ISO-8601 with offset.' },
           endsAt: { type: 'string', description: 'ISO-8601 with offset. Defaults to an hour later.' },
           note: { type: 'string' },
+          location: {
+            type: 'string',
+            description:
+              'Where it happens, if the user said — a city, a place, an address. Used to work out whether they can get there in time from whatever is before it.',
+          },
         },
         required: ['title', 'startsAt'],
       },
@@ -185,6 +208,7 @@ export const ACTION_TOOLS = [
           startsAt: { type: 'string' },
           endsAt: { type: 'string' },
           note: { type: 'string' },
+          location: { type: 'string', description: 'Where it happens, if that is changing.' },
         },
         required: ['id', 'matchTitle'],
       },
@@ -231,11 +255,15 @@ const ARG_SCHEMAS = {
   }),
   complete_task: z.object({ id: z.string().min(1), matchTitle: z.string().min(1) }),
   delete_task: z.object({ id: z.string().min(1), matchTitle: z.string().min(1) }),
+  create_note: z.object({
+    text: z.string().min(1).max(2000),
+  }),
   create_event: z.object({
     title: z.string().min(1),
     startsAt: isoString,
     endsAt: isoString.optional(),
     note: z.string().optional(),
+    location: z.string().max(120).optional(),
   }),
   update_event: z.object({
     id: z.string().min(1),
@@ -244,6 +272,7 @@ const ARG_SCHEMAS = {
     startsAt: isoString.optional(),
     endsAt: isoString.optional(),
     note: z.string().optional(),
+    location: z.string().max(120).optional(),
   }),
   delete_event: z.object({ id: z.string().min(1), matchTitle: z.string().min(1) }),
 } as const;
@@ -312,21 +341,54 @@ export function alreadyOnAgenda(
   return false;
 }
 
+/**
+ * `offer_times` is the one the model cannot ask for. The server raises it in
+ * place of a create or a move it has judged unkeepable, so it is not in
+ * `ACTION_TOOLS` and has no argument schema — nothing untrusted ever produces
+ * one.
+ */
 export interface VoiceAction {
-  tool: ActionName;
+  tool: ActionName | 'offer_times';
   arguments: Record<string, unknown>;
 }
 
 // ─── Prompt ─────────────────────────────────────────────────────────────────
 
+/**
+ * Only the opening greeting needs this: she answers every real turn in
+ * whatever language the user spoke, but "[SESSION START]" carries no words of
+ * theirs to mirror, so the interface language stands in.
+ *
+ * Every language the interface ships in is here. A code that is not — the
+ * route validates the shape of an ISO-639-1 code, not the particular language
+ * — greets in English rather than failing the turn.
+ */
 const LANGUAGE_NAMES: Record<string, string> = {
-  he: 'Hebrew',
   en: 'English',
+  he: 'Hebrew',
   ar: 'Arabic',
   es: 'Spanish',
   fr: 'French',
   it: 'Italian',
   ru: 'Russian',
+  de: 'German',
+  pt: 'Portuguese',
+  hi: 'Hindi',
+  zh: 'Chinese (Simplified)',
+  ja: 'Japanese',
+  ko: 'Korean',
+  tr: 'Turkish',
+  nl: 'Dutch',
+  pl: 'Polish',
+  uk: 'Ukrainian',
+  ro: 'Romanian',
+  el: 'Greek',
+  sv: 'Swedish',
+  fa: 'Persian',
+  id: 'Indonesian',
+  vi: 'Vietnamese',
+  th: 'Thai',
+  bn: 'Bengali',
 };
 
 /**
@@ -412,10 +474,14 @@ function buildSystemPrompt(input: {
     'You are warm, upbeat and a little playful — a friend who happens to run their diary.',
     '',
     'HOW YOU SPEAK:',
-    `- Always answer in ${languageName}. Never switch language, whatever language the request arrives in.`,
-    '- You are a woman. In languages that mark gender on verbs and adjectives —',
-    '  Hebrew, Arabic, Spanish, French, Italian, Russian — always speak about',
-    '  yourself in the feminine.',
+    "- Answer in the language of the user's latest message, whatever it is —",
+    '  match their language every turn. If they switch mid-conversation, switch',
+    '  with them. Never answer in a different language than they used.',
+    `- When there is nothing of theirs to mirror — the "[SESSION START]" turn —`,
+    `  speak ${languageName}.`,
+    '- You are a woman. In any language that marks gender on verbs and',
+    '  adjectives — Hebrew, Arabic, Spanish, French, Italian, Russian and the',
+    '  like — always speak about yourself in the feminine.',
     '- Your answer is read aloud, so keep it to one or two short spoken sentences',
     '  on a single line. No line breaks.',
     '- Plain speech only: no markdown, no bullet points, no emoji, no lists of ids.',
@@ -424,6 +490,10 @@ function buildSystemPrompt(input: {
     '',
     'WHAT YOU DO:',
     '- Use the tools to create, change, complete and delete tasks and events.',
+    '- Use create_note when the user asks you to remember, jot down or file',
+    '  something that is not a to-do and not on the calendar — an idea, a',
+    '  number, a thought. It carries no due date; if there is a date or',
+    '  something to act on, it is a task or an event instead.',
     '- Calling the tool is the only thing that changes anything. Saying "I am',
     '  deleting it" or "I will add that" without a tool call in the same reply',
     '  changes nothing and is a broken promise — so when the user asks for a',
@@ -462,6 +532,7 @@ function buildSystemPrompt(input: {
 
 export interface VoiceTurnInput {
   text: string;
+  /** For the opening greeting only; every other turn mirrors the user. */
   language: string;
   timezone: string;
   now: Date;
@@ -524,6 +595,20 @@ export async function runVoiceTurn(input: VoiceTurnInput): Promise<VoiceTurnResu
         input.snapshot,
         input.timezone,
       );
+
+      // A time that survives the gate still has to be a time the person can
+      // keep. That check reaches a geocoder, so it cannot live inside
+      // `collectAction`, which is synchronous and stays that way.
+      const reviewed = outcome.action
+        ? await reviewProposedTime(outcome.action, input.snapshot, input.timezone, input.now.getTime())
+        : null;
+
+      if (reviewed) {
+        actions.push(reviewed.action);
+        messages.push({ role: 'tool', tool_call_id: call.id, content: reviewed.result });
+        continue;
+      }
+
       if (outcome.action) actions.push(outcome.action);
       // Every tool_call must be answered or the next request is rejected.
       messages.push({
@@ -539,6 +624,89 @@ export async function runVoiceTurn(input: VoiceTurnInput): Promise<VoiceTurnResu
   }
 
   return { reply, actions };
+}
+
+/**
+ * Turns a create or move that cannot be kept into an offer of times that can.
+ *
+ * Returns null when there is nothing to say — a different tool, no time on it,
+ * or a time that is perfectly fine — and the caller carries on unchanged.
+ *
+ * The model is told the tool did not do what it asked for, in the same shape
+ * as any other refusal, so its closing sentence says the meeting was not made
+ * and why. What it must not do is describe the alternatives: those are on
+ * screen as something to tap, and reading four times aloud is worse than
+ * saying there are four.
+ */
+async function reviewProposedTime(
+  action: VoiceAction,
+  snapshot: Snapshot,
+  timeZone: string,
+  now: number,
+): Promise<{ action: VoiceAction; result: string } | null> {
+  if (action.tool !== 'create_event' && action.tool !== 'update_event') return null;
+
+  const args = action.arguments;
+  const startsAt = typeof args.startsAt === 'string' ? args.startsAt : null;
+  if (!startsAt) return null;
+
+  const known: KnownEvent[] = snapshot.events.map((e) => ({
+    id: e.id,
+    title: e.title,
+    startsAt: e.startsAt,
+    endsAt: e.endsAt ?? null,
+    location: e.location ?? null,
+  }));
+
+  const movingId = action.tool === 'update_event' && typeof args.id === 'string' ? args.id : undefined;
+  const moving = movingId ? known.find((e) => e.id === movingId) : undefined;
+
+  const proposed: ProposedEvent = {
+    title:
+      (typeof args.title === 'string' && args.title) ||
+      moving?.title ||
+      (typeof args.matchTitle === 'string' ? args.matchTitle : 'the meeting'),
+    startsAt,
+    endsAt: typeof args.endsAt === 'string' ? args.endsAt : null,
+    location:
+      (typeof args.location === 'string' && args.location) || moving?.location || null,
+  };
+
+  const verdict = await reviewSchedule(proposed, known, timeZone, movingId, now);
+  if (verdict.ok) return null;
+
+  const offer: VoiceAction = {
+    tool: 'offer_times',
+    arguments: {
+      reason: verdict.reason,
+      title: proposed.title,
+      requestedAt: startsAt,
+      durationMinutes: verdict.durationMinutes,
+      ...(proposed.location ? { location: proposed.location } : {}),
+      ...(verdict.reason === 'clash'
+        ? { clashWith: verdict.clashWith }
+        : { travel: verdict.travel }),
+      options: verdict.options,
+    },
+  };
+
+  const because =
+    verdict.reason === 'clash'
+      ? `"${verdict.clashWith}" is already at that time.`
+      : `They would be at "${verdict.travel.fromTitle}" in ${verdict.travel.fromPlace} and could not reach ${verdict.travel.toPlace} in ${verdict.travel.availableMinutes} minutes — it needs at least ${verdict.travel.neededMinutes}.`;
+
+  return {
+    action: offer,
+    result: JSON.stringify({
+      ok: false,
+      error: `Not scheduled. ${because}`,
+      offeredCount: verdict.options.length,
+      instruction:
+        verdict.options.length > 0
+          ? 'Say briefly why it does not work and that other times are on screen to choose from. Do NOT read the times out.'
+          : 'Say briefly why it does not work, and that nothing else is free — ask what they want to do.',
+    }),
+  };
 }
 
 /** Titles are compared as a person would hear them, not byte for byte. */

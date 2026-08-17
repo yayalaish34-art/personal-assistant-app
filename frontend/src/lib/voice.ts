@@ -2,6 +2,7 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
 import { Directory, File, Paths } from 'expo-file-system';
 
 import { api, uuid, type Task, type Event } from './api';
+import { getLanguage } from './i18n';
 
 // The voice assistant's side of the wire.
 //
@@ -17,23 +18,11 @@ const TURN_URL = `${API_BASE}/voice/turn`;
 const SPEAK_URL = `${API_BASE}/voice/speak`;
 const IMAGE_URL = `${API_BASE}/image`;
 
-/**
- * The language she listens in, thinks in and answers in — all three, since
- * they have to agree.
- *
- * Hebrew, whatever the interface is set to. She was following the interface,
- * which meant a phone running in English got an English assistant even from
- * someone speaking Hebrew to it; asked for a Hebrew assistant, this is the
- * setting that decides it.
- *
- * The cost is real and worth knowing: this is also the hint Whisper gets, so a
- * sentence spoken in another language comes back transcribed into Hebrew
- * letters phonetically rather than understood. Returning `getLanguage()` here
- * puts her back on the interface.
- */
-function spokenLanguage(): string {
-  return 'he';
-}
+// She speaks every language the user does. The recording goes up with no
+// language hint so the transcriber detects what was actually spoken, the model
+// answers in the language of what it heard, and the voice model is chosen
+// server-side from the reply text itself. The interface language only decides
+// one thing any more: the opening greeting, which has no user words to mirror.
 
 // ── Speech in ───────────────────────────────────────────────────────────────
 
@@ -63,9 +52,10 @@ export async function transcribe(uri: string): Promise<string> {
     } as unknown as Blob);
   }
 
-  // Whisper guesses the language from the audio otherwise, and guesses badly
-  // on a short Hebrew sentence — often transcribing it as phonetic English.
-  form.append('language', spokenLanguage());
+  // No language hint: a hint forces the transcription into that language, and
+  // she now takes whatever language the user speaks. The trade this makes is
+  // known — a very short utterance is occasionally detected as the wrong
+  // language — but a hint made every language except the hinted one impossible.
 
   const res = await fetch(TRANSCRIBE_URL, { method: 'POST', body: form });
   if (!res.ok) {
@@ -86,8 +76,9 @@ export async function transcribe(uri: string): Promise<string> {
  */
 export function speechUrl(text: string): string {
   // Hand-encoded rather than URLSearchParams: React Native ships an incomplete
-  // implementation, and this string is mostly non-ASCII.
-  return `${SPEAK_URL}?text=${encodeURIComponent(text)}&language=${spokenLanguage()}`;
+  // implementation, and this string is mostly non-ASCII. No language parameter:
+  // the server reads the language off the text itself.
+  return `${SPEAK_URL}?text=${encodeURIComponent(text)}`;
 }
 
 // ── The turn ────────────────────────────────────────────────────────────────
@@ -131,6 +122,68 @@ export async function generateImage(
   file.create();
   file.write(image, { encoding: 'base64' });
   return file.uri;
+}
+
+// ── When the time she was given will not work ───────────────────────────────
+
+export interface TimeOffer {
+  /** Whether the hour was taken, or free but unreachable. */
+  reason: 'clash' | 'travel';
+  title: string;
+  durationMinutes: number;
+  requestedAt: string;
+  location?: string;
+  /** The meeting already sitting there. */
+  clashWith?: string;
+  travel?: {
+    fromTitle: string;
+    fromPlace: string;
+    toPlace: string;
+    availableMinutes: number;
+    neededMinutes: number;
+  };
+  /** Free, reachable starts. Best first, as the server ranked them. */
+  options: string[];
+}
+
+const str = (v: unknown): string | undefined =>
+  typeof v === 'string' && v.trim() ? v.trim() : undefined;
+
+/**
+ * Reads an `offer_times` action, or returns null.
+ *
+ * Everything is re-checked rather than trusted: the times are sorted into
+ * clock order for display, and anything that has since gone by is dropped —
+ * the offer can sit on screen for minutes before anyone taps it.
+ */
+export function parseOffer(args: Record<string, unknown>): TimeOffer | null {
+  const title = str(args.title);
+  const requestedAt = str(args.requestedAt);
+  if (!title || !requestedAt) return null;
+
+  const raw = Array.isArray(args.options) ? args.options : [];
+  const options = raw
+    .filter((o): o is string => typeof o === 'string')
+    .filter((o) => {
+      const t = new Date(o).getTime();
+      return !Number.isNaN(t) && t > Date.now();
+    })
+    // The server ranks by closeness; a list is read down the page.
+    .sort((a, b) => new Date(a).getTime() - new Date(b).getTime());
+
+  const minutes = Number(args.durationMinutes);
+  const travel = args.travel as TimeOffer['travel'] | undefined;
+
+  return {
+    reason: args.reason === 'travel' ? 'travel' : 'clash',
+    title,
+    requestedAt,
+    durationMinutes: Number.isFinite(minutes) && minutes > 0 ? minutes : 60,
+    location: str(args.location),
+    clashWith: str(args.clashWith),
+    ...(travel && typeof travel === 'object' ? { travel } : {}),
+    options,
+  };
 }
 
 export type TurnMessage = { role: 'user' | 'assistant'; content: string };
@@ -196,7 +249,14 @@ export interface TurnResult {
 /** Everything she is allowed to know: this device's live tasks and events. */
 export async function buildSnapshot(): Promise<{
   tasks: { id: string; title: string; notes: string | null; dueAt: string | null; isDone: boolean }[];
-  events: { id: string; title: string; note: string | null; startsAt: string; endsAt: string }[];
+  events: {
+    id: string;
+    title: string;
+    note: string | null;
+    location: string | null;
+    startsAt: string;
+    endsAt: string;
+  }[];
 }> {
   const [{ tasks }, { events }] = await Promise.all([api.listTasks(), api.listEvents()]);
 
@@ -231,6 +291,9 @@ export async function buildSnapshot(): Promise<{
         id: e.id,
         title: e.title,
         note: e.note,
+        // Without this the server cannot tell Jerusalem from Haifa, and every
+        // journey looks possible.
+        location: e.location ?? null,
         startsAt: e.startsAt,
         endsAt: e.endsAt,
       })),
@@ -250,7 +313,9 @@ export async function voiceTurn(
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({
       text,
-      language: spokenLanguage(),
+      // Only the opening greeting is spoken in the interface language; every
+      // real turn comes back in whatever language the user used.
+      language: getLanguage(),
       timezone: Intl.DateTimeFormat().resolvedOptions().timeZone || 'UTC',
       now: new Date().toISOString(),
       ...(userName ? { userName } : {}),
@@ -390,6 +455,20 @@ export async function applyActions(actions: VoiceAction[]): Promise<AppliedChang
               });
               if (before.isDone) await api.updateTask(before.id, { isDone: true });
             },
+          });
+          break;
+        }
+
+        case 'create_note': {
+          const text = asString(args.text);
+          if (!text) break;
+          const id = uuid();
+          await api.createNote({ id, text, updatedAt: new Date().toISOString() });
+          applied.push({
+            // Notes have no title of their own; the undo prompt gets a snippet.
+            title: text.length > 40 ? `${text.slice(0, 40)}…` : text,
+            destructive: false,
+            undo: () => api.deleteNote(id),
           });
           break;
         }

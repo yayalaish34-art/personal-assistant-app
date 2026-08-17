@@ -19,14 +19,20 @@ export const MAX_SPEECH_CHARS = 900;
 const REQUEST_TIMEOUT_MS = 30_000;
 
 /**
- * Languages the low-latency flash model cannot speak. Hebrew is the one that
- * matters here — it is only in eleven_v3 — so Hebrew and anything else missing
- * from flash pays the slower model rather than coming out mispronounced.
+ * Scripts the low-latency flash model cannot speak. Hebrew is the one that
+ * matters — it is only in eleven_v3 — while flash covers the Latin, Cyrillic
+ * and Arabic scripts the app's other languages use.
+ *
+ * Decided from the text itself rather than a language parameter: the assistant
+ * answers in whatever language the user spoke, so the device does not know
+ * which language a reply is in when it asks for the audio — but the reply
+ * carries its own evidence. A single Hebrew word is enough to need v3, or that
+ * word comes out mispronounced.
  */
-const FLASH_CANNOT_SPEAK = new Set(['he']);
+const NEEDS_FULL_MODEL = new RegExp('[\\u0590-\\u05FF]');
 
-export function modelFor(language: string): string {
-  return FLASH_CANNOT_SPEAK.has(language)
+export function modelFor(text: string): string {
+  return NEEDS_FULL_MODEL.test(text)
     ? config.ELEVENLABS_MODEL_ID
     : config.ELEVENLABS_FAST_MODEL_ID;
 }
@@ -41,7 +47,7 @@ export function isSpeechConfigured(): boolean {
  * Throws ValidationError when speech is not configured, so the caller can fall
  * back to a silent (text-only) reply instead of failing the whole turn.
  */
-export async function synthesize(text: string, language: string): Promise<Buffer> {
+export async function synthesize(text: string): Promise<Buffer> {
   const apiKey = config.ELEVENLABS_API_KEY;
   if (!apiKey) {
     throw new ValidationError('Speech is not configured on this server');
@@ -64,7 +70,7 @@ export async function synthesize(text: string, language: string): Promise<Buffer
           'Content-Type': 'application/json',
           Accept: 'audio/mpeg',
         },
-        body: JSON.stringify({ text: trimmed, model_id: modelFor(language) }),
+        body: JSON.stringify({ text: trimmed, model_id: modelFor(trimmed) }),
         signal: controller.signal,
       },
     );

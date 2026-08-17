@@ -1,11 +1,13 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { Platform } from 'react-native';
+import * as Haptics from 'expo-haptics';
 
 import { uuid } from './api';
-import { t } from './i18n';
+import { t, locale } from './i18n';
 import {
   applyActions,
   generateImage,
+  parseOffer,
   clearConversation,
   loadConversation,
   saveConversation,
@@ -14,6 +16,7 @@ import {
   voiceTurn,
   type AppliedChange,
   type TurnMessage,
+  type TimeOffer,
 } from './voice';
 
 // The conversation itself: listen, understand, act, answer, listen again.
@@ -126,6 +129,10 @@ export type Line = {
   drawing?: boolean;
   /** `file://` uri of a picture she drew. */
   imageUri?: string;
+  /** Times to choose from, when the one asked for will not work. */
+  offer?: TimeOffer;
+  /** Which of them was taken. The line itself is the record of the choice. */
+  chosen?: string;
 };
 
 export interface VoiceSession {
@@ -140,6 +147,8 @@ export interface VoiceSession {
   toggle: () => void;
   /** Same conversation, typed instead of spoken. */
   send: (text: string) => void;
+  /** Take one of the offered times and put the meeting there. */
+  chooseTime: (lineId: string, iso: string) => void;
   undoLast: () => void;
   /** Forget the thread and start over from a greeting. */
   startOver: () => void;
@@ -160,6 +169,9 @@ export function useVoiceSession(options: {
   const [undoable, setUndoable] = useState<AppliedChange[]>([]);
 
   const historyRef = useRef<TurnMessage[]>([]);
+  /** The loop and the tap handler both need the current lines, not a render's. */
+  const linesRef = useRef<Line[]>([]);
+  linesRef.current = lines;
   const recorderRef = useRef<Recorder | null>(null);
   const playerRef = useRef<Player | null>(null);
   const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
@@ -355,7 +367,16 @@ export function useVoiceSession(options: {
       // speech and the next turn of listening, and she would appear to have
       // frozen. The placeholder goes in now and fills itself later.
       const drawings = result.actions.filter((a) => a.tool === 'create_image');
-      const rest = result.actions.filter((a) => a.tool !== 'create_image');
+      // An offer is not a change to apply; it is a question to put on screen.
+      // The server raises it in place of the create it refused, so there is
+      // nothing to undo and nothing has happened yet.
+      const offer = result.actions
+        .filter((a) => a.tool === 'offer_times')
+        .map((a) => parseOffer(a.arguments ?? {}))
+        .find((o): o is TimeOffer => o !== null);
+      const rest = result.actions.filter(
+        (a) => a.tool !== 'create_image' && a.tool !== 'offer_times',
+      );
 
       for (const draw of drawings) {
         const prompt = typeof draw.arguments?.prompt === 'string' ? draw.arguments.prompt : '';
@@ -391,12 +412,83 @@ export function useVoiceSession(options: {
         }
       }
 
-      if (result.reply) {
-        addLine('assistant', result.reply);
-        if (result.canSpeak) await speak(result.reply);
+      if (result.reply || offer) {
+        // One line carries both: what she said, and what there is to tap. They
+        // are the same turn, so splitting them would read as two answers.
+        setLines((prev) => [
+          ...prev,
+          { id: uuid(), role: 'assistant', text: result.reply, ...(offer ? { offer } : {}) },
+        ]);
+        if (result.reply && result.canSpeak) await speak(result.reply);
       }
     },
-    [addLine, onChanged, setPhase, speak, userName],
+    [onChanged, setPhase, speak, userName],
+  );
+
+  /**
+   * Puts the meeting at one of the offered times.
+   *
+   * The choice is written onto the line rather than into component state, so
+   * scrolling away and back does not forget it, and so an older offer further
+   * up the thread keeps its own answer.
+   *
+   * Both halves of the exchange go into the history. Without them she is told
+   * nothing about what was decided and will say that hour is still free.
+   */
+  const chooseTime = useCallback(
+    (lineId: string, iso: string) => {
+      const line = linesRef.current.find((l) => l.id === lineId);
+      const offer = line?.offer;
+      if (!offer || line?.chosen) return;
+      if (new Date(iso).getTime() <= Date.now()) return;
+
+      Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+      setLines((prev) => prev.map((l) => (l.id === lineId ? { ...l, chosen: iso } : l)));
+
+      void (async () => {
+        const endsAt = new Date(
+          new Date(iso).getTime() + offer.durationMinutes * 60_000,
+        ).toISOString();
+        const applied = await applyActions([
+          {
+            tool: 'create_event',
+            arguments: {
+              title: offer.title,
+              startsAt: iso,
+              endsAt,
+              ...(offer.location ? { location: offer.location } : {}),
+            },
+          },
+        ]);
+
+        if (applied.length === 0) {
+          // `applyActions` swallows its own failures, so an empty result is
+          // the only signal that nothing was written.
+          setLines((prev) =>
+            prev.map((l) => (l.id === lineId ? { ...l, chosen: undefined } : l)),
+          );
+          addLine('assistant', t('voice.offerFailed'));
+          return;
+        }
+
+        setUndoable(applied);
+        onChanged?.();
+
+        const when = new Date(iso).toLocaleString(locale(), {
+          weekday: 'long',
+          hour: '2-digit',
+          minute: '2-digit',
+        });
+        historyRef.current = [
+          ...historyRef.current,
+          { role: 'user', content: t('voice.offerPicked', { time: when }) },
+          { role: 'assistant', content: t('voice.offerDone', { time: when }) },
+        ];
+        void saveConversation(historyRef.current);
+        addLine('assistant', t('voice.offerDone', { time: when }));
+      })();
+    },
+    [addLine, onChanged],
   );
 
   // ── The loop ──────────────────────────────────────────────────────────────
@@ -569,5 +661,17 @@ export function useVoiceSession(options: {
 
   useEffect(() => () => stopPolling(), [stopPolling]);
 
-  return { state, lines, level, error, undoable, toggle, send, undoLast, startOver, end };
+  return {
+    state,
+    lines,
+    level,
+    error,
+    undoable,
+    toggle,
+    send,
+    chooseTime,
+    undoLast,
+    startOver,
+    end,
+  };
 }

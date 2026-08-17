@@ -379,7 +379,7 @@ tsc: clean. npm test: 66 passed / 3 failed — the same 3 that fail on a clean
 checkout here, all of which need a live database.
 
 ### T7.2 — Every language, not one
-DONE (local, uncommitted)
+DONE (commit 1ece7af) · deployed to Railway production 2026-08-17
 
 What to do: the assistant answers in whatever language the user speaks —
 hearing, thinking and speaking all follow the user instead of a setting.
@@ -411,7 +411,7 @@ the suite never reaches the provider). Full run: 122 passed / 16 failed — all
 localhost Postgres that is not running here, unchanged by this task.
 
 ### T7.3 — The interface in 25 languages
-DONE (local, uncommitted)
+DONE (commit 1ece7af) · backend deployed to Railway production 2026-08-17
 
 What to do: ship the app itself in many more languages. T7.2 freed the
 *assistant* to answer in any language; the *interface* was still the seven it
@@ -468,6 +468,20 @@ the provider). Translation checker: 25/25 dictionaries agree with English.
 Not verified: the app rendering in each of the 18 new languages on a device,
 and the translations themselves were not reviewed by native speakers — see the
 remaining risk in the final report.
+
+Verified against the deployed service (not just locally), 2026-08-17:
+- `/health` → 200.
+- A turn whose `text` is Spanish while `language` is `he` answers in Spanish,
+  reads the event back as "a las nueve de la mañana" rather than an ISO
+  timestamp, and calls no tool for a read-only question.
+- `[SESSION START]` with `language=th` greets in Thai — the exact request the
+  previous build answered with a 400.
+- `[SESSION START]` with `language=he` still greets in Hebrew.
+
+The frontend was **not** shipped: no EAS build was made, so the store app is
+still the old bundle. That ordering is deliberate — the backend had to accept
+the new language codes before an app that sends them goes out, and it now
+does.
 
 ---
 

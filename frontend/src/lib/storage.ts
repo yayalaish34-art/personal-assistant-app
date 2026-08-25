@@ -34,6 +34,13 @@ export const EVENT_TYPES = [
 export type EventType = (typeof EVENT_TYPES)[number];
 
 /**
+ * Asked once, only to tailor the sleep recommendation shown alongside the
+ * sleep-hours question. Never required — `unspecified` is a full answer, not
+ * a placeholder for one, and nothing else in the app reads this field.
+ */
+export type Gender = 'male' | 'female' | 'unspecified';
+
+/**
  * What the opening questionnaire learns about someone.
  *
  * This is not decoration: it rides along with every voice turn and is what
@@ -47,6 +54,7 @@ export type Profile = {
   /** Asleep from → to. Crosses midnight when `sleepStartHour > sleepEndHour`. */
   sleepStartHour: number;
   sleepEndHour: number;
+  gender: Gender;
   /** Minutes she keeps clear either side of a meeting. */
   bufferMinutes: number;
   eventTypes: EventType[];
@@ -59,6 +67,7 @@ export const defaultProfile: Profile = {
   workEndHour: 18,
   sleepStartHour: 23,
   sleepEndHour: 7,
+  gender: 'unspecified',
   bufferMinutes: 15,
   eventTypes: ['work'],
   fixedCommitments: '',

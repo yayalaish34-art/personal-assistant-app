@@ -13,7 +13,7 @@ import {
 
 import RootNavigator from './src/navigation';
 import OnboardingScreen from './src/screens/OnboardingScreen';
-import { loadLanguage, isRTL } from './src/lib/i18n';
+import { loadLanguage, isRTL, getLanguage, subscribeToLanguage } from './src/lib/i18n';
 import { storage } from './src/lib/storage';
 import { colors } from './src/theme';
 
@@ -38,15 +38,35 @@ export default function App() {
   // already understands — the first question arrives pre-answered with a good
   // guess rather than in English for everybody.
   const [langReady, setLangReady] = useState(false);
+
+  /**
+   * The language the tree is currently rendered in.
+   *
+   * It is state, and it is also the root's `key`, which is the whole point:
+   * `t()` is a plain function reading a module variable, so a component that
+   * has already rendered keeps the strings it rendered with. Changing the key
+   * throws the tree away and builds it again, so every string, every
+   * `alignStart()`, and the root's own `direction` are read fresh.
+   *
+   * This is what replaced restarting the app. It is a far cheaper way to get
+   * the same guarantee, and it does not lose whatever the person was in the
+   * middle of.
+   */
+  const [renderLang, setRenderLang] = useState(getLanguage());
+  useEffect(() => subscribeToLanguage(() => setRenderLang(getLanguage())), []);
   const [onboarded, setOnboarded] = useState<boolean | null>(null);
   useEffect(() => {
     loadLanguage().finally(() => setLangReady(true));
     storage
       .isOnboarded()
-      .then(setOnboarded)
+      // In development the questionnaire opens every launch. It is the thing
+      // being worked on, and answering it once would otherwise hide it behind
+      // a stored flag that needs the app deleted to clear. A release build
+      // keeps the real behaviour: asked once, never again.
+      .then((seen) => setOnboarded(__DEV__ ? false : seen))
       // Unreadable storage is not a reason to trap someone in onboarding
       // forever; assume they have seen it and let them into the app.
-      .catch(() => setOnboarded(true));
+      .catch(() => setOnboarded(!__DEV__));
   }, []);
 
   const [fontsLoaded] = useFonts({
@@ -69,7 +89,7 @@ export default function App() {
           tab bar, navigator chrome — laid out left-to-right in Hebrew and
           Arabic. Declaring it here also means mirroring does not wait for the
           native I18nManager flag, which only takes effect after a restart. */}
-      <View style={{ flex: 1, direction: isRTL() ? 'rtl' : 'ltr' }}>
+      <View key={renderLang} style={{ flex: 1, direction: isRTL() ? 'rtl' : 'ltr' }}>
         <StatusBar style="dark" />
         {/* The questionnaire sits outside the navigator: it is not somewhere
             you can navigate to or back out of, it is what happens before the

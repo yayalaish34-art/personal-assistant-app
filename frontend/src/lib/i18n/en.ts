@@ -178,6 +178,12 @@ export const en = {
   'profile.yourName': 'Your name',
   'profile.notifications': 'Notifications',
   'profile.notificationsBody': 'Reminders for upcoming tasks',
+  'profile.notificationsBlocked': 'Notifications are turned off',
+  'profile.notificationsBlockedBody':
+    'This app is not allowed to notify you, so reminders will not arrive. You can turn them on in the system settings.',
+  'profile.openSettings': 'Open settings',
+  'profile.week': 'Your week',
+  'profile.weekBody': 'What she plans around. Change these whenever they change.',
   'profile.language': 'Language',
   'profile.languageBody': 'Changes the app’s text and layout direction',
   'profile.storage': 'Storage',
@@ -229,6 +235,31 @@ export const en = {
   'onboarding.back': 'Back',
   'onboarding.skip': 'Skip for now',
   'onboarding.finish': 'Start using the app',
+  'onboarding.intro.title': 'This is how it works',
+  'onboarding.intro.body':
+    'Three things worth knowing before we start. The rest takes about a minute.',
+  'onboarding.intro.talk.title': 'Talk to her',
+  'onboarding.intro.talk.body':
+    'Say what is happening, the way you would say it to a person. No forms unless you want them.',
+  'onboarding.intro.plan.title': 'She keeps the diary',
+  'onboarding.intro.plan.body':
+    'Tasks and meetings land in the right place, at a time that actually works around the rest of your day.',
+  'onboarding.intro.private.title': 'It stays on your phone',
+  'onboarding.intro.private.body':
+    'Your diary is stored on this device. There is no account and nothing to sign into.',
+
+  'onboarding.permissions.title': 'Two things she needs',
+  'onboarding.permissions.body':
+    'Both are optional, and you can change your mind later in Settings.',
+  'onboarding.permissions.allow': 'Allow',
+  'onboarding.permissions.allowed': 'Allowed',
+  'onboarding.permissions.optional':
+    'Skip either one and the app still works — you can type to her instead of talking, and everything is saved either way.',
+  'onboarding.permissions.mic.title': 'Microphone',
+  'onboarding.permissions.mic.body': 'So you can talk to her instead of typing.',
+  'onboarding.permissions.notify.title': 'Reminders',
+  'onboarding.permissions.notify.body': 'So she can tell you before something starts.',
+
   'onboarding.language.title': 'Choose your language',
   'onboarding.language.body':
     'The app and your assistant will both speak it. You can change this later.',
@@ -238,6 +269,17 @@ export const en = {
   'onboarding.work.body': 'She keeps meetings inside these hours unless you say otherwise.',
   'onboarding.sleep.title': 'When do you sleep?',
   'onboarding.sleep.body': 'Nothing will ever be scheduled in here.',
+  'onboarding.sleep.genderPrompt': 'Quick one, so we can tailor the recommendation:',
+  'onboarding.sleep.gender.male': 'Man',
+  'onboarding.sleep.gender.female': 'Woman',
+  'onboarding.sleep.gender.skip': "I'd rather not say",
+  'onboarding.sleep.recommended.male': 'Recommended for you: 7–9 hours a night.',
+  'onboarding.sleep.recommended.female':
+    'Recommended for you: 7–9 hours a night — many women feel best nearer the top of that range.',
+  'onboarding.sleep.recommended.unspecified': 'Recommended: 7–9 hours a night for most adults.',
+  'onboarding.sleep.fit.good': '{{hours}}h a night — right on target.',
+  'onboarding.sleep.fit.short': '{{hours}}h a night — a little short of that.',
+  'onboarding.sleep.fit.long': '{{hours}}h a night — comfortably more than that.',
   'onboarding.buffer.title': 'How much room between meetings?',
   'onboarding.buffer.body': 'Time to travel, write things up, or breathe.',
   'onboarding.buffer.none': 'Back to back',

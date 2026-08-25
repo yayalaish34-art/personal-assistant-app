@@ -165,6 +165,32 @@ export async function loadLanguage(): Promise<Language> {
 // ours) cannot put us in a reload loop.
 const RELOAD_MARKER_KEY = '@pa/rtlReloadedFor';
 
+// ── Telling the app the language moved ──────────────────────────────────────
+//
+// Nothing here re-renders on its own: `t()` is a plain function call and
+// `current` is a module variable, so a component that has already rendered
+// keeps the strings it rendered with. The app used to restart on every change,
+// which made that moot. Without the restart, something has to say so.
+
+type LanguageListener = () => void;
+const listeners = new Set<LanguageListener>();
+
+/** Subscribe to language changes. Returns the unsubscribe. */
+export function subscribeToLanguage(fn: LanguageListener): () => void {
+  listeners.add(fn);
+  return () => listeners.delete(fn);
+}
+
+function announceLanguage(): void {
+  for (const fn of [...listeners]) {
+    try {
+      fn();
+    } catch {
+      // A listener that throws is not a reason to leave the rest unnotified.
+    }
+  }
+}
+
 /**
  * Restarts the JS surface. The native RTL flag is read when a surface starts,
  * so flipping it only shows up after a reload.
@@ -223,31 +249,26 @@ async function applyDirection(): Promise<boolean> {
     return false;
   }
 
+  // Allowed, but not forced, and never restarted for.
+  //
+  // `forceRTL` writes a native flag that is only read when a surface starts,
+  // so honouring it meant restarting the app on every change of direction.
+  // Two things made that unnecessary. The root declares `direction` itself,
+  // and on the new architecture Yoga mirrors the whole subtree from it with no
+  // restart at all. And the flag frequently would not stick in the first place
+  // — inside Expo Go it is Expo Go's own manifest that decides direction, not
+  // ours — so the restart was often paid for and bought nothing.
+  //
+  // The guard that went with it keyed on the language code rather than on the
+  // direction, which is why switching between two left-to-right languages
+  // restarted too: the code differed, so the guard read it as a new attempt.
   I18nManager.allowRTL(rtl);
-  if (I18nManager.isRTL === rtl) {
-    // Already laid out the right way; clear the marker so a later switch is
-    // free to restart again.
-    try {
-      await AsyncStorage.removeItem(RELOAD_MARKER_KEY);
-    } catch {
-      /* the marker is only a loop guard */
-    }
-    return false;
-  }
-
-  I18nManager.forceRTL(rtl);
   try {
-    if ((await AsyncStorage.getItem(RELOAD_MARKER_KEY)) === current) {
-      // We restarted for this language once and the flag still did not stick,
-      // so restarting again would achieve nothing. The root `direction` style
-      // is what mirrors the app from here.
-      return false;
-    }
-    await AsyncStorage.setItem(RELOAD_MARKER_KEY, current);
+    await AsyncStorage.removeItem(RELOAD_MARKER_KEY);
   } catch {
-    /* without storage, fall through and restart once per launch */
+    /* a leftover marker from an older build is harmless */
   }
-  return reloadApp();
+  return false;
 }
 
 /**
@@ -260,13 +281,16 @@ async function applyDirection(): Promise<boolean> {
  * its way back up.
  */
 export async function setLanguage(next: Language): Promise<boolean> {
-  const directionChanged = LANGUAGES[next].rtl !== LANGUAGES[current].rtl;
   current = next;
   try {
     await AsyncStorage.setItem(STORAGE_KEY, next);
   } catch {
     /* the in-memory value still applies for this session */
   }
-  const restarting = await applyDirection();
-  return directionChanged && !restarting;
+  await applyDirection();
+  // Whoever is listening re-reads `current` and re-renders; nobody is asked to
+  // restart anything. Kept returning a boolean so the callers' "you have to
+  // restart by hand" path survives if a platform ever needs it again.
+  announceLanguage();
+  return false;
 }

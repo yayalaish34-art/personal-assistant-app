@@ -3,6 +3,7 @@ import * as Notifications from 'expo-notifications';
 import { Platform } from 'react-native';
 
 import { t } from './i18n';
+import { REMINDER_CHANNEL, requestNotifications } from './permissions';
 
 // Reminders, scheduled on the device.
 //
@@ -51,33 +52,20 @@ async function writeHandles(handles: Handles): Promise<void> {
 }
 
 /**
- * Asks once, the first time something is actually scheduled.
+ * Whether a reminder may be posted.
  *
- * Returns false when the user said no, in which case scheduling quietly does
- * nothing — a refused permission is not an error worth interrupting a
- * conversation for.
+ * Onboarding normally asks for this with a sentence of context, so by the time
+ * anything is scheduled the answer is usually already known and no prompt
+ * appears. Someone who skipped that step is still asked here, at the point of
+ * first use. Either way a no is not an error worth interrupting anyone for:
+ * scheduling quietly does nothing and the row saves as it always did.
+ *
+ * The Android channel is created inside `requestNotifications`, including on
+ * the already-granted path — see the note there about why that matters.
  */
 async function ensurePermission(): Promise<boolean> {
   configureOnce();
-  try {
-    const current = await Notifications.getPermissionsAsync();
-    if (current.granted) return true;
-    if (!current.canAskAgain) return false;
-    const asked = await Notifications.requestPermissionsAsync();
-    if (!asked.granted) return false;
-
-    if (Platform.OS === 'android') {
-      // Android 8+ drops notifications that arrive without a channel.
-      await Notifications.setNotificationChannelAsync('reminders', {
-        name: 'Reminders',
-        importance: Notifications.AndroidImportance.HIGH,
-        sound: 'default',
-      });
-    }
-    return true;
-  } catch {
-    return false;
-  }
+  return (await requestNotifications()) === 'granted';
 }
 
 /** Drops the reminder belonging to a row, if it has one. */
@@ -122,7 +110,7 @@ export async function scheduleReminder(input: {
       trigger: {
         type: Notifications.SchedulableTriggerInputTypes.DATE,
         date: input.at,
-        ...(Platform.OS === 'android' ? { channelId: 'reminders' } : {}),
+        ...(Platform.OS === 'android' ? { channelId: REMINDER_CHANNEL } : {}),
       },
     });
     const handles = await readHandles();

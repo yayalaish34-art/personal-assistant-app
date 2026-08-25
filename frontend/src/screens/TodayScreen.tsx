@@ -1,11 +1,11 @@
 import { useCallback, useMemo, useState } from 'react';
-import { ScrollView, View, Text, Pressable, StyleSheet } from 'react-native';
+import { ScrollView, View, Text, Pressable, StyleSheet, Modal } from 'react-native';
 import { useFocusEffect, useNavigation } from '@react-navigation/native';
 import type { NativeStackNavigationProp } from '@react-navigation/native-stack';
 import * as Haptics from 'expo-haptics';
 import { LinearGradient } from 'expo-linear-gradient';
-import Svg, { Path } from 'react-native-svg';
 import {
+  X,
   Plus,
   CalendarDays,
   ChevronsRight,
@@ -37,7 +37,16 @@ import {
   type AgendaItem,
 } from '../lib/tasks';
 import type { RootStackParamList } from '../navigation';
-import { colors, spacing, font, radius, TILES, TILE_INK, DAY_CARD } from '../theme';
+import {
+  colors,
+  spacing,
+  font,
+  radius,
+  TILES,
+  TILE_INK,
+  DAY_CARD,
+  type TileColor,
+} from '../theme';
 import { t, locale, alignStart } from '../lib/i18n';
 import { getWeather, isDaylightNow, type Sky, type Weather } from '../lib/weather';
 
@@ -81,19 +90,59 @@ function greetingNow(): string {
   return t('today.greeting.evening');
 }
 
-/** A quiet upward trend — decorative, not plotted from real history. */
-function Sparkline({ color }: { color: string }) {
+/**
+ * A panel that slides up over the page.
+ *
+ * Used where tapping a figure should explain it rather than navigate: there is
+ * nowhere to go for "how did I get to 75%", and pushing a whole screen for
+ * four numbers would be a worse answer than showing the four numbers.
+ */
+function Sheet({
+  open,
+  title,
+  body,
+  onClose,
+  children,
+}: {
+  open: boolean;
+  title: string;
+  body?: string;
+  onClose: () => void;
+  children: React.ReactNode;
+}) {
   return (
-    <Svg width={64} height={26} viewBox="0 0 64 26">
-      <Path
-        d="M1,23 L10,18 L19,20 L28,12 L37,14 L46,6 L55,8 L63,2"
-        stroke={color}
-        strokeWidth={2.4}
-        strokeLinecap="round"
-        strokeLinejoin="round"
-        fill="none"
-      />
-    </Svg>
+    <Modal visible={open} transparent animationType="slide" onRequestClose={onClose}>
+      {/* The backdrop closes it. A panel with only one way out is a panel
+          people feel trapped by. */}
+      <Pressable style={styles.backdrop} onPress={onClose} accessibilityRole="button" />
+      <View style={styles.sheet}>
+        <View style={styles.sheetGrip} />
+        <View style={styles.sheetHead}>
+          <View style={{ flex: 1 }}>
+            <Text style={[styles.sheetTitle, { textAlign: alignStart() }]}>{title}</Text>
+            {body ? (
+              <Text style={[styles.sheetBody, { textAlign: alignStart() }]}>{body}</Text>
+            ) : null}
+          </View>
+          <Pressable onPress={onClose} style={styles.sheetClose} accessibilityRole="button">
+            <X color={colors.text} size={18} strokeWidth={2.4} />
+          </Pressable>
+        </View>
+        {children}
+      </View>
+    </Modal>
+  );
+}
+
+/** One figure in a sheet: what it is on one side, how many on the other. */
+function SheetStat({ label, value, tile }: { label: string; value: string; tile: TileColor }) {
+  return (
+    <View style={[styles.sheetStat, { backgroundColor: TILES[tile] }]}>
+      <Text style={[styles.sheetStatLabel, { textAlign: alignStart() }]} numberOfLines={1}>
+        {label}
+      </Text>
+      <Text style={styles.sheetStatValue}>{value}</Text>
+    </View>
   );
 }
 
@@ -102,6 +151,8 @@ export default function TodayScreen() {
   const [name, setName] = useState('');
   const [items, setItems] = useState<AgendaItem[]>([]);
   const [weather, setWeather] = useState<Weather | null>(null);
+  /** Which explaining panel is open, if any. */
+  const [sheet, setSheet] = useState<'progress' | 'alerts' | null>(null);
 
   const today = toDateStr(new Date());
 
@@ -166,12 +217,28 @@ export default function TodayScreen() {
     navigation.navigate('Assistant');
   };
 
-  const goToTab = (screen: string) =>
+  const goToTab = (screen: string) => {
+    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
     (
       navigation as unknown as {
         navigate: (name: string, params: { screen: string }) => void;
       }
     ).navigate('Tabs', { screen });
+  };
+
+  const openSheet = (which: 'progress' | 'alerts') => {
+    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+    setSheet(which);
+  };
+
+  /** Everything still ahead on the clock today — what the bell is about. */
+  const ahead = useMemo(() => {
+    const nowTime = `${String(now.getHours()).padStart(2, '0')}:${String(now.getMinutes()).padStart(2, '0')}`;
+    return items
+      .filter((i) => i.time && i.time >= nowTime)
+      .sort((a, b) => a.time.localeCompare(b.time));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [items]);
 
   return (
     <Screen>
@@ -179,7 +246,7 @@ export default function TodayScreen() {
         // Greeting by time of day, then the name — "Good morning, Yonatan!"
         name={`${greetingNow()}, ${name || t('today.friend')}!`}
         photoUri={PROFILE_PHOTO_URI}
-        onBellPress={() => Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light)}
+        onBellPress={() => openSheet('alerts')}
       />
 
       <ScrollView showsVerticalScrollIndicator={false} contentContainerStyle={styles.content}>
@@ -227,7 +294,16 @@ export default function TodayScreen() {
         {/* ── Two rows of two: counts up top, texture underneath ── */}
         <View style={styles.grid}>
           <View style={styles.gridRow}>
-            <View style={[styles.gridTile, { backgroundColor: TILES.green }]}>
+            <Pressable
+              onPress={() => goToTab('Calendar')}
+              style={({ pressed }) => [
+                styles.gridTile,
+                { backgroundColor: TILES.green },
+                pressed && styles.tilePressed,
+              ]}
+              accessibilityRole="button"
+              accessibilityLabel={`${stats.tasks} ${t('today.tile.tasks')}`}
+            >
               <Text style={[styles.gridNumber, start]}>{stats.tasks}</Text>
               <Text style={[styles.gridLabelPrimary, start]} numberOfLines={1}>
                 {t('today.tile.tasks')}
@@ -235,9 +311,18 @@ export default function TodayScreen() {
               <Text style={[styles.gridLabelSecondary, start]} numberOfLines={1}>
                 {t('today.tile.today')}
               </Text>
-            </View>
+            </Pressable>
 
-            <View style={[styles.gridTile, { backgroundColor: TILES.blue }]}>
+            <Pressable
+              onPress={() => goToTab('Calendar')}
+              style={({ pressed }) => [
+                styles.gridTile,
+                { backgroundColor: TILES.blue },
+                pressed && styles.tilePressed,
+              ]}
+              accessibilityRole="button"
+              accessibilityLabel={`${stats.events} ${t('today.tile.events')}`}
+            >
               <View style={styles.gridTileTop}>
                 <Text style={[styles.gridNumber, start]}>{stats.events}</Text>
                 <CalendarDays color={TILE_INK.blue} size={22} strokeWidth={1.8} />
@@ -248,11 +333,21 @@ export default function TodayScreen() {
               <Text style={[styles.gridLabelSecondary, start]} numberOfLines={1}>
                 {t('today.tile.today')}
               </Text>
-            </View>
+            </Pressable>
           </View>
 
           <View style={styles.gridRow}>
-            <View style={[styles.gridTile, styles.checklistTile, { backgroundColor: TILES.green }]}>
+            <Pressable
+              onPress={() => goToTab('Calendar')}
+              style={({ pressed }) => [
+                styles.gridTile,
+                styles.checklistTile,
+                { backgroundColor: TILES.green },
+                pressed && styles.tilePressed,
+              ]}
+              accessibilityRole="button"
+              accessibilityLabel={t('today.tasks.viewAll')}
+            >
               {(['78%', '58%', '42%'] as const).map((w, i) => (
                 <View key={i} style={styles.checklistRow}>
                   {i < 2 ? (
@@ -263,17 +358,29 @@ export default function TodayScreen() {
                   <View style={[styles.checklistBar, { width: w }]} />
                 </View>
               ))}
-            </View>
+            </Pressable>
 
-            <View style={[styles.gridTile, styles.productivityTile, { backgroundColor: TILES.neutral }]}>
+            <Pressable
+              onPress={() => openSheet('progress')}
+              style={({ pressed }) => [
+                styles.gridTile,
+                styles.productivityTile,
+                { backgroundColor: TILES.neutral },
+                pressed && styles.tilePressed,
+              ]}
+              accessibilityRole="button"
+              accessibilityLabel={`${stats.productivity}% ${t('today.tile.productivity')}`}
+            >
               <View>
                 <Text style={[styles.gridNumber, start]}>{stats.productivity}%</Text>
                 <Text style={[styles.gridLabelPrimary, start]} numberOfLines={1}>
                   {t('today.tile.productivity')}
                 </Text>
               </View>
-              <Sparkline color={colors.success} />
-            </View>
+              <View style={styles.progressTrack}>
+                <View style={[styles.progressFill, { width: `${stats.productivity}%` }]} />
+              </View>
+            </Pressable>
           </View>
         </View>
 
@@ -334,11 +441,132 @@ export default function TodayScreen() {
           </View>
         </Pressable>
       </ScrollView>
+
+      {/* ── What the number on the tile is made of ── */}
+      <Sheet
+        open={sheet === 'progress'}
+        title={t('today.progress.title')}
+        onClose={() => setSheet(null)}
+      >
+        <SheetStat
+          label={t('today.progress.completed')}
+          value={String(stats.done)}
+          tile="green"
+        />
+        <SheetStat
+          label={t('today.progress.pending')}
+          value={String(Math.max(0, stats.tasks + stats.events - stats.done))}
+          tile="yellow"
+        />
+        <SheetStat
+          label={t('today.progress.total')}
+          value={String(stats.tasks + stats.events)}
+          tile="blue"
+        />
+        <SheetStat
+          label={t('today.tile.productivity')}
+          value={`${stats.productivity}%`}
+          tile="neutral"
+        />
+      </Sheet>
+
+      {/* ── What the bell is actually about: everything still ahead today ── */}
+      <Sheet
+        open={sheet === 'alerts'}
+        title={t('profile.notifications')}
+        body={t('profile.notificationsBody')}
+        onClose={() => setSheet(null)}
+      >
+        {ahead.length === 0 ? (
+          <Text style={[styles.sheetEmpty, start]}>{t('today.noEvents')}</Text>
+        ) : (
+          ahead.slice(0, 6).map((item) => (
+            <Pressable
+              key={`${item.kind}-${item.id}`}
+              onPress={() => {
+                setSheet(null);
+                navigation.navigate('EntryForm', { kind: item.kind, id: item.id });
+              }}
+              style={styles.sheetRow}
+              accessibilityRole="button"
+            >
+              <Text style={styles.sheetRowTime}>{to12h(item.time)}</Text>
+              <Text style={[styles.sheetRowTitle, start]} numberOfLines={1}>
+                {item.title}
+              </Text>
+              <ChevronsRight color={colors.textMuted} size={16} strokeWidth={2} />
+            </Pressable>
+          ))
+        )}
+      </Sheet>
     </Screen>
   );
 }
 
 const styles = StyleSheet.create({
+  /** A press that reads as a press without moving anything under the finger. */
+  tilePressed: { opacity: 0.72 },
+
+  backdrop: { flex: 1, backgroundColor: 'rgba(20, 21, 15, 0.35)' },
+  sheet: {
+    backgroundColor: colors.surface,
+    borderTopStartRadius: 28,
+    borderTopEndRadius: 28,
+    paddingHorizontal: spacing.md + 2,
+    paddingTop: 10,
+    paddingBottom: spacing.xl + spacing.md,
+    gap: spacing.md,
+  },
+  sheetGrip: {
+    alignSelf: 'center',
+    width: 40,
+    height: 4,
+    borderRadius: 2,
+    backgroundColor: colors.border,
+    marginBottom: spacing.sm,
+  },
+  sheetHead: { flexDirection: 'row', alignItems: 'flex-start', gap: 12 },
+  sheetTitle: { fontSize: 20, ...font(700), color: colors.text, letterSpacing: -0.4 },
+  sheetBody: { fontSize: 14, ...font(500), color: colors.text, opacity: 0.62, marginTop: 3 },
+  sheetClose: {
+    width: 34,
+    height: 34,
+    borderRadius: 17,
+    backgroundColor: colors.surfaceAlt,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  sheetStat: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 12,
+    borderRadius: radius.md,
+    paddingHorizontal: 16,
+    paddingVertical: 14,
+  },
+  sheetStatLabel: { flex: 1, fontSize: 15, ...font(600), color: colors.text },
+  sheetStatValue: { fontSize: 22, ...font(700), color: colors.text, letterSpacing: -0.4 },
+  sheetRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 12,
+    paddingVertical: 11,
+  },
+  sheetRowTime: {
+    minWidth: 62,
+    fontSize: 13,
+    ...font(700),
+    color: colors.text,
+  },
+  sheetRowTitle: { flex: 1, fontSize: 15, ...font(600), color: colors.text },
+  sheetEmpty: {
+    fontSize: 15,
+    ...font(500),
+    color: colors.text,
+    opacity: 0.55,
+    paddingVertical: spacing.md,
+  },
+
   content: { paddingTop: spacing.lg, paddingBottom: spacing.md },
 
   headlineBlock: { marginBottom: spacing.md },
@@ -372,6 +600,17 @@ const styles = StyleSheet.create({
   checklistBar: { height: 8, borderRadius: 4, backgroundColor: 'rgba(20, 21, 15, 0.16)' },
 
   productivityTile: { justifyContent: 'space-between' },
+  progressTrack: {
+    height: 8,
+    borderRadius: 4,
+    backgroundColor: 'rgba(20, 21, 15, 0.10)',
+    overflow: 'hidden',
+  },
+  progressFill: {
+    height: '100%',
+    borderRadius: 4,
+    backgroundColor: colors.success,
+  },
 
   wideCard: {
     flexDirection: 'row',

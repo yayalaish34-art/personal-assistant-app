@@ -31,14 +31,29 @@ import {
   ChevronRight,
   ChevronDown,
   ChevronUp,
+  CalendarClock,
 } from 'lucide-react-native';
 
 import { Screen, GreetingHeader, Card, Button } from '../components/ui';
-import { storage, defaultSettings, Settings } from '../lib/storage';
+import {
+  HourRangePicker,
+  BufferPicker,
+  EventTypePicker,
+  GenderPicker,
+  SleepInsight,
+} from '../components/ProfileFields';
+import {
+  storage,
+  defaultSettings,
+  defaultProfile,
+  type Settings,
+  type Profile,
+} from '../lib/storage';
+import { getNotificationState, requestNotifications } from '../lib/permissions';
 import { api, type Task, type Event } from '../lib/api';
 import { toDateStr, isLive } from '../lib/tasks';
 import { colors, spacing, font, radius, TILES, TILE_INK, type TileColor } from '../theme';
-import { t, LANGUAGES, getLanguage, setLanguage, type Language } from '../lib/i18n';
+import { t, LANGUAGES, getLanguage, setLanguage, alignStart, type Language } from '../lib/i18n';
 
 // Placeholder portrait, matching the Today header avatar.
 const PROFILE_PHOTO_URI = 'https://i.pravatar.cc/220?img=47';
@@ -108,6 +123,7 @@ function HeroStat({
 
 export default function SettingsScreen() {
   const [settings, setSettings] = useState<Settings>(defaultSettings);
+  const [profile, setProfile] = useState<Profile>(defaultProfile);
   const [events, setEvents] = useState<Event[]>([]);
   const [tasks, setTasks] = useState<Task[]>([]);
   const [lang, setLang] = useState<Language>(getLanguage());
@@ -147,8 +163,18 @@ export default function SettingsScreen() {
   const load = useCallback(() => {
     let active = true;
     (async () => {
-      const s = await storage.getSettings();
-      if (active) setSettings(s);
+      const [s, p, notify] = await Promise.all([
+        storage.getSettings(),
+        storage.getProfile(),
+        getNotificationState(),
+      ]);
+      if (!active) return;
+      // The stored preference defaults to on, but the system permission behind
+      // it defaults to nothing. Showing the switch on while the OS is dropping
+      // every notification is the lie this screen used to tell; the OS wins.
+      // Only a firm 'denied' overrides — an unreadable state is not evidence.
+      setSettings(notify === 'denied' ? { ...s, notifications: false } : s);
+      setProfile(p);
       try {
         // /me is the authoritative profile; the local displayName is only a
         // fallback for when there's no session yet.
@@ -195,9 +221,45 @@ export default function SettingsScreen() {
 
   const completion = stats.total ? Math.round((stats.done / stats.total) * 100) : 0;
 
+  /**
+   * Read while rendering rather than from `StyleSheet.create`: stylesheets are
+   * built when the module is first imported, which can be before the language
+   * has resolved, and a start-aligned label baked in as `left` sits at the
+   * wrong edge of every Hebrew and Arabic card.
+   */
+  const alignStartStyle = { textAlign: alignStart() } as const;
+
+  /**
+   * Turning reminders on is a request, not a preference.
+   *
+   * The switch used to flip on its own and change nothing: the system
+   * permission behind it was asked for separately, the first time a reminder
+   * was scheduled, so someone who had refused there saw a switch that said
+   * "on" above notifications that never arrived. Now the switch asks, and
+   * refuses to claim it is on when it is not.
+   */
+  const toggleNotifications = async (on: boolean) => {
+    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+    if (!on) {
+      setSettings((s) => ({ ...s, notifications: false }));
+      return;
+    }
+
+    const state = await requestNotifications();
+    setSettings((s) => ({ ...s, notifications: state === 'granted' }));
+    if (state === 'denied') {
+      // Refused once, iOS never prompts again; the only route left is the
+      // system settings, so say that rather than leaving a dead switch.
+      Alert.alert(t('profile.notificationsBlocked'), t('profile.notificationsBlockedBody'), [
+        { text: t('common.cancel'), style: 'cancel' },
+        { text: t('profile.openSettings'), onPress: () => Linking.openSettings() },
+      ]);
+    }
+  };
+
   const save = async () => {
     Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
-    await storage.saveSettings(settings);
+    await Promise.all([storage.saveSettings(settings), storage.saveProfile(profile)]);
     // Mirror the name onto the device profile so other screens can read it.
     if (settings.displayName.trim()) {
       await api.updateMe({ name: settings.displayName.trim() });
@@ -356,14 +418,91 @@ export default function SettingsScreen() {
             </View>
             <Switch
               value={settings.notifications}
-              onValueChange={(notifications) => {
-                Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
-                setSettings((s) => ({ ...s, notifications }));
-              }}
+              onValueChange={toggleNotifications}
               trackColor={{ true: colors.primary, false: colors.surfaceAlt }}
               thumbColor="#FFFFFF"
             />
           </View>
+        </Card>
+
+        {/* ── How the week is shaped ──
+             The answers from the opening questionnaire, which until now could
+             only be given once. They ride along with every voice turn and are
+             what keep her from offering a meeting at two in the morning, so
+             they have to be changeable when someone changes job or shift. ── */}
+        <Card>
+          <View style={styles.cardHeaderRow}>
+            <IconSquare tile="blue">
+              <CalendarClock color={TILE_INK.blue} size={18} />
+            </IconSquare>
+            <View style={{ flex: 1 }}>
+              <Text style={styles.cardTitle}>{t('profile.week')}</Text>
+              <Text style={styles.mutedText}>{t('profile.weekBody')}</Text>
+            </View>
+          </View>
+
+          <Text style={[styles.fieldLabel, alignStartStyle]}>{t('onboarding.work.title')}</Text>
+          <HourRangePicker
+            from={profile.workStartHour}
+            to={profile.workEndHour}
+            onFrom={(workStartHour) => setProfile((p) => ({ ...p, workStartHour }))}
+            onTo={(workEndHour) => setProfile((p) => ({ ...p, workEndHour }))}
+            tile="green"
+            surface={TILES.neutral}
+          />
+
+          <Text style={[styles.fieldLabel, alignStartStyle]}>{t('onboarding.sleep.title')}</Text>
+          <Text style={[styles.mutedText, alignStartStyle, { marginBottom: spacing.sm }]}>
+            {t('onboarding.sleep.genderPrompt')}
+          </Text>
+          <GenderPicker
+            value={profile.gender}
+            onChange={(gender) => setProfile((p) => ({ ...p, gender }))}
+            surface={TILES.neutral}
+          />
+          <HourRangePicker
+            from={profile.sleepStartHour}
+            to={profile.sleepEndHour}
+            onFrom={(sleepStartHour) => setProfile((p) => ({ ...p, sleepStartHour }))}
+            onTo={(sleepEndHour) => setProfile((p) => ({ ...p, sleepEndHour }))}
+            tile="blue"
+            surface={TILES.neutral}
+          />
+          <SleepInsight
+            gender={profile.gender}
+            startHour={profile.sleepStartHour}
+            endHour={profile.sleepEndHour}
+            surface={TILES.neutral}
+          />
+
+          <Text style={[styles.fieldLabel, alignStartStyle]}>{t('onboarding.buffer.title')}</Text>
+          <BufferPicker
+            value={profile.bufferMinutes}
+            onChange={(bufferMinutes) => setProfile((p) => ({ ...p, bufferMinutes }))}
+            surface={TILES.neutral}
+          />
+
+          <Text style={[styles.fieldLabel, alignStartStyle, { marginTop: spacing.md }]}>
+            {t('onboarding.types.title')}
+          </Text>
+          <EventTypePicker
+            value={profile.eventTypes}
+            onChange={(eventTypes) => setProfile((p) => ({ ...p, eventTypes }))}
+            surface={TILES.neutral}
+          />
+
+          <Text style={[styles.fieldLabel, alignStartStyle, { marginTop: spacing.md }]}>
+            {t('onboarding.fixed.title')}
+          </Text>
+          <TextInput
+            value={profile.fixedCommitments}
+            onChangeText={(fixedCommitments) => setProfile((p) => ({ ...p, fixedCommitments }))}
+            placeholder={t('onboarding.fixed.placeholder')}
+            placeholderTextColor={colors.textMuted}
+            style={[styles.input, styles.inputTall, alignStartStyle]}
+            multiline
+            textAlignVertical="top"
+          />
         </Card>
 
         {/* ── Language ── */}
@@ -630,6 +769,15 @@ const styles = StyleSheet.create({
     color: colors.text,
   },
   inputIcon: { position: 'absolute', end: 14 },
+  inputTall: { minHeight: 92, paddingEnd: 14 },
+
+  /** Sits above a picker inside a card — the question, in a quieter voice. */
+  fieldLabel: {
+    ...font(600),
+    fontSize: 13.5,
+    color: colors.textMuted,
+    marginBottom: 8,
+  },
 
   langGrid: { flexDirection: 'row', flexWrap: 'wrap', gap: 8 },
   langChip: {

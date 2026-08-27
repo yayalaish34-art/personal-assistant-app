@@ -251,36 +251,101 @@ describe('collectAction — create_image', () => {
   });
 });
 
-// ─── Notes own no row either, and there is no update or delete tool for one ──
+// ─── Shopping and money own no row either: no id, no duplicate check ─────
 
-describe('collectAction — create_note', () => {
-  it('36. text is enough', () => {
-    const { action } = call('create_note', { text: 'the wifi password is on the fridge' });
-    expect(action).toEqual({
-      tool: 'create_note',
-      arguments: { text: 'the wifi password is on the fridge' },
-    });
+describe('collectAction — add_shopping_item', () => {
+  it('36. a name is enough', () => {
+    const { action } = call('add_shopping_item', { name: 'milk' });
+    expect(action).toEqual({ tool: 'add_shopping_item', arguments: { name: 'milk' } });
   });
 
-  it('37. empty text → refused', () => {
-    const { action } = call('create_note', { text: '' });
+  it('37. an empty name → refused', () => {
+    const { action } = call('add_shopping_item', { name: '' });
     expect(action).toBeNull();
   });
 
-  it('38. an agenda holding the same words does not block it', () => {
-    // The duplicate check keys on `title`, which this tool has none of — a
-    // note is never "already on the agenda".
+  it('38. an aisle it does not stock → refused', () => {
+    const { action } = call('add_shopping_item', { name: 'milk', category: 'frozen' });
+    expect(action).toBeNull();
+  });
+
+  it('39. a task of the same name does not block it', () => {
+    // The duplicate gate keys on `title`, which this tool has none of — a task
+    // called "Buy milk" is not the milk on the list.
     const { action } = call(
-      'create_note',
-      { text: 'Buy milk' },
+      'add_shopping_item',
+      { name: 'Buy milk' },
       snapshot({ tasks: [task({ title: 'Buy milk' })] }),
     );
     expect(action).not.toBeNull();
   });
 
-  it('39. it is never asked for an id', () => {
-    const { action } = call('create_note', { text: 'call the plumber back' });
+  it('40. it is never asked for an id', () => {
+    const { action } = call('add_shopping_item', { name: 'bread', quantity: '2' });
     expect(action?.arguments).not.toHaveProperty('id');
+    expect(action?.arguments).toMatchObject({ quantity: '2' });
+  });
+});
+
+describe('collectAction — add_money_entry', () => {
+  it('41. kind, description and amount are enough', () => {
+    const { action } = call('add_money_entry', {
+      kind: 'expense',
+      description: 'lunch',
+      amount: 42,
+    });
+    expect(action).toEqual({
+      tool: 'add_money_entry',
+      arguments: { kind: 'expense', description: 'lunch', amount: 42 },
+    });
+  });
+
+  it('42. a negative amount → refused, because `kind` carries the sign', () => {
+    const { action } = call('add_money_entry', {
+      kind: 'expense',
+      description: 'lunch',
+      amount: -42,
+    });
+    expect(action).toBeNull();
+  });
+
+  it('43. a zero amount → refused', () => {
+    const { action } = call('add_money_entry', {
+      kind: 'income',
+      description: 'nothing',
+      amount: 0,
+    });
+    expect(action).toBeNull();
+  });
+
+  it('44. a kind that is neither in nor out → refused', () => {
+    const { action } = call('add_money_entry', {
+      kind: 'transfer',
+      description: 'moving money',
+      amount: 10,
+    });
+    expect(action).toBeNull();
+  });
+
+  it('45. a date that is not YYYY-MM-DD → refused', () => {
+    const { action } = call('add_money_entry', {
+      kind: 'expense',
+      description: 'petrol',
+      amount: 200,
+      date: '14/03/2026',
+    });
+    expect(action).toBeNull();
+  });
+
+  it('46. a well-formed date passes through untouched', () => {
+    const { action } = call('add_money_entry', {
+      kind: 'income',
+      description: 'March salary',
+      amount: 9000,
+      date: '2026-03-10',
+      category: 'salary',
+    });
+    expect(action?.arguments).toMatchObject({ date: '2026-03-10', category: 'salary' });
   });
 });
 

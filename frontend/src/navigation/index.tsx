@@ -4,7 +4,7 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { createBottomTabNavigator, type BottomTabBarProps } from '@react-navigation/bottom-tabs';
 import { createNativeStackNavigator } from '@react-navigation/native-stack';
 import * as Haptics from 'expo-haptics';
-import { House, Calendar, StickyNote, User, Mic } from 'lucide-react-native';
+import { House, Calendar, ShoppingCart, Wallet, Mic } from 'lucide-react-native';
 import { LinearGradient } from 'expo-linear-gradient';
 import Svg, {
   Path,
@@ -19,8 +19,9 @@ import { colors, NAV_BAR, IRIDESCENT } from '../theme';
 import { t } from '../lib/i18n';
 import { playTapSound } from '../lib/tapSound';
 import TodayScreen from '../screens/TodayScreen';
-import NotesScreen from '../screens/NotesScreen';
+import ShoppingScreen from '../screens/ShoppingScreen';
 import CalendarScreen from '../screens/CalendarScreen';
+import FinanceScreen from '../screens/FinanceScreen';
 import SettingsScreen from '../screens/SettingsScreen';
 import EntryFormScreen from '../screens/EntryFormScreen';
 import AssistantScreen from '../screens/AssistantScreen';
@@ -31,6 +32,10 @@ export type RootStackParamList = {
   // With an `id` the form edits that row instead of creating a new one.
   EntryForm: { kind: 'task' | 'event'; id?: string };
   Assistant: undefined;
+  // Settings lost its tab to Finance, but nothing else can change the
+  // language or the sleep hours the assistant schedules around, so it stays
+  // in the stack behind the gear on Finance rather than being deleted.
+  Settings: undefined;
 };
 
 const Tab = createBottomTabNavigator();
@@ -39,8 +44,8 @@ const Stack = createNativeStackNavigator<RootStackParamList>();
 const ICONS = {
   Today: House,
   Calendar: Calendar,
-  Notes: StickyNote,
-  Settings: User,
+  Shopping: ShoppingCart,
+  Finance: Wallet,
 } as const;
 
 // ── Bar geometry ──────────────────────────────────────────────────────────
@@ -387,10 +392,14 @@ function Tabs() {
         component={CalendarScreen}
         options={{ title: t('tab.calendar') }}
       />
-      <Tab.Screen name="Notes" component={NotesScreen} options={{ title: t('tab.notes') }} />
       <Tab.Screen
-        name="Settings"
-        component={SettingsScreen}
+        name="Shopping"
+        component={ShoppingScreen}
+        options={{ title: t('tab.notes') }}
+      />
+      <Tab.Screen
+        name="Finance"
+        component={FinanceScreen}
         options={{ title: t('tab.profile') }}
       />
     </Tab.Navigator>
@@ -415,6 +424,11 @@ export default function RootNavigator() {
       <Stack.Screen
         name="Assistant"
         component={AssistantScreen}
+        options={{ presentation: 'modal' }}
+      />
+      <Stack.Screen
+        name="Settings"
+        component={SettingsScreen}
         options={{ presentation: 'modal' }}
       />
     </Stack.Navigator>

@@ -1,7 +1,15 @@
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { Directory, File, Paths } from 'expo-file-system';
 
-import { api, uuid, type Task, type Event } from './api';
+import {
+  api,
+  uuid,
+  type Task,
+  type Event,
+  type ShoppingCategory,
+  type IncomeCategory,
+  type ExpenseCategory,
+} from './api';
 import { getLanguage } from './i18n';
 import { storage } from './storage';
 
@@ -387,6 +395,13 @@ export interface AppliedChange {
 
 const asString = (v: unknown): string | undefined => (typeof v === 'string' ? v : undefined);
 
+/** Local YYYY-MM-DD, for a money entry the user gave no date for. */
+function localToday(): string {
+  const d = new Date();
+  const p = (n: number) => String(n).padStart(2, '0');
+  return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}`;
+}
+
 /** ISO in, ISO out — and anything unparseable is treated as absent. */
 function isoOrUndefined(v: unknown): string | undefined {
   const s = asString(v);
@@ -498,16 +513,48 @@ export async function applyActions(actions: VoiceAction[]): Promise<AppliedChang
           break;
         }
 
-        case 'create_note': {
-          const text = asString(args.text);
-          if (!text) break;
+        case 'add_shopping_item': {
+          const name = asString(args.name);
+          if (!name) break;
           const id = uuid();
-          await api.createNote({ id, text, updatedAt: new Date().toISOString() });
+          await api.createShoppingItem({
+            id,
+            name,
+            quantity: asString(args.quantity) ?? null,
+            note: asString(args.note) ?? null,
+            category: (asString(args.category) as ShoppingCategory | undefined) ?? null,
+            updatedAt: new Date().toISOString(),
+          });
           applied.push({
-            // Notes have no title of their own; the undo prompt gets a snippet.
-            title: text.length > 40 ? `${text.slice(0, 40)}…` : text,
+            title: name,
             destructive: false,
-            undo: () => api.deleteNote(id),
+            undo: () => api.deleteShoppingItem(id),
+          });
+          break;
+        }
+
+        case 'add_money_entry': {
+          const description = asString(args.description);
+          const kind = args.kind === 'income' ? 'income' : 'expense';
+          const amount = Number(args.amount);
+          if (!description || !Number.isFinite(amount) || amount <= 0) break;
+          const id = uuid();
+          await api.createMoneyEntry({
+            id,
+            kind,
+            description,
+            amount,
+            // The server only sends a date when the user gave one; today is
+            // the sane default for "I just spent forty on lunch".
+            date: asString(args.date) ?? localToday(),
+            category:
+              (asString(args.category) as IncomeCategory | ExpenseCategory | undefined) ?? null,
+            updatedAt: new Date().toISOString(),
+          });
+          applied.push({
+            title: description,
+            destructive: false,
+            undo: () => api.deleteMoneyEntry(id),
           });
           break;
         }

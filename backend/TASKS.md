@@ -690,3 +690,56 @@ the live geocoder for four real city pairs.
 **Not verified:** the tiles rendering on a device. The frontend cannot bundle —
 `src/navigation/index.tsx` imports `../screens/NotesScreen`, which does not
 exist yet — and that is in-flight work from another thread, not this one.
+
+---
+
+## Phase 10 — Shopping and money
+
+### T10.1 — Two screens swapped, and the tools behind them
+DONE (local, uncommitted)
+
+**Outside the frozen scope, and named in it.** `CLAUDE.md` §1 freezes the
+build at `SPEC_MVP_V1.1.md` and lists **shopping lists** explicitly among the
+things that are out of scope and priced separately. It was requested directly
+and in detail, so it is here, marked, and easy to find later — the same
+treatment T8.1 got.
+
+What to do: replace the app's Notes and Profile screens with a shopping list
+and a personal finance screen, and point the assistant at them.
+
+Backend files: `src/modules/voice/agent.ts` (`create_note` removed from
+`ACTION_TOOLS` and `ARG_SCHEMAS`; `add_shopping_item` and `add_money_entry`
+added, plus the routing lines in the system prompt) · `tests/voice.test.ts`
+(cases 36–46 rewritten) · `API_CONTRACT.md`.
+
+Shape: both new tools follow `create_image` and the old `create_note` — they
+own no row, so `collectAction` checks them against neither the ownership gate
+(no id) nor the duplicate gate (no title), and `snapshot` gains no new arrays.
+The model only ever *adds*; editing and deleting stay on the device, where the
+two screens do their own CRUD against `frontend/src/lib/api.ts`.
+
+`add_money_entry.amount` is `z.number().positive()` deliberately: `kind`
+carries the direction, and a negative expense would subtract twice once the
+device applied it. `date` is a strict `YYYY-MM-DD` regex and optional — the
+device fills its own local today, because the server does not know the
+device's day.
+
+**`create_note` was removed rather than left in place.** The notes screen it
+fed no longer exists, so a note the model filed would have been written to
+storage with nothing able to read it back. That is marked `BREAKING` in
+`API_CONTRACT.md` for any other client that implemented it.
+
+Tests: `tests/voice.test.ts` 36–40 for shopping (name required, unknown aisle
+refused, never asked for an id, a same-named task does not trip the duplicate
+gate) and 41–46 for money (negative and zero amounts refused, unknown `kind`
+refused, malformed date refused, a good date passes through untouched).
+tsc clean (frontend and backend). Voice suite: 51 passed / 2 skipped.
+
+Not verified: either screen on a real device, and neither tool end-to-end
+through the model — the client points at the Railway deployment, which does
+not have this code until it is redeployed.
+
+**Remaining risk:** until the backend is deployed, `add_shopping_item` and
+`add_money_entry` do not exist in production, so asking her to add milk or log
+an expense does nothing. The screens themselves work regardless — they read
+and write local storage and do not need the server.

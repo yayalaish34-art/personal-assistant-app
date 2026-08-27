@@ -21,6 +21,9 @@ const KEYS = {
   tasks: '@pa/tasks',
   events: '@pa/events',
   notes: '@pa/notes',
+  shopping: '@pa/shopping',
+  money: '@pa/money',
+  debts: '@pa/debts',
   chat: '@pa/chat',
   user: '@pa/user',
   seeded: '@pa/seeded',
@@ -99,6 +102,86 @@ export type Event = {
 export type Note = {
   id: string;
   text: string;
+  createdAt: string;
+  updatedAt: string;
+  deletedAt: string | null;
+};
+
+// ── Shopping ────────────────────────────────────────────────────────────────
+
+/** Aisles, roughly in the order a supermarket is walked. */
+export const SHOPPING_CATEGORIES = [
+  'produce',
+  'dairy',
+  'meat',
+  'bakery',
+  'cleaning',
+  'pharmacy',
+  'other',
+] as const;
+
+export type ShoppingCategory = (typeof SHOPPING_CATEGORIES)[number];
+
+/** One line on the shopping list. Only `name` is ever required. */
+export type ShoppingItem = {
+  id: string;
+  name: string;
+  /** Free text — "2", "500g", "a couple" — because that is how people shop. */
+  quantity: string | null;
+  note: string | null;
+  category: ShoppingCategory | null;
+  isBought: boolean;
+  createdAt: string;
+  updatedAt: string;
+  deletedAt: string | null;
+};
+
+// ── Money ───────────────────────────────────────────────────────────────────
+
+export const INCOME_CATEGORIES = ['salary', 'business', 'refund', 'gift', 'other'] as const;
+export type IncomeCategory = (typeof INCOME_CATEGORIES)[number];
+
+export const EXPENSE_CATEGORIES = [
+  'shopping',
+  'food',
+  'housing',
+  'bills',
+  'transport',
+  'health',
+  'fun',
+  'other',
+] as const;
+export type ExpenseCategory = (typeof EXPENSE_CATEGORIES)[number];
+
+/**
+ * Money in or money out. One row type rather than two tables: the fields are
+ * identical, the sign is carried by `kind`, and every total on the screen is a
+ * filter over the same list.
+ */
+export type MoneyEntry = {
+  id: string;
+  kind: 'income' | 'expense';
+  description: string;
+  /** Always positive. `kind` decides which way it counts. */
+  amount: number;
+  /** Local YYYY-MM-DD, matching how the rest of the app writes plain dates. */
+  date: string;
+  category: IncomeCategory | ExpenseCategory | null;
+  createdAt: string;
+  updatedAt: string;
+  deletedAt: string | null;
+};
+
+/** Money owed, in either direction, until it is settled. */
+export type Debt = {
+  id: string;
+  /** 'owe' → I owe them. 'owed' → they owe me. */
+  direction: 'owe' | 'owed';
+  person: string;
+  amount: number;
+  description: string | null;
+  date: string;
+  isSettled: boolean;
   createdAt: string;
   updatedAt: string;
   deletedAt: string | null;
@@ -479,6 +562,187 @@ export const api = {
     );
   },
 
+  // ── Shopping list ──
+  listShopping: async () => ({
+    items: live(await readList<ShoppingItem>(KEYS.shopping)),
+  }),
+
+  createShoppingItem: async (i: {
+    id: string;
+    name: string;
+    quantity?: string | null;
+    note?: string | null;
+    category?: ShoppingCategory | null;
+    updatedAt: string;
+  }) => {
+    const rows = await readList<ShoppingItem>(KEYS.shopping);
+    // Same id twice is a no-op, keeping the old create-is-idempotent rule.
+    const existing = rows.find((r) => r.id === i.id);
+    if (existing) return existing;
+
+    const item: ShoppingItem = {
+      id: i.id,
+      name: i.name,
+      quantity: i.quantity ?? null,
+      note: i.note ?? null,
+      category: i.category ?? null,
+      isBought: false,
+      createdAt: nowIso(),
+      updatedAt: i.updatedAt,
+      deletedAt: null,
+    };
+    await writeList(KEYS.shopping, [item, ...rows]);
+    return item;
+  },
+
+  updateShoppingItem: async (
+    id: string,
+    patch: Partial<Pick<ShoppingItem, 'name' | 'quantity' | 'note' | 'category' | 'isBought'>> & {
+      updatedAt?: string;
+    },
+  ) => {
+    const rows = await readList<ShoppingItem>(KEYS.shopping);
+    const i = rows.findIndex((r) => r.id === id);
+    if (i === -1) throw new ApiError(404, 'NOT_FOUND', 'Item not found');
+    rows[i] = { ...rows[i], ...patch, updatedAt: patch.updatedAt ?? nowIso() };
+    await writeList(KEYS.shopping, rows);
+    return rows[i];
+  },
+
+  deleteShoppingItem: async (id: string) => {
+    const rows = await readList<ShoppingItem>(KEYS.shopping);
+    await writeList(
+      KEYS.shopping,
+      rows.filter((r) => r.id !== id),
+    );
+  },
+
+  /** Clears the trolley: everything already ticked off, in one go. */
+  clearBoughtShopping: async () => {
+    const rows = await readList<ShoppingItem>(KEYS.shopping);
+    await writeList(
+      KEYS.shopping,
+      rows.filter((r) => !r.isBought),
+    );
+  },
+
+  // ── Money: income and expenses ──
+  listMoney: async () => ({
+    entries: live(await readList<MoneyEntry>(KEYS.money)),
+  }),
+
+  createMoneyEntry: async (e: {
+    id: string;
+    kind: 'income' | 'expense';
+    description: string;
+    amount: number;
+    date: string;
+    category?: IncomeCategory | ExpenseCategory | null;
+    updatedAt: string;
+  }) => {
+    const rows = await readList<MoneyEntry>(KEYS.money);
+    const existing = rows.find((r) => r.id === e.id);
+    if (existing) return existing;
+
+    const entry: MoneyEntry = {
+      id: e.id,
+      kind: e.kind,
+      description: e.description,
+      // Stored positive whatever arrives: `kind` is what carries the sign, and
+      // a negative expense would subtract twice on the summary.
+      amount: Math.abs(e.amount),
+      date: e.date,
+      category: e.category ?? null,
+      createdAt: nowIso(),
+      updatedAt: e.updatedAt,
+      deletedAt: null,
+    };
+    await writeList(KEYS.money, [entry, ...rows]);
+    return entry;
+  },
+
+  updateMoneyEntry: async (
+    id: string,
+    patch: Partial<Pick<MoneyEntry, 'description' | 'amount' | 'date' | 'category' | 'kind'>> & {
+      updatedAt?: string;
+    },
+  ) => {
+    const rows = await readList<MoneyEntry>(KEYS.money);
+    const i = rows.findIndex((r) => r.id === id);
+    if (i === -1) throw new ApiError(404, 'NOT_FOUND', 'Entry not found');
+    const next = { ...rows[i], ...patch, updatedAt: patch.updatedAt ?? nowIso() };
+    if (patch.amount !== undefined) next.amount = Math.abs(patch.amount);
+    rows[i] = next;
+    await writeList(KEYS.money, rows);
+    return rows[i];
+  },
+
+  deleteMoneyEntry: async (id: string) => {
+    const rows = await readList<MoneyEntry>(KEYS.money);
+    await writeList(
+      KEYS.money,
+      rows.filter((r) => r.id !== id),
+    );
+  },
+
+  // ── Debts ──
+  listDebts: async () => ({
+    debts: live(await readList<Debt>(KEYS.debts)),
+  }),
+
+  createDebt: async (d: {
+    id: string;
+    direction: 'owe' | 'owed';
+    person: string;
+    amount: number;
+    description?: string | null;
+    date: string;
+    updatedAt: string;
+  }) => {
+    const rows = await readList<Debt>(KEYS.debts);
+    const existing = rows.find((r) => r.id === d.id);
+    if (existing) return existing;
+
+    const debt: Debt = {
+      id: d.id,
+      direction: d.direction,
+      person: d.person,
+      amount: Math.abs(d.amount),
+      description: d.description ?? null,
+      date: d.date,
+      isSettled: false,
+      createdAt: nowIso(),
+      updatedAt: d.updatedAt,
+      deletedAt: null,
+    };
+    await writeList(KEYS.debts, [debt, ...rows]);
+    return debt;
+  },
+
+  updateDebt: async (
+    id: string,
+    patch: Partial<
+      Pick<Debt, 'direction' | 'person' | 'amount' | 'description' | 'date' | 'isSettled'>
+    > & { updatedAt?: string },
+  ) => {
+    const rows = await readList<Debt>(KEYS.debts);
+    const i = rows.findIndex((r) => r.id === id);
+    if (i === -1) throw new ApiError(404, 'NOT_FOUND', 'Debt not found');
+    const next = { ...rows[i], ...patch, updatedAt: patch.updatedAt ?? nowIso() };
+    if (patch.amount !== undefined) next.amount = Math.abs(patch.amount);
+    rows[i] = next;
+    await writeList(KEYS.debts, rows);
+    return rows[i];
+  },
+
+  deleteDebt: async (id: string) => {
+    const rows = await readList<Debt>(KEYS.debts);
+    await writeList(
+      KEYS.debts,
+      rows.filter((r) => r.id !== id),
+    );
+  },
+
   // ── Agenda: events and tasks for a day or range, in local time ──
   agendaForDate: async (date: string) => {
     await seedOnce();
@@ -521,7 +785,15 @@ export const api = {
 
   /** Wipes every stored row. Used by "Clear all data" in Profile. */
   clearAll: async () => {
-    await AsyncStorage.multiRemove([KEYS.tasks, KEYS.events, KEYS.notes, KEYS.chat]);
+    await AsyncStorage.multiRemove([
+      KEYS.tasks,
+      KEYS.events,
+      KEYS.notes,
+      KEYS.shopping,
+      KEYS.money,
+      KEYS.debts,
+      KEYS.chat,
+    ]);
     // Rows are gone, so their alarms must go with them.
     await cancelAllReminders();
   },

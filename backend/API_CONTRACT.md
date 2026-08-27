@@ -412,13 +412,26 @@ Response `200`:
   (or of `language`, for the greeting turn).
 - `actions` — what the **client** must apply to its own storage, in order.
   Tools: `create_task` · `update_task` · `complete_task` · `delete_task` ·
-  `create_event` · `update_event` · `delete_event` · `create_note`. Times are
-  ISO-8601 with an explicit offset.
-- `create_note` files free text with no due date and nothing to complete:
-  `{ "tool": "create_note", "arguments": { "text": "…" } }`. It carries no
-  `matchTitle` and no id — there is no `update_note` or `delete_note` tool, and
-  no `notes` array in `snapshot`; the model only ever adds one, it never reads
-  or changes an existing one.
+  `create_event` · `update_event` · `delete_event` · `add_shopping_item` ·
+  `add_money_entry`. Times are ISO-8601 with an explicit offset.
+- `add_shopping_item` puts one thing on the shopping list:
+  `{ "tool": "add_shopping_item", "arguments": { "name": "milk",
+  "quantity": "2", "note": "…", "category": "dairy" } }`. Only `name` is
+  required. `category` is one of `produce` `dairy` `meat` `bakery` `cleaning`
+  `pharmacy` `other`. One call per item — three items is three actions.
+- `add_money_entry` records money in or out:
+  `{ "tool": "add_money_entry", "arguments": { "kind": "expense",
+  "description": "lunch", "amount": 42, "date": "2026-03-10",
+  "category": "food" } }`. `kind` is `income` or `expense`; **`amount` is
+  always positive** and `kind` alone carries the direction, so a client must
+  not negate it a second time. `date` is `YYYY-MM-DD` and is omitted when the
+  user gave none — the client fills in its own local today. `category` is one
+  of `salary` `business` `refund` `gift` (income) or `shopping` `food`
+  `housing` `bills` `transport` `health` `fun` `other` (expense).
+- Both carry no `matchTitle` and no id: they name nothing in `snapshot`, so
+  neither the ownership gate nor the duplicate gate applies to them. There are
+  no update or delete tools for either, and no shopping or money arrays in
+  `snapshot` — the model only ever adds a row, it never reads or changes one.
 - `create_image` also arrives in `actions`, and is the one that changes no
   storage: `{ "tool": "create_image", "arguments": { "prompt": "…",
   "shape": "square" } }`. The client is expected to call `POST /image` with
@@ -512,6 +525,17 @@ Response `200`:
 ---
 
 ## Change log
+
+- `2026-08-27` — **BREAKING** for any client that implemented it: the
+  `create_note` tool is **removed** from the `actions` of `POST /voice/turn`,
+  and `add_shopping_item` and `add_money_entry` take its place. The notes
+  screen it fed no longer exists in the app, so a note the model filed had
+  nowhere to be read; the two new tools feed the shopping list and the finance
+  screen that replaced it. Same stateless shape as the tools around them: no
+  id, no `matchTitle`, and no new arrays in `snapshot`. A client that ignores
+  unknown tools degrades to doing nothing for these two rather than breaking.
+  **Outside the frozen MVP v1.1 scope** (`CLAUDE.md` §1, which names shopping
+  lists explicitly); built on an explicit request, same as `create_image`.
 
 - `2026-08-17` — `POST /voice/turn` accepts an optional `profile`, the output
   of the new opening questionnaire. Sleep hours and the preferred gap between

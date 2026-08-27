@@ -11,7 +11,7 @@ import {
   Image,
   Linking,
 } from 'react-native';
-import { useFocusEffect } from '@react-navigation/native';
+import { useFocusEffect, useNavigation } from '@react-navigation/native';
 import * as Haptics from 'expo-haptics';
 import {
   User,
@@ -32,6 +32,7 @@ import {
   ChevronDown,
   ChevronUp,
   CalendarClock,
+  X,
 } from 'lucide-react-native';
 
 import { Screen, GreetingHeader, Card, Button } from '../components/ui';
@@ -122,6 +123,7 @@ function HeroStat({
 }
 
 export default function SettingsScreen() {
+  const navigation = useNavigation();
   const [settings, setSettings] = useState<Settings>(defaultSettings);
   const [profile, setProfile] = useState<Profile>(defaultProfile);
   const [events, setEvents] = useState<Event[]>([]);
@@ -312,6 +314,18 @@ export default function SettingsScreen() {
 
   return (
     <Screen>
+      {/* Settings opens as a modal from Finance now that it has no tab of
+          its own, so it has to carry its own way out. */}
+      <View style={styles.closeRow}>
+        <Pressable
+          onPress={() => navigation.goBack()}
+          style={styles.closeBtn}
+          accessibilityRole="button"
+          accessibilityLabel={t('notes.close')}
+        >
+          <X color={colors.text} size={20} strokeWidth={2.2} />
+        </Pressable>
+      </View>
       <GreetingHeader
         name={t('today.hello', { name: settings.displayName || t('today.friend') })}
         photoUri={PROFILE_PHOTO_URI}
@@ -631,6 +645,15 @@ export default function SettingsScreen() {
 }
 
 const styles = StyleSheet.create({
+  closeRow: { flexDirection: 'row', marginBottom: spacing.sm },
+  closeBtn: {
+    width: 40,
+    height: 40,
+    borderRadius: 20,
+    backgroundColor: colors.surfaceAlt,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
   content: { paddingTop: spacing.md, paddingBottom: spacing.md },
 
   headline: {

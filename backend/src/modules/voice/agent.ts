@@ -182,15 +182,65 @@ export const ACTION_TOOLS = [
   {
     type: 'function' as const,
     function: {
-      name: 'create_note',
+      name: 'add_shopping_item',
       description:
-        'File a short note to remember — an idea, a phone number, something to keep, not to do. No due date and nothing to complete: use create_task instead when it is something the user needs to act on.',
+        'Put something on the shopping list — groceries and household things to buy. Not a task and not an appointment: use create_task when it is something to do rather than something to buy.',
       parameters: {
         type: 'object',
         properties: {
-          text: { type: 'string', description: 'The note itself, in full, as the user said it.' },
+          name: { type: 'string', description: 'The item alone, no quantity words.' },
+          quantity: {
+            type: 'string',
+            description: 'As the user said it — "2", "500g", "a bunch". Omit if they gave none.',
+          },
+          note: { type: 'string', description: 'Anything extra they specified, such as a brand.' },
+          category: {
+            type: 'string',
+            enum: ['produce', 'dairy', 'meat', 'bakery', 'cleaning', 'pharmacy', 'other'],
+            description: 'The aisle, when it is obvious. Omit rather than guessing.',
+          },
         },
-        required: ['text'],
+        required: ['name'],
+      },
+    },
+  },
+  {
+    type: 'function' as const,
+    function: {
+      name: 'add_money_entry',
+      description:
+        'Record money that came in or went out, when the user says they earned, spent or paid something.',
+      parameters: {
+        type: 'object',
+        properties: {
+          kind: { type: 'string', enum: ['income', 'expense'] },
+          description: { type: 'string', description: 'What it was for, in a few words.' },
+          amount: { type: 'number', description: 'A positive number. `kind` carries the direction.' },
+          date: {
+            type: 'string',
+            description: 'YYYY-MM-DD. Defaults to today when the user did not say.',
+          },
+          category: {
+            type: 'string',
+            enum: [
+              'salary',
+              'business',
+              'refund',
+              'gift',
+              'shopping',
+              'food',
+              'housing',
+              'bills',
+              'transport',
+              'health',
+              'fun',
+              'other',
+            ],
+            description:
+              'Income takes salary/business/refund/gift/other; an expense takes the rest. Omit rather than guessing.',
+          },
+        },
+        required: ['kind', 'description', 'amount'],
       },
     },
   },
@@ -277,8 +327,37 @@ const ARG_SCHEMAS = {
   }),
   complete_task: z.object({ id: z.string().min(1), matchTitle: z.string().min(1) }),
   delete_task: z.object({ id: z.string().min(1), matchTitle: z.string().min(1) }),
-  create_note: z.object({
-    text: z.string().min(1).max(2000),
+  add_shopping_item: z.object({
+    name: z.string().min(1).max(200),
+    quantity: z.string().max(60).optional(),
+    note: z.string().max(300).optional(),
+    category: z
+      .enum(['produce', 'dairy', 'meat', 'bakery', 'cleaning', 'pharmacy', 'other'])
+      .optional(),
+  }),
+  add_money_entry: z.object({
+    kind: z.enum(['income', 'expense']),
+    description: z.string().min(1).max(300),
+    // Positive only: `kind` is what carries the sign, and a negative expense
+    // would subtract twice once the device applies it.
+    amount: z.number().positive().finite(),
+    date: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional(),
+    category: z
+      .enum([
+        'salary',
+        'business',
+        'refund',
+        'gift',
+        'shopping',
+        'food',
+        'housing',
+        'bills',
+        'transport',
+        'health',
+        'fun',
+        'other',
+      ])
+      .optional(),
   }),
   create_event: z.object({
     title: z.string().min(1),
@@ -543,10 +622,10 @@ function buildSystemPrompt(input: {
     '',
     'WHAT YOU DO:',
     '- Use the tools to create, change, complete and delete tasks and events.',
-    '- Use create_note when the user asks you to remember, jot down or file',
-    '  something that is not a to-do and not on the calendar — an idea, a',
-    '  number, a thought. It carries no due date; if there is a date or',
-    '  something to act on, it is a task or an event instead.',
+    '- Use add_shopping_item when they mention something to buy — groceries,',
+    '  household things. One call per item: three items is three calls.',
+    '- Use add_money_entry when they say they earned, spent or paid something.',
+    '  The amount is always positive; `kind` says which way it went.',
     '- Calling the tool is the only thing that changes anything. Saying "I am',
     '  deleting it" or "I will add that" without a tool call in the same reply',
     '  changes nothing and is a broken promise — so when the user asks for a',

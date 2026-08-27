@@ -2,10 +2,10 @@ import { Router } from 'express';
 import { z } from 'zod';
 
 import { asyncHandler, parseBody, parseQuery } from '../../lib/http.js';
-import { chatLimiter, speechLimiter } from '../../middleware/rateLimit.js';
+import { voiceTurnLimiter, voiceMediaLimiter } from '../../middleware/rateLimit.js';
 import { ValidationError } from '../../lib/errors.js';
 import { config } from '../../config.js';
-import { runVoiceTurn, snapshotSchema, profileSchema } from './agent.js';
+import { runVoiceTurn, snapshotSchema, profileSchema, didNotCatchThat } from './agent.js';
 import { synthesize, isSpeechConfigured, MAX_SPEECH_CHARS } from './tts.js';
 
 /**
@@ -34,8 +34,19 @@ const languageCode = z
   .regex(/^[a-z]{2}$/, 'Expected a two-letter ISO-639-1 language code');
 
 const turnBody = z.object({
-  /** What the user said, already transcribed. */
-  text: z.string().min(1).max(2000),
+  /**
+   * What the user said, already transcribed.
+   *
+   * Empty is allowed, and that is the whole point. A transcriber handed one
+   * short word, a cough, or a sentence the room drowned out returns an empty
+   * string — not an error, just nothing it was willing to swear to. This used
+   * to require at least one character, so those turns came back 400, and the
+   * client counts three refusals in a row before it stops listening. Saying a
+   * single name quietly three times was enough to end the conversation. Now
+   * the turn succeeds and she asks for it again, which is what a person would
+   * do.
+   */
+  text: z.string().max(2000),
   /**
    * The language of the opening greeting — the one turn with no user words to
    * mirror. Every real turn is answered in whatever language the user spoke.
@@ -71,7 +82,7 @@ const turnBody = z.object({
 
 voiceRouter.post(
   '/voice/turn',
-  chatLimiter,
+  voiceTurnLimiter,
   asyncHandler(async (req, res) => {
     const body = parseBody(turnBody, req);
 
@@ -79,7 +90,21 @@ voiceRouter.post(
       throw new ValidationError('The assistant is not configured on this server');
     }
 
-    const { reply, actions } = await runVoiceTurn({
+    // Nothing was made out. Answered here rather than by the model: there is
+    // no sentence to reason about, the reply is the same every time, and
+    // spending a round trip and a model call to be told so would add seconds
+    // to the one turn that most needs to be quick.
+    if (!body.text.trim()) {
+      res.json({
+        reply: didNotCatchThat(body.language),
+        actions: [],
+        heard: false,
+        canSpeak: isSpeechConfigured(),
+      });
+      return;
+    }
+
+    const { reply, actions, consultedFreeTime } = await runVoiceTurn({
       text: body.text,
       language: body.language,
       timezone: body.timezone,
@@ -93,6 +118,15 @@ voiceRouter.post(
     res.json({
       reply,
       actions,
+      // Diagnostic, and deliberately not part of the contract the client reads.
+      consultedFreeTime,
+      /**
+       * Whether there were words to answer. Always true here; the empty-audio
+       * path above is the only place it is false. A client that ignores it
+       * loses nothing — the reply reads correctly either way — but one that
+       * reads it can keep listening without speaking the prompt aloud.
+       */
+      heard: true,
       // The device only asks for audio when there is a voice to ask for.
       canSpeak: isSpeechConfigured(),
     });
@@ -115,7 +149,7 @@ const speakQuery = z.object({
 
 voiceRouter.get(
   '/voice/speak',
-  speechLimiter,
+  voiceMediaLimiter,
   asyncHandler(async (req, res) => {
     const { text } = parseQuery(speakQuery, req);
 

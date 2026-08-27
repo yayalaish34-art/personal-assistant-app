@@ -407,9 +407,49 @@ describe('POST /voice/turn — validation', () => {
     expect(res.body.error.code).toBe('VALIDATION_ERROR');
   });
 
-  it('22. empty text → 400', async () => {
+  /**
+   * Empty text is not a client error, it is a normal outcome of listening.
+   *
+   * The transcriber returns an empty string for a word said too quietly, a
+   * cough, or a room that drowned the sentence out. This used to be a 400,
+   * and the client stops listening after three refusals in a row — so saying
+   * one short name indistinctly three times ended the conversation and left a
+   * screen that could only be revived by leaving it. It now answers.
+   */
+  it('22. empty text → 200 and a spoken request to repeat, not a rejection', async () => {
     const res = await request(app).post('/voice/turn').send({ text: '' });
-    expect(res.status).toBe(400);
+    expect(res.status).toBe(200);
+    expect(res.body.heard).toBe(false);
+    expect(res.body.actions).toEqual([]);
+    // Something sayable — this reply is read aloud, so an empty one is a bug.
+    expect(res.body.reply.length).toBeGreaterThan(0);
+  });
+
+  it('22b. whitespace-only text is treated the same as empty', async () => {
+    // Spaces and a newline: what a silent clip trims away to.
+    const res = await request(app)
+      .post('/voice/turn')
+      .send({ text: '  ' + String.fromCharCode(10) + ' ' });
+    expect(res.status).toBe(200);
+    expect(res.body.heard).toBe(false);
+  });
+
+  it('22c. the request to repeat comes back in the language asked for', async () => {
+    const [he, ru] = await Promise.all([
+      request(app).post('/voice/turn').send({ text: '', language: 'he' }),
+      request(app).post('/voice/turn').send({ text: '', language: 'ru' }),
+    ]);
+    expect(he.body.reply).not.toBe(ru.body.reply);
+    // Hebrew script, rather than a specific sentence — the wording is free to
+    // change, the language it is in is not.
+    expect(he.body.reply).toMatch(/[֐-׿]/);
+  });
+
+  it('22d. a language with no line of its own falls back to English, not to nothing', async () => {
+    // 'zz' is well-formed and unknown, the same case the greeting handles.
+    const res = await request(app).post('/voice/turn').send({ text: '', language: 'zz' });
+    expect(res.status).toBe(200);
+    expect(res.body.reply.length).toBeGreaterThan(0);
   });
 
   it('23. text past the cap → 400', async () => {

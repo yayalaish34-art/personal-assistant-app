@@ -414,6 +414,12 @@ Response `200`:
   Tools: `create_task` · `update_task` · `complete_task` · `delete_task` ·
   `create_event` · `update_event` · `delete_event` · `add_shopping_item` ·
   `add_money_entry`. Times are ISO-8601 with an explicit offset.
+- `find_free_time` is a **question, not a change**, and never appears in
+  `actions`. The server answers it inside the turn and the client has nothing
+  to apply. It exists because free time cannot be read off the agenda: an entry
+  with no `endsAt` still occupies real time, a drive between two locations eats
+  the gap before it, and some evenings are effectively over once an event
+  starts. See **Free time** below.
 - `add_shopping_item` puts one thing on the shopping list:
   `{ "tool": "add_shopping_item", "arguments": { "name": "milk",
   "quantity": "2", "note": "…", "category": "dairy" } }`. Only `name` is
@@ -445,8 +451,46 @@ Response `200`:
   the user instead.
 - `canSpeak` — whether `/voice/speak` is configured. When false the client
   shows the reply without audio.
+- `heard` — whether the turn carried any words. `true` on every normal turn.
+  `false` only when `text` was empty or whitespace, in which case `reply` is a
+  short request to say it again, `actions` is `[]`, and no model call was made.
+  A client should show and speak that reply but keep it **out of the history**:
+  it answers nothing, and sent back it reads as part of the conversation.
 
-Rate limit: 30/min and 500/day per caller.
+`text` may be empty. An empty string is not an error — it is what a
+transcriber returns for a word said too quietly, a cough, or a sentence the
+room swallowed — and it is answered with `heard: false` rather than rejected.
+
+Rate limit: 60/min and 500/day per caller.
+
+### Free time (`find_free_time`)
+
+The model calls this whenever it needs to know when the user is free. The
+server computes the answer and feeds it back into the same turn; **the client
+never sees it**.
+
+What it accounts for, none of which is derivable from `snapshot` alone:
+
+- **Duration when `endsAt` is missing.** An ordinary entry occupies 60 minutes.
+  A wedding, flight, show, party, funeral or big dinner occupies far more,
+  from a fixed table keyed on the title (English and Hebrew, plus the other
+  interface languages). A real `endsAt` always wins over the table.
+- **Travel.** When the event before a window and the event after it both carry
+  a `location`, the journey is costed with the same great-circle floor used by
+  the clash checker, and charged to the **end of the earlier window** — which
+  is where it is felt. Windows report `endsBecause: "travel"` plus the
+  destination, so the reply can say *why* the free time stops early. A location
+  that cannot be geocoded, or an event without one, is charged nothing rather
+  than guessed at.
+- **Evenings that are over.** Occasions flagged `closesEvening` mean the rest
+  of that evening is not offered at all. With `eveningOnly: true` the search
+  skips such a day entirely and moves to the next one, instead of returning a
+  technically-free 23:30.
+
+Sleep hours and the buffer come from `profile` when the device sends one;
+without a profile the old fixed 08:00–22:00 window applies, unchanged.
+
+---
 
 ### `GET /voice/speak?text=<text>`
 Response `200`: `audio/mpeg` (the mp3 itself, with `Content-Length`).
@@ -460,7 +504,7 @@ Response `200`: `audio/mpeg` (the mp3 itself, with `Content-Length`).
 - `400` when speech is not configured on the server, or generation failed.
 - Nothing is stored: the audio is generated per request and discarded.
 
-Rate limit: 10/min per caller.
+Rate limit: 90/min and 1200/day per caller.
 
 ---
 
@@ -526,6 +570,15 @@ Response `200`:
 
 ## Change log
 
+- `2026-08-27` — Added `find_free_time` to the voice assistant. It is answered
+  server-side and is **never** returned in `actions`, so no client change is
+  required and nothing about the existing wire shape moves. It fixes three
+  wrong answers the model gave when it derived free time from the agenda text:
+  an entry with no `endsAt` was treated as a moment rather than an hour;
+  travel between two located events was invisible; and an evening event such as
+  a wedding was treated as one hour, so the rest of that evening looked free.
+  Not breaking.
+
 - `2026-08-27` — **BREAKING** for any client that implemented it: the
   `create_note` tool is **removed** from the `actions` of `POST /voice/turn`,
   and `add_shopping_item` and `add_money_entry` take its place. The notes
@@ -537,6 +590,16 @@ Response `200`:
   **Outside the frozen MVP v1.1 scope** (`CLAUDE.md` §1, which names shopping
   lists explicitly); built on an explicit request, same as `create_image`.
 
+- `2026-08-18` — **BREAKING (relaxed)** `POST /voice/turn` no longer rejects an
+  empty `text`. It used to require at least one character and answered `400`;
+  it now returns `200` with `heard: false` and a short spoken request to
+  repeat. A client relying on the `400` to detect silence must read `heard`
+  instead. The response gained `heard` on every turn (`true` for a normal one).
+  Rate limits on the conversational routes were raised: `POST /voice/turn` to
+  60/min (500/day unchanged), and `POST /transcribe` and `GET /voice/speak` to
+  90/min and 1200/day. The old limit shared ten requests a minute between
+  transcribing and speaking, which is two per spoken exchange, so a
+  conversation held at a normal pace was cut off after five sentences.
 - `2026-08-17` — `POST /voice/turn` accepts an optional `profile`, the output
   of the new opening questionnaire. Sleep hours and the preferred gap between
   meetings now shape the times returned in `offer_times`; working hours,

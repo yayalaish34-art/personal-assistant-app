@@ -5,6 +5,7 @@ import { getOpenAI } from '../chat/llm.js';
 import { config } from '../../config.js';
 import { logger } from '../../lib/logger.js';
 import { reviewSchedule, type KnownEvent, type ProposedEvent } from './schedule.js';
+import { findTime, today, type AvailabilityEvent } from './availability.js';
 
 // The voice assistant's turn: what she heard in, what she says back plus the
 // changes to apply.
@@ -247,6 +248,33 @@ export const ACTION_TOOLS = [
   {
     type: 'function' as const,
     function: {
+      name: 'find_free_time',
+      description:
+        "Work out when the user is actually free. Call this for ANY question about free time, availability, gaps, or when something could fit — and before suggesting a time for anything. Do not read the agenda and work it out yourself: this accounts for meetings that carry no end time, for travel between places, and for evenings that an event has effectively taken over, none of which are visible in the agenda text.",
+      parameters: {
+        type: 'object',
+        properties: {
+          fromDate: {
+            type: 'string',
+            description: 'YYYY-MM-DD to start looking from. Omit for today.',
+          },
+          eveningOnly: {
+            type: 'boolean',
+            description:
+              'True when they asked for an evening. Skips evenings already taken by a wedding, a flight and the like, and moves to the next day.',
+          },
+          minutesNeeded: {
+            type: 'number',
+            description: 'Roughly how long the thing takes. Omit if they did not say.',
+          },
+        },
+        required: [],
+      },
+    },
+  },
+  {
+    type: 'function' as const,
+    function: {
       name: 'create_event',
       description: 'Put something in the calendar at a set time.',
       parameters: {
@@ -358,6 +386,11 @@ const ARG_SCHEMAS = {
         'other',
       ])
       .optional(),
+  }),
+  find_free_time: z.object({
+    fromDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional(),
+    eveningOnly: z.boolean().optional(),
+    minutesNeeded: z.number().positive().max(24 * 60).optional(),
   }),
   create_event: z.object({
     title: z.string().min(1),
@@ -493,6 +526,51 @@ const LANGUAGE_NAMES: Record<string, string> = {
 };
 
 /**
+ * What she says when the audio carried no words she could make out.
+ *
+ * Written out per language rather than generated, because this is the one
+ * reply that must not cost a model call: it is the answer to a turn that
+ * already wasted the user's few seconds, and adding two more to it is how a
+ * missed word starts to feel like a broken app. Anything not listed falls back
+ * to English, the same way the greeting does.
+ *
+ * Kept short on purpose — it is spoken aloud, and a long apology for not
+ * hearing something is worse than the not hearing.
+ */
+const NOT_CAUGHT: Record<string, string> = {
+  en: "Sorry, I didn't catch that — say it again?",
+  he: 'סליחה, לא תפסתי את זה — אפשר שוב?',
+  ar: 'عذرًا، لم أسمع ذلك — مرة أخرى؟',
+  es: 'Perdona, no te he oído bien. ¿Lo repites?',
+  fr: "Désolée, je n'ai pas saisi — tu peux répéter ?",
+  it: 'Scusa, non ho capito — me lo ripeti?',
+  ru: 'Извини, я не расслышала — повторишь?',
+  de: 'Entschuldige, das habe ich nicht verstanden — noch mal?',
+  pt: 'Desculpa, não percebi — podes repetir?',
+  hi: 'माफ़ करना, मैं समझ नहीं पाई — फिर से कहेंगे?',
+  zh: '抱歉，我没听清，可以再说一遍吗？',
+  ja: 'ごめんなさい、聞き取れませんでした。もう一度お願いします。',
+  ko: '죄송해요, 잘 못 들었어요. 다시 말씀해 주시겠어요?',
+  tr: 'Pardon, anlayamadım — tekrar eder misin?',
+  nl: 'Sorry, dat heb ik niet verstaan — nog een keer?',
+  pl: 'Przepraszam, nie dosłyszałam — możesz powtórzyć?',
+  uk: 'Вибач, я не розчула — повториш?',
+  ro: 'Scuze, nu am prins — mai zici o dată?',
+  el: 'Συγγνώμη, δεν το έπιασα — το λες ξανά;',
+  sv: 'Förlåt, jag hörde inte — kan du säga det igen?',
+  fa: 'ببخشید، متوجه نشدم — دوباره می‌گویی؟',
+  id: 'Maaf, aku tidak menangkapnya — bisa diulang?',
+  vi: 'Xin lỗi, mình chưa nghe rõ — bạn nói lại nhé?',
+  th: 'ขอโทษค่ะ ฟังไม่ทัน พูดอีกครั้งได้ไหมคะ',
+  bn: 'দুঃখিত, ঠিক শুনতে পাইনি — আবার বলবেন?',
+};
+
+/** The "say that again" line, in `language`, falling back to English. */
+export function didNotCatchThat(language: string): string {
+  return NOT_CAUGHT[language] ?? NOT_CAUGHT.en!;
+}
+
+/**
  * The agenda goes into the prompt rather than behind a lookup tool: the device
  * already has it, and one round trip is the difference between a conversation
  * and a wait.
@@ -621,7 +699,24 @@ function buildSystemPrompt(input: {
     '- Never tell the user to type, tap or open a form. Anything they ask for, you do.',
     '',
     'WHAT YOU DO:',
+    '- NEVER answer a question about free time, gaps, availability or "when',
+    '  could I" from the agenda below. The agenda cannot tell you those things.',
+    '  Call find_free_time and answer from what it returns, every single time,',
+    '  even when the agenda looks obvious to you. An entry there shows a start',
+    '  time and nothing else: not how long it really runs, not the drive to the',
+    '  next one, not that an evening is already spoken for. Answering without',
+    '  calling it produces confident wrong times, which is worse than a pause.',
     '- Use the tools to create, change, complete and delete tasks and events.',
+    '- Any question about free time, gaps, availability, or when something',
+    '  could fit is answered with find_free_time — never by reading the agenda',
+    '  and working it out yourself. The agenda does not show how long an entry',
+    '  really takes, how long the drive between two of them is, or that an',
+    '  evening is already spoken for; find_free_time knows all three.',
+    '- Call it before proposing a time for anything, too. "When shall we do it?"',
+    '  is a free-time question wearing a different hat.',
+    '- An entry with no end time is not a moment. A meeting takes about an hour;',
+    '  a wedding, a flight or a show takes an evening. Never treat the minute an',
+    '  event starts as the minute someone is free again.',
     '- Use add_shopping_item when they mention something to buy — groceries,',
     '  household things. One call per item: three items is three calls.',
     '- Use add_money_entry when they say they earned, spent or paid something.',
@@ -681,10 +776,37 @@ export interface VoiceTurnInput {
 export interface VoiceTurnResult {
   reply: string;
   actions: VoiceAction[];
+  /**
+   * Whether `find_free_time` was consulted this turn. Diagnostic: the whole
+   * point of that tool is that she must not answer availability from the
+   * agenda, and without this there is no way to tell a computed answer from a
+   * confident guess that happens to look similar.
+   */
+  consultedFreeTime?: boolean;
 }
 
-/** One extra round so she can act and then narrate what she did. */
-const MAX_ROUNDS = 2;
+/**
+ * Rounds of tool calling before she must answer.
+ *
+ * Three, not two, because `find_free_time` costs a round that used to be spent
+ * acting: ask when they are free, then book the thing, then say what happened.
+ * At two, a turn that began with a free-time question had no round left to act
+ * in, so she either skipped the question or skipped the booking.
+ */
+const MAX_ROUNDS = 3;
+
+/**
+ * How long one round may take before the turn is given up on.
+ *
+ * Tighter than the client-wide default in llm.ts, because this is the only
+ * route where someone is sitting in silence waiting for an answer. Past about
+ * this long they have already concluded it is broken and reached for the
+ * button, so a request still running is no longer of any use to them —
+ * failing at twenty-five seconds and saying so beats succeeding at ninety.
+ * Two rounds means the worst case is bounded at roughly a minute rather than
+ * at the several minutes the SDK's own retry-and-timeout defaults allow.
+ */
+const ROUND_TIMEOUT_MS = 25_000;
 
 export async function runVoiceTurn(input: VoiceTurnInput): Promise<VoiceTurnResult> {
   const client = getOpenAI();
@@ -697,17 +819,25 @@ export async function runVoiceTurn(input: VoiceTurnInput): Promise<VoiceTurnResu
 
   const actions: VoiceAction[] = [];
   let reply = '';
+  /** Whether she actually consulted the calculator this turn. */
+  let consulted = false;
 
   for (let round = 0; round < MAX_ROUNDS; round++) {
     const lastRound = round === MAX_ROUNDS - 1;
-    const completion = await client.chat.completions.create({
-      model: config.OPENAI_VOICE_MODEL,
-      messages,
-      tools: ACTION_TOOLS,
-      // On the final round she has already acted; all that is left is to say so.
-      tool_choice: lastRound ? 'none' : 'auto',
-      temperature: 0.6,
-    });
+    const completion = await client.chat.completions.create(
+      {
+        model: config.OPENAI_VOICE_MODEL,
+        messages,
+        tools: ACTION_TOOLS,
+        // On the final round she has already acted; all that is left is to say so.
+        tool_choice: lastRound ? 'none' : 'auto',
+        temperature: 0.6,
+      },
+      // No retry: a second attempt at a request that has already spent the
+      // user's patience arrives after they have stopped waiting for it, and
+      // the client is better off being told the turn was lost.
+      { timeout: ROUND_TIMEOUT_MS, maxRetries: 0 },
+    );
 
     const message = completion.choices[0]?.message;
     if (!message) break;
@@ -732,6 +862,23 @@ export async function runVoiceTurn(input: VoiceTurnInput): Promise<VoiceTurnResu
         input.snapshot,
         input.timezone,
       );
+
+      // Asking when someone is free is a question, not a change. It is
+      // answered here, into the conversation, and never reaches the device as
+      // an action — there is nothing for the device to apply.
+      if (outcome.action?.tool === 'find_free_time') {
+        logger.info(
+          { args: outcome.action.arguments },
+          'voice agent asked for free time',
+        );
+        consulted = true;
+        messages.push({
+          role: 'tool',
+          tool_call_id: call.id,
+          content: await answerFreeTime(outcome.action.arguments, input),
+        });
+        continue;
+      }
 
       // A time that survives the gate still has to be a time the person can
       // keep. That check reaches a geocoder, so it cannot live inside
@@ -766,7 +913,102 @@ export async function runVoiceTurn(input: VoiceTurnInput): Promise<VoiceTurnResu
     reply = message.content?.trim() ?? reply;
   }
 
-  return { reply, actions };
+  return { reply, actions, consultedFreeTime: consulted };
+}
+
+/**
+ * Answers "when am I free?" with computed windows.
+ *
+ * Everything the model would otherwise have to infer from the agenda text is
+ * decided here instead: how long an event with no end time occupies, how much
+ * of the gap before a meeting somewhere else is really travel, and whether an
+ * evening has been taken over by something that ends the day.
+ *
+ * The result is deliberately shaped as prose-ready facts rather than raw
+ * intervals. She is good at turning "until 12:40, because Shoham is 50 minutes
+ * away" into a sentence, and bad at deriving that fact in the first place.
+ */
+async function answerFreeTime(
+  args: Record<string, unknown>,
+  input: VoiceTurnInput,
+): Promise<string> {
+  const zone = input.timezone;
+  const nowMs = input.now.getTime();
+  const fromDate =
+    typeof args.fromDate === 'string' ? args.fromDate : today(zone, nowMs);
+  const eveningOnly = args.eveningOnly === true;
+
+  const events: AvailabilityEvent[] = input.snapshot.events.map((e) => ({
+    title: e.title,
+    startsAt: e.startsAt,
+    endsAt: e.endsAt ?? null,
+    location: e.location ?? null,
+  }));
+
+  const { days, skipped } = await findTime({
+    fromDate,
+    events,
+    timeZone: zone,
+    now: nowMs,
+    prefs: input.profile
+      ? {
+          sleepStartHour: input.profile.sleepStartHour,
+          sleepEndHour: input.profile.sleepEndHour,
+          bufferMinutes: input.profile.bufferMinutes,
+        }
+      : undefined,
+    eveningOnly,
+  });
+
+  const needed =
+    typeof args.minutesNeeded === 'number' && Number.isFinite(args.minutesNeeded)
+      ? Math.round(args.minutesNeeded)
+      : null;
+
+  const clock = new Intl.DateTimeFormat('en-GB', {
+    timeZone: zone,
+    hour: '2-digit',
+    minute: '2-digit',
+    hour12: false,
+  });
+  const dayName = new Intl.DateTimeFormat('en-US', {
+    timeZone: zone,
+    weekday: 'long',
+    day: 'numeric',
+    month: 'long',
+  });
+
+  const described = days.map((day) => ({
+    date: day.date,
+    day: dayName.format(new Date(`${day.date}T12:00:00Z`)),
+    windows: day.windows
+      // A window shorter than the job is not an answer, so it is not offered.
+      .filter((w) => (needed === null ? true : w.minutes >= needed))
+      .map((w) => ({
+        from: clock.format(new Date(w.startsAt)),
+        to: clock.format(new Date(w.endsAt)),
+        minutes: w.minutes,
+        endsBecause: w.endsBecause,
+        ...(w.nextTitle ? { nextEvent: w.nextTitle } : {}),
+        ...(w.nextPlace ? { nextPlace: w.nextPlace } : {}),
+        ...(w.travelMinutes ? { travelMinutes: w.travelMinutes } : {}),
+      })),
+  }));
+
+  return JSON.stringify({
+    ok: true,
+    askedFrom: fromDate,
+    eveningOnly,
+    days: described.filter((d) => d.windows.length > 0),
+    skippedDays: skipped,
+    instruction: [
+      'These windows are already correct: durations, travel and blocked evenings are accounted for.',
+      'Do not recalculate them from the agenda and do not widen them.',
+      'When a window ends because of travel, say so and name the place — that is the useful part.',
+      'When a day was skipped for eveningClosed, say that evening is taken by the event and give the next one that works.',
+      'Give one or two windows in plain speech, not a list of every option.',
+    ].join(' '),
+  });
 }
 
 /**

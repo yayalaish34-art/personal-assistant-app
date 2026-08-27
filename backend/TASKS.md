@@ -743,3 +743,139 @@ not have this code until it is redeployed.
 `add_money_entry` do not exist in production, so asking her to add milk or log
 an expense does nothing. The screens themselves work regardless — they read
 and write local storage and do not need the server.
+
+---
+
+## Phase 11 — Conversation continuity
+
+### T11.1 — The voice conversation stops after a few turns
+Status: **DONE (local, uncommitted)**
+
+**Reported:** talking to her does not flow. It sticks after a short word or a
+name ("יונה"); the button has to be pressed again for every answer; she cannot
+be talked over while she is speaking; and reviving it means leaving the screen
+and coming back.
+
+**What was actually wrong.** Four separate faults, three of them server-side.
+They share one visible ending because the client stops listening after three
+failed turns in a row, and a stopped session had no way back except a remount.
+
+1. **The rate limit made a normal conversation illegal.** `/transcribe` and
+   `/voice/speak` shared `speechLimiter` — ten requests a minute. A spoken
+   exchange spends one on each, so the sixth sentence in any minute was
+   refused, three refusals ended the session, and the only cure was the
+   remount. Both routes are unauthenticated by design, so the bucket is keyed
+   by IP and shared behind carrier NAT. Fixed with limiters sized from the
+   other end (a brisk exchange is ~5s, so ~12/min): `voiceTurnLimiter` 60/min
+   + 500/day, `voiceMediaLimiter` 90/min + 1200/day. The daily ceiling, which
+   is what protects the bill, is unchanged.
+
+2. **An empty transcript was a `400`.** `text` required one character, but an
+   empty string is what a transcriber returns for a word said too quietly —
+   exactly the "יונה" case. Three of those ended the session. `/voice/turn`
+   now accepts empty text and answers `heard: false` with a short request to
+   repeat, in the caller's language, without a model call.
+
+3. **Nothing bounded how long a turn could take.** The OpenAI client used the
+   SDK defaults — a ten-minute timeout and two retries — so a stalled request
+   could hold a turn open far past the point the user gave up. And `geocode`
+   in `travel.ts` ran a bare `fetch` with no timeout at all, inside the turn.
+   Now: 60s/1 retry on the shared client, 25s/no retry per voice round, 2s on
+   the geocoder.
+
+4. **Client — interrupting her hung the loop for 60 seconds.** `speak` awaited
+   a promise only the player's `didJustFinish` could resolve; `stopSpeaking`
+   removed the player, so that event never came and the loop sat inside a 60s
+   guard timer with the microphone shut. This is the one that made talking
+   back look like a crash. `stopSpeaking` now resolves the pending turn.
+
+Also client-side: `restart()` restarts the loop in place (the button used to
+`navigation.replace`, i.e. the remount the user was doing by hand), and an
+unheard word now gets a spoken "say that again?" instead of silent re-listening.
+
+Files: `src/middleware/rateLimit.ts` (new `voiceTurnLimiter`,
+`voiceMediaLimiter`) · `src/modules/voice/router.ts` · `src/modules/voice/agent.ts`
+(`didNotCatchThat`, `ROUND_TIMEOUT_MS`) · `src/modules/voice/travel.ts` ·
+`src/modules/chat/llm.ts` · `src/modules/chat/parseRouter.ts` ·
+`tests/voice.test.ts` · `API_CONTRACT.md` · frontend
+`lib/useVoiceSession.ts`, `lib/voice.ts`, `screens/AssistantScreen.tsx`.
+
+Tests: voice suite 22, 22b, 22c, 22d rewritten/added for the empty-turn path
+(200 not 400, `heard: false`, language-correct, unknown language falls back).
+`npx tsc --noEmit` clean both sides; frontend web bundle builds. Backend suite
+131 passed, +4 vs before, and no test fails that did not already fail on a
+clean tree — the 24 remaining failures are the pre-existing DB-dependent
+auth/sync/reminders/slots ones.
+
+**Not verified:** none of this was exercised against a real device or a live
+provider. The rate-limit numbers are reasoned from turn duration, not measured
+under load, and the timeouts have not been observed firing.
+
+**Remaining risk:** the client points at the Railway deployment, so the three
+server-side fixes do nothing until it is redeployed — until then the
+conversation will still die after five sentences a minute. True barge-in
+(speaking over her without tapping) is still not implemented: the microphone
+stays shut while she talks, because opening it during playback without echo
+cancellation would have her transcribe herself. Tapping to interrupt is now
+instant, which is the part that was broken.
+
+---
+
+### T10.2 — Free time that is actually free
+DONE (local, uncommitted)
+
+Five reported failures, all one root cause: **there was no tool for "when am I
+free".** The assistant answered availability questions by reading the agenda
+out of her own prompt and reasoning about it. The scheduling maths that already
+existed (`slots.ts`, `travel.ts`, `schedule.ts`) only ran on one path — when a
+*create* clashed and alternatives had to be offered — so none of it was reached
+by a question.
+
+Files: `src/modules/voice/occasions.ts` (new) · `src/modules/voice/availability.ts`
+(new) · `src/modules/voice/agent.ts` (`find_free_time` tool, schema, an
+`answerFreeTime` branch in the turn loop, prompt rules) ·
+`tests/availability.test.ts` (new, 21 cases) · `API_CONTRACT.md`.
+
+What each reported item maps to:
+
+1. **Default duration.** `bookingsOf` gives every entry a real interval. An
+   11:00 meeting with no `endsAt` now ends at 12:00, so the window after it
+   starts at 12:00 and the window before it ends at 11:00. The hour default
+   already existed in `slots.ts:175` but was unreachable from a question.
+2. **Travel.** Charged to the end of the window *before* the journey, using the
+   existing great-circle floor. Only when both events carry a location — a
+   guess would invent journeys and shorten real free time. Reported as
+   `endsBecause: 'travel'` with the destination so the reply can say why.
+3. **Special occasions.** `occasions.ts` is a fixed table (title match, EN + HE
+   + the other interface languages) giving minutes and a `closesEvening` flag.
+   A 20:30 wedding occupies five hours and marks the evening closed.
+4. **Next relevant evening.** `findTime({ eveningOnly: true })` skips a day
+   whose evening is closed and walks forward, so "somewhere this evening" moves
+   to tomorrow rather than offering 23:30 after a wedding.
+5. **Meeting vs occasion.** The table decides; anything unmatched keeps the
+   one-hour default. That is the safe direction — an unrecognised title blocks
+   too little rather than silently swallowing a week.
+
+`find_free_time` is answered inside the turn and never enters `actions`, so
+there is no client change and no wire-shape change.
+
+Design notes worth keeping: an explicit `endsAt` always beats the table, so the
+table can never move someone's own meeting. `closesEvening` is kept separate
+from `minutes` because they answer different questions — a wedding does end,
+but nobody does the weekly shop afterwards. Zone maths mirrors `slots.ts`
+exactly (Intl both ways, no date library) because the two files must agree
+about what "today" means.
+
+Tests: 21 behavioural cases written as the reported scenarios, with the
+geocoder injected so travel is exercised with no network. Includes the exact
+reported cases (11:00 meeting; Tel Aviv 11:00 → Shoham 13:30; 20:30 wedding)
+plus the inputs it must survive — unparseable dates, a non-IANA zone,
+overlapping events, gaps too short to use, and anything already past.
+Separately verified that the Tel Aviv → Shoham window ends *exactly* one
+computed drive-time before 13:30, not merely "earlier".
+
+tsc clean. availability 21 passed; voice 51 passed / 2 skipped.
+
+Not verified: an end-to-end turn through the live model choosing to call the
+tool. The tool description and prompt rules push hard toward it, but whether
+she calls it every time is model behaviour, not something these tests pin down.

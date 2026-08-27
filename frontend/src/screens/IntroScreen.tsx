@@ -261,18 +261,40 @@ export default function IntroScreen({ onDone }: { onDone: () => void }) {
   // The whole screen slides away as one piece when Start is pressed, so the
   // app appears to have been waiting underneath rather than loading after.
   const exit = useRef(new Animated.Value(0)).current;
+  /**
+   * Belt and braces. The animation callback is the way in, but this screen is
+   * the only thing standing between a cold start and the app, so it must not
+   * be able to trap anyone if that callback is never called at all.
+   */
+  const escape = useRef<ReturnType<typeof setTimeout> | null>(null);
+  /** Both the callback and the timer call this; only the first one counts. */
+  const handedOver = useRef(false);
+  const finish = () => {
+    if (handedOver.current) return;
+    handedOver.current = true;
+    if (escape.current) clearTimeout(escape.current);
+    onDone();
+  };
+  useEffect(() => () => {
+    if (escape.current) clearTimeout(escape.current);
+  }, []);
+
   const start = () => {
     if (leaving) return;
     setLeaving(true);
+    escape.current = setTimeout(finish, 600);
     Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
     Animated.timing(exit, {
       toValue: 1,
       duration: 280,
       easing: Easing.out(Easing.quad),
       useNativeDriver: true,
-    }).start(({ finished }) => {
-      if (finished) onDone();
-    });
+      // Unconditionally, not `if (finished)`. This callback is the only thing
+      // that lets the app in, and `leaving` has already disabled the button by
+      // the time it runs — so an animation that is interrupted rather than
+      // completed (a busy JS thread, a backgrounded app) used to strand the
+      // user on this screen for good, with no error anywhere to explain it.
+    }).start(() => finish());
   };
 
   const startAlign = { textAlign: alignStart() } as const;

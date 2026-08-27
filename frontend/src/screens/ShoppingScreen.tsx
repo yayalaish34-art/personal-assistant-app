@@ -41,6 +41,10 @@ type Nav = NativeStackNavigationProp<RootStackParamList>;
 function categoryTint(cat: ShoppingCategory | null) {
   if (!cat) return null;
   const i = SHOPPING_CATEGORIES.indexOf(cat);
+  // A category from outside the list lands here as -1, and `AURA_CYCLE[-1]` is
+  // undefined — reading `.tint` off that is a hard crash. The type says it
+  // cannot happen; a row written by an older build says otherwise.
+  if (i === -1) return null;
   return AURA[AURA_CYCLE[i % AURA_CYCLE.length]];
 }
 

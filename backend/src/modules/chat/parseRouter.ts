@@ -5,7 +5,7 @@ import { z } from 'zod';
 import { asyncHandler, parseBody } from '../../lib/http.js';
 import { config } from '../../config.js';
 import { ValidationError } from '../../lib/errors.js';
-import { chatLimiter, speechLimiter } from '../../middleware/rateLimit.js';
+import { chatLimiter, voiceMediaLimiter } from '../../middleware/rateLimit.js';
 import { getOpenAI, CHAT_MODEL } from './llm.js';
 
 export const parseRouter = Router();
@@ -157,7 +157,10 @@ const upload = multer({
 
 parseRouter.post(
   '/transcribe',
-  speechLimiter,
+  // The conversational limiter, not the bulk one: this is the first of the
+  // three requests a spoken exchange makes, and sharing a ten-a-minute budget
+  // with /voice/speak is what used to end conversations after five sentences.
+  voiceMediaLimiter,
   upload.single('audio'),
   asyncHandler(async (req, res) => {
     if (!config.OPENAI_API_KEY) {

@@ -21,6 +21,9 @@ import { logger } from '../../lib/logger.js';
 
 const GEOCODE_URL = 'https://geocoding-api.open-meteo.com/v1/search';
 
+/** How long a lookup may hold up the turn it is running inside. */
+const GEOCODE_TIMEOUT_MS = 2_000;
+
 /** Names repeat constantly across a snapshot; each one is looked up once. */
 const cache = new Map<string, Point | null>();
 
@@ -47,9 +50,19 @@ export async function geocode(place: string): Promise<Point | null> {
   const hit = cache.get(key);
   if (hit !== undefined) return hit;
 
+  // Bounded, because this runs inside a voice turn with someone waiting at the
+  // end of it. A bare fetch has no timeout at all: one unresponsive geocoder
+  // would hold the turn open until the socket gave up on its own, and the
+  // conversation would simply stop with no error to show for it. Two seconds
+  // is generous for a lookup whose only job is to answer "can they get there",
+  // and the answer to a lookup that misses is the same as one that fails —
+  // say nothing about that leg.
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), GEOCODE_TIMEOUT_MS);
   try {
     const res = await fetch(
       `${GEOCODE_URL}?name=${encodeURIComponent(place.trim())}&count=1&format=json`,
+      { signal: controller.signal },
     );
     if (!res.ok) {
       cache.set(key, null);
@@ -66,6 +79,8 @@ export async function geocode(place: string): Promise<Point | null> {
     logger.warn({ err, place }, 'geocode failed');
     // Not cached: a network blip should not poison the name for the process.
     return null;
+  } finally {
+    clearTimeout(timer);
   }
 }
 

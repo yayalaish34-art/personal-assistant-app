@@ -12,6 +12,7 @@ import {
 } from '@expo-google-fonts/urbanist';
 
 import RootNavigator from './src/navigation';
+import IntroScreen from './src/screens/IntroScreen';
 import OnboardingScreen from './src/screens/OnboardingScreen';
 import { loadLanguage, isRTL, getLanguage, subscribeToLanguage } from './src/lib/i18n';
 import { storage } from './src/lib/storage';
@@ -54,6 +55,12 @@ export default function App() {
    */
   const [renderLang, setRenderLang] = useState(getLanguage());
   useEffect(() => subscribeToLanguage(() => setRenderLang(getLanguage())), []);
+  /**
+   * The animated opening, shown once per cold start. Deliberately not stored:
+   * it is the app's front door, not a tutorial — a launch without it feels
+   * like walking in through a wall.
+   */
+  const [introDone, setIntroDone] = useState(false);
   const [onboarded, setOnboarded] = useState<boolean | null>(null);
   useEffect(() => {
     loadLanguage().finally(() => setLangReady(true));
@@ -96,7 +103,9 @@ export default function App() {
             app exists. Picking a right-to-left language inside it can restart
             the whole surface, which is survivable precisely because language
             is asked first and nothing else has been answered yet. */}
-        {onboarded ? (
+        {!introDone ? (
+          <IntroScreen onDone={() => setIntroDone(true)} />
+        ) : onboarded ? (
           <NavigationContainer theme={navTheme}>
             <RootNavigator />
           </NavigationContainer>

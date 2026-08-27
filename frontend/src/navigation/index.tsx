@@ -1,4 +1,4 @@
-import { useMemo, useRef } from 'react';
+import { useEffect, useMemo, useRef } from 'react';
 import { View, Pressable, StyleSheet, Animated, Easing, useWindowDimensions } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { createBottomTabNavigator, type BottomTabBarProps } from '@react-navigation/bottom-tabs';
@@ -15,7 +15,7 @@ import Svg, {
   Stop,
 } from 'react-native-svg';
 
-import { colors, NAV_BAR } from '../theme';
+import { colors, NAV_BAR, IRIDESCENT } from '../theme';
 import { t } from '../lib/i18n';
 import { playTapSound } from '../lib/tapSound';
 import TodayScreen from '../screens/TodayScreen';
@@ -128,7 +128,47 @@ function barPath(width: number, dy = 0) {
 }
 
 /**
- * Bottom bar: four outline icons around a raised orange mic button in the middle.
+ * One tab's glyph. The selected one sits on a disc of the holographic sweep —
+ * the same light as the mic button and Home's chosen day — and pops in with a
+ * small spring when the selection lands on it.
+ */
+function TabGlyph({ Icon, active }: { Icon: typeof House; active: boolean }) {
+  const v = useRef(new Animated.Value(active ? 1 : 0)).current;
+  useEffect(() => {
+    Animated.spring(v, {
+      toValue: active ? 1 : 0,
+      friction: 6,
+      tension: 80,
+      useNativeDriver: true,
+    }).start();
+  }, [active, v]);
+
+  return (
+    <Animated.View
+      style={{
+        transform: [{ scale: v.interpolate({ inputRange: [0, 1], outputRange: [1, 1.08] }) }],
+      }}
+    >
+      {active ? (
+        <LinearGradient
+          colors={IRIDESCENT}
+          start={{ x: 0.1, y: 0.1 }}
+          end={{ x: 0.9, y: 0.95 }}
+          style={styles.tabDisc}
+        >
+          <Icon color={colors.text} fill="rgba(255,255,255,0.28)" size={23} strokeWidth={2.2} />
+        </LinearGradient>
+      ) : (
+        <View style={styles.tabDisc}>
+          <Icon color={NAV_BAR.inactiveIcon} fill="transparent" size={23} strokeWidth={1.7} />
+        </View>
+      )}
+    </Animated.View>
+  );
+}
+
+/**
+ * Bottom bar: four outline icons around a raised holographic mic button in the middle.
  *
  * The button isn't a slot in the row — it floats above the bar, and the bar's
  * top edge scoops down to clear it. The scoop is centred on the bar, so it
@@ -224,17 +264,11 @@ function BottomBar({ state, descriptors, navigation }: BottomTabBarProps) {
         // No visible label any more, so the tab name only survives here.
         accessibilityLabel={label}
       >
-        {/* A tinted disc behind the selected glyph. Colour alone was carrying
-            the selection, which is thin at this size and gone entirely for
-            anyone who cannot separate the two hues; a shape is not. */}
-        <View style={[styles.tabDisc, active && styles.tabDiscActive]}>
-          <Icon
-            color={active ? NAV_BAR.activeIcon : NAV_BAR.inactiveIcon}
-            fill={active ? NAV_BAR.activeWash : 'transparent'}
-            size={23}
-            strokeWidth={active ? 2.2 : 1.7}
-          />
-        </View>
+        {/* A gradient disc behind the selected glyph. Colour alone was
+            carrying the selection, which is thin at this size and gone
+            entirely for anyone who cannot separate the two hues; a filled
+            shape is not. */}
+        <TabGlyph Icon={Icon} active={active} />
       </Pressable>
     );
   };
@@ -271,13 +305,15 @@ function BottomBar({ state, descriptors, navigation }: BottomTabBarProps) {
           ]}
         />
         <Animated.View style={[styles.fabFillWrap, { transform: [{ scale: pop }] }]}>
+          {/* The holographic sweep from the reference, with ink on top — the
+              pastels are light enough that a white glyph would wash out. */}
           <LinearGradient
-            colors={NAV_BAR.accentGradient}
-            start={{ x: 0.15, y: 0 }}
-            end={{ x: 0.85, y: 1 }}
+            colors={IRIDESCENT}
+            start={{ x: 0.1, y: 0.1 }}
+            end={{ x: 0.9, y: 0.95 }}
             style={styles.fabFill}
           >
-            <Mic color={NAV_BAR.accentIcon} size={26} strokeWidth={2.5} />
+            <Mic color={colors.text} size={26} strokeWidth={2.5} />
           </LinearGradient>
         </Animated.View>
       </Pressable>
@@ -411,8 +447,8 @@ const styles = StyleSheet.create({
     borderRadius: 13,
     alignItems: 'center',
     justifyContent: 'center',
+    overflow: 'hidden',
   },
-  tabDiscActive: { backgroundColor: NAV_BAR.activeSurface },
   notchGap: { width: SHOULDER_X * 2 },
   fab: {
     alignSelf: 'center',
@@ -423,13 +459,13 @@ const styles = StyleSheet.create({
     width: FAB_SIZE,
     height: FAB_SIZE,
     borderRadius: FAB_R,
-    backgroundColor: NAV_BAR.accent,
+    backgroundColor: IRIDESCENT[1],
     // Its own glow, in its own colour — the button floats above the panel the
     // way the panel floats above the page. Kept tight: a wide one spills into
     // the gap around the scoop and muddies the edge the scoop is there to make.
-    shadowColor: NAV_BAR.accent,
+    shadowColor: IRIDESCENT[1],
     shadowOffset: { width: 0, height: 6 },
-    shadowOpacity: 0.3,
+    shadowOpacity: 0.45,
     shadowRadius: 11,
     elevation: 10,
   },
@@ -441,7 +477,7 @@ const styles = StyleSheet.create({
     insetInlineEnd: 0,
     bottom: 0,
     borderRadius: FAB_R,
-    backgroundColor: NAV_BAR.accent,
+    backgroundColor: IRIDESCENT[1],
   },
   fabFillWrap: { width: '100%', height: '100%' },
   fabFill: {

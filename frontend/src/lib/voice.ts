@@ -61,7 +61,10 @@ export async function transcribe(uri: string): Promise<string> {
   const res = await fetch(TRANSCRIBE_URL, { method: 'POST', body: form });
   if (!res.ok) {
     const body = await res.json().catch(() => null);
-    throw new Error(body?.error?.message ?? `Transcription failed (${res.status})`);
+    const message = body?.error?.message ?? `Transcription failed (${res.status})`;
+    // Hearing and thinking are billed to the same account, so an exhausted
+    // quota surfaces here first — and is just as final here as it is there.
+    throw classifyFailure(message, res.status) ?? new Error(message);
   }
   const { text } = (await res.json()) as { text: string };
   return text;
@@ -85,6 +88,36 @@ export function speechUrl(text: string): string {
 // ── The turn ────────────────────────────────────────────────────────────────
 
 export type VoiceAction = { tool: string; arguments: Record<string, unknown> };
+
+/**
+ * A failure the user has to act on, rather than one worth retrying.
+ *
+ * Retrying an exhausted quota or a missing key just spends the turn again and
+ * says "sorry, I lost that one" a second time, which is what made a dead
+ * account look like a flaky microphone. `fatal` means: stop the loop and tell
+ * them what is actually wrong.
+ */
+export class VoiceUnavailableError extends Error {
+  constructor(
+    message: string,
+    readonly reason: 'quota' | 'unconfigured' | 'server',
+  ) {
+    super(message);
+    this.name = 'VoiceUnavailableError';
+  }
+}
+
+/** Reads a server error message and says whether it can be retried at all. */
+function classifyFailure(message: string, status: number): VoiceUnavailableError | null {
+  const m = message.toLowerCase();
+  if (m.includes('no credits') || m.includes('quota') || m.includes('429') || status === 429) {
+    return new VoiceUnavailableError(message, 'quota');
+  }
+  if (m.includes('not configured') || m.includes('api key') || status === 401 || status === 403) {
+    return new VoiceUnavailableError(message, 'unconfigured');
+  }
+  return null;
+}
 
 /**
  * Asks for a picture and keeps it, returning a `file://` uri.
@@ -334,7 +367,8 @@ export async function voiceTurn(
 
   if (!res.ok) {
     const body = await res.json().catch(() => null);
-    throw new Error(body?.error?.message ?? `The assistant is unavailable (${res.status})`);
+    const message = body?.error?.message ?? `The assistant is unavailable (${res.status})`;
+    throw classifyFailure(message, res.status) ?? new Error(message);
   }
 
   return (await res.json()) as TurnResult;

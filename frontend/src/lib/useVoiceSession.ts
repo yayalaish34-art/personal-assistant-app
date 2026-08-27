@@ -14,6 +14,7 @@ import {
   speechUrl,
   transcribe,
   voiceTurn,
+  VoiceUnavailableError,
   type AppliedChange,
   type TurnMessage,
   type TimeOffer,
@@ -553,6 +554,21 @@ export function useVoiceSession(options: {
           consecutiveFailures = 0;
         } catch (e) {
           if (cancelled || doneRef.current) break;
+
+          // Some failures are not bad luck: an exhausted quota or a key the
+          // server does not have will fail again next turn, and every retry
+          // costs another "sorry, I lost that one" that says nothing true.
+          if (e instanceof VoiceUnavailableError) {
+            console.warn('[voice] unavailable:', e.reason, e.message);
+            setError(e.reason);
+            addLine(
+              'assistant',
+              t(e.reason === 'quota' ? 'voice.noCredits' : 'voice.notConfigured'),
+            );
+            setPhase('stopped');
+            break;
+          }
+
           consecutiveFailures += 1;
           setError((e as Error).message);
           // The line the user sees says only that the turn was lost, and the
@@ -644,6 +660,15 @@ export function useVoiceSession(options: {
         try {
           await runTurn(said);
         } catch (e) {
+          if (e instanceof VoiceUnavailableError) {
+            console.warn('[voice] unavailable:', e.reason, e.message);
+            setError(e.reason);
+            addLine(
+              'assistant',
+              t(e.reason === 'quota' ? 'voice.noCredits' : 'voice.notConfigured'),
+            );
+            return;
+          }
           setError((e as Error).message);
           addLine('assistant', t('voice.hiccup'));
         }

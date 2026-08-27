@@ -67,6 +67,41 @@ export const TILE_INK = {
 /** Task and event rows cycle through these, in this order. */
 export const ROW_TILES: TileColor[] = ['green', 'blue', 'yellow'];
 
+/**
+ * The holographic sweep — sky, lilac, peach. It marks the *chosen* thing: the
+ * mic button in the bar, the selected day on Home. Mid-tone on purpose, so
+ * near-black ink stays readable on top of it.
+ */
+export const IRIDESCENT = ['#8FC7FF', '#C3A6FF', '#FFB98E'] as const;
+
+/**
+ * The gradient, unpacked into surfaces and marks.
+ *
+ * Home used to mix sage green and butter yellow with a sky/lilac/peach
+ * gradient, which read as two unrelated palettes on one screen. These three
+ * families are the gradient's own stops: `tint` is the pale card ground,
+ * `ink` the mark that sits on it.
+ *
+ * The inks are validated, not eyeballed — as a categorical set they clear the
+ * lightness band, the chroma floor, adjacent-pair CVD separation (worst pair
+ * ΔE 11.5 protan), the normal-vision floor, and 3:1 against the page.
+ *
+ * One rule comes out of that validation: `peach.ink` is never a status mark.
+ * Against `colors.danger` it collapses to ΔE 2.4 for a deuteranope, so a peach
+ * "scheduled" dot and a red "overdue" dot would be the same dot. Peach dresses
+ * surfaces; the status vocabulary is sky, lilac, muted grey and danger red.
+ */
+export const AURA = {
+  sky: { tint: '#DCEAF8', ink: '#2A6FA8' },
+  lilac: { tint: '#E8DEF9', ink: '#A280E0' },
+  peach: { tint: '#FBE2D2', ink: '#C96A2E' },
+} as const;
+
+export type AuraKey = keyof typeof AURA;
+
+/** Rows and chips cycle through the gradient's stops, in its own order. */
+export const AURA_CYCLE: AuraKey[] = ['sky', 'lilac', 'peach'];
+
 export const spacing = {
   xs: 4,
   sm: 8,

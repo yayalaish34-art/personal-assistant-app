@@ -286,6 +286,19 @@ export interface TurnResult {
   reply: string;
   actions: VoiceAction[];
   canSpeak: boolean;
+  /**
+   * Whether there were words in the turn at all.
+   *
+   * False when the audio carried nothing the transcriber would commit to — a
+   * word said too quietly, a cough, a sentence the room swallowed. The reply
+   * is then a request to say it again, and it belongs to no one: it is not an
+   * answer to anything the user said, so it must stay out of the history or
+   * she will read it back as though it were part of the conversation.
+   *
+   * Optional because a server from before this field existed simply omits it,
+   * and a turn with words in it is the safe assumption.
+   */
+  heard?: boolean;
 }
 
 /** Everything she is allowed to know: this device's live tasks and events. */

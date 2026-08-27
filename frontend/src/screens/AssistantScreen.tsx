@@ -81,7 +81,10 @@ export default function AssistantScreen() {
     };
   }, []);
 
-  const { state, lines, level, error, undoable, toggle, send, chooseTime, undoLast, startOver, end } =
+  const {
+    state, lines, level, error, undoable,
+    toggle, send, chooseTime, undoLast, startOver, restart, end,
+  } =
     useVoiceSession({ userName: name || undefined });
   const [draft, setDraft] = useState('');
 
@@ -349,9 +352,10 @@ export default function AssistantScreen() {
           <Pressable
             onPress={() => {
               Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
-              // The session runs for the life of the screen, so starting over
-              // means mounting a fresh one.
-              navigation.replace('Assistant');
+              // Restarts the loop in place. This used to remount the screen,
+              // which threw away the thread on screen and was the same motion
+              // the user was already making by hand — leaving and coming back.
+              restart();
             }}
             style={styles.restartBtn}
           >

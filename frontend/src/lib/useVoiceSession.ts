@@ -153,6 +153,14 @@ export interface VoiceSession {
   undoLast: () => void;
   /** Forget the thread and start over from a greeting. */
   startOver: () => void;
+  /**
+   * Open the microphone again after the conversation has stopped.
+   *
+   * Keeps the thread — this is "carry on", not "start over". Until this
+   * existed a stopped session could only be revived by remounting the screen,
+   * which is why the app had to be navigated away from and back into.
+   */
+  restart: () => void;
   end: () => void;
 }
 
@@ -168,6 +176,12 @@ export function useVoiceSession(options: {
   const [level, setLevel] = useState(0);
   const [error, setError] = useState<string | null>(null);
   const [undoable, setUndoable] = useState<AppliedChange[]>([]);
+  /**
+   * Bumped to start the loop over. The loop lives in an effect keyed on this,
+   * so raising it tears the old one down and runs a fresh one in place —
+   * which is what `restart` does instead of remounting the screen.
+   */
+  const [runId, setRunId] = useState(0);
 
   const historyRef = useRef<TurnMessage[]>([]);
   /** The loop and the tap handler both need the current lines, not a render's. */
@@ -181,6 +195,13 @@ export function useVoiceSession(options: {
   /** Resolves the current listen: 'speech' when the user spoke, 'aborted' otherwise. */
   const stopListeningRef = useRef<((reason: 'stopped' | 'aborted') => void) | null>(null);
   const stateRef = useRef<VoiceState>('starting');
+  /**
+   * Resolves the turn currently being spoken, if there is one.
+   *
+   * Held in a ref because whoever interrupts her — a tap, a typed line, the
+   * screen closing — is nowhere near the promise that has to be settled.
+   */
+  const speakFinishRef = useRef<(() => void) | null>(null);
 
   const setPhase = useCallback((next: VoiceState) => {
     stateRef.current = next;
@@ -193,16 +214,36 @@ export function useVoiceSession(options: {
 
   // ── Speaking ──────────────────────────────────────────────────────────────
 
+  /**
+   * Ends her turn and releases whatever `speak` is waiting on.
+   *
+   * The second half is the point. Stopping the player used to be all this did,
+   * and `speak` was awaiting a promise that only the player's own
+   * `didJustFinish` event could resolve — an event a removed player never
+   * sends. So interrupting her left the loop parked inside `speak` until a
+   * sixty-second guard timer fired: the mic stayed shut, the state stayed
+   * 'speaking', and the screen sat there doing nothing. That is what made
+   * talking back to her look like a crash, and why leaving the screen and
+   * coming back was the only thing that helped — a fresh mount was a fresh
+   * loop. Interrupting now resolves it in the same tick and the loop moves
+   * straight on to listening.
+   */
   const stopSpeaking = useCallback(() => {
     const player = playerRef.current;
     playerRef.current = null;
-    if (!player) return;
-    try {
-      player.pause();
-      player.remove();
-    } catch {
-      /* already gone */
+    if (player) {
+      try {
+        player.pause();
+        player.remove();
+      } catch {
+        /* already gone */
+      }
     }
+    // Cleared before it is called: `finish` calls back into here, and the ref
+    // being empty by then is what stops the two bouncing off each other.
+    const finish = speakFinishRef.current;
+    speakFinishRef.current = null;
+    finish?.();
   }, []);
 
   const speak = useCallback(
@@ -218,9 +259,13 @@ export function useVoiceSession(options: {
           settled = true;
           clearTimeout(guard);
           subscription?.remove();
+          speakFinishRef.current = null;
           stopSpeaking();
           resolve();
         };
+        // Published so an interrupt from anywhere can end this turn without
+        // waiting for audio that is never going to finish playing.
+        speakFinishRef.current = finish;
 
         // Playing while the session is still in recording mode comes out of the
         // earpiece on iOS, at a whisper.
@@ -354,6 +399,15 @@ export function useVoiceSession(options: {
       const result = await voiceTurn(said, historyRef.current, userName);
       if (doneRef.current) return;
 
+      // Nothing was made out. She says so and the exchange is forgotten: there
+      // is no user line to keep, and keeping her half would leave "say that
+      // again?" sitting in the thread as though it answered something.
+      if (result.heard === false) {
+        addLine('assistant', result.reply);
+        if (result.reply && result.canSpeak) await speak(result.reply);
+        return;
+      }
+
       // The opening turn was not something the user said, so it does not go
       // into the history — she would read it back and greet them twice.
       const turn: TurnMessage[] = said === SESSION_START ? [] : [{ role: 'user', content: said }];
@@ -423,7 +477,7 @@ export function useVoiceSession(options: {
         if (result.reply && result.canSpeak) await speak(result.reply);
       }
     },
-    [onChanged, setPhase, speak, userName],
+    [addLine, onChanged, setPhase, speak, userName],
   );
 
   /**
@@ -547,7 +601,18 @@ export function useVoiceSession(options: {
           setPhase('thinking');
           const said = (await transcribe(uri)).trim();
           if (cancelled || doneRef.current) break;
-          if (!said) continue;
+
+          if (!said) {
+            // Something was recorded but no words came back. This used to
+            // `continue` in silence, which from the outside is identical to
+            // the app having frozen: the user says a short word, nothing
+            // whatsoever happens, and they reach for the button. Sent as an
+            // empty turn instead, so she answers "say that again?" — the
+            // server recognises it and replies without spending a model call.
+            await runTurn('');
+            consecutiveFailures = 0;
+            continue;
+          }
 
           addLine('user', said);
           await runTurn(said);
@@ -602,9 +667,10 @@ export function useVoiceSession(options: {
         ?.setAudioModeAsync({ allowsRecording: false, playsInSilentMode: true })
         .catch(() => undefined);
     };
-    // Set up once per screen: the loop owns its own lifecycle from here.
+    // Keyed on `runId` and nothing else: the loop owns its own lifecycle, and
+    // the only thing allowed to restart it is an explicit `restart()`.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+  }, [runId]);
 
   // ── Controls ──────────────────────────────────────────────────────────────
 
@@ -684,6 +750,21 @@ export function useVoiceSession(options: {
     void clearConversation();
   }, []);
 
+  /**
+   * Picks the conversation back up where it stopped.
+   *
+   * `doneRef` is lowered here as well as at the top of the loop: the effect's
+   * own cleanup raises it, and a `restart` arriving in the same commit would
+   * otherwise start a loop that reads it as already finished and exits before
+   * the first listen.
+   */
+  const restart = useCallback(() => {
+    doneRef.current = false;
+    setError(null);
+    setPhase('starting');
+    setRunId((n) => n + 1);
+  }, [setPhase]);
+
   useEffect(() => () => stopPolling(), [stopPolling]);
 
   return {
@@ -697,6 +778,7 @@ export function useVoiceSession(options: {
     chooseTime,
     undoLast,
     startOver,
+    restart,
     end,
   };
 }

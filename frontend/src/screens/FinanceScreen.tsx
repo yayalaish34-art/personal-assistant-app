@@ -16,7 +16,6 @@ import {
   Plus,
   X,
   Trash2,
-  Wallet,
   TrendingUp,
   TrendingDown,
   Handshake,
@@ -27,6 +26,7 @@ import {
 
 import { Screen } from '../components/ui';
 import { Entrance } from '../components/motion';
+import { LinearGradient } from 'expo-linear-gradient';
 import {
   api,
   uuid,
@@ -41,7 +41,7 @@ import { toDateStr } from '../lib/tasks';
 import { storage } from '../lib/storage';
 import { formatMoney } from '../lib/currency';
 import type { RootStackParamList } from '../navigation';
-import { colors, spacing, font, radius, AURA } from '../theme';
+import { colors, spacing, font, radius, AURA, IRIDESCENT } from '../theme';
 import { t, locale, alignStart } from '../lib/i18n';
 
 // Where the money is. A summary, then income, expenses and debts — enough to
@@ -74,34 +74,87 @@ function shortDate(day: string): string {
   return d.toLocaleDateString(locale(), { day: 'numeric', month: 'short' });
 }
 
-/** One of the four figures across the top. */
-function SummaryCard({
-  label,
-  value,
-  tint,
-  ink,
-  Icon,
-  wide,
+/**
+ * The month, as one card.
+ *
+ * Balance is the only figure anyone opens this screen to find, so it is the
+ * only one set large. Income and expenses appear underneath as the two halves
+ * of a single bar — the shape of the month reads faster than two more numbers,
+ * and the bar makes "spending more than I earn" visible without arithmetic.
+ */
+function BalanceCard({
+  balance,
+  income,
+  expenses,
+  debt,
+  money,
 }: {
-  label: string;
-  value: string;
-  tint: string;
-  ink: string;
-  Icon: typeof Wallet;
-  wide?: boolean;
+  balance: number;
+  income: number;
+  expenses: number;
+  debt: number;
+  money: (n: number) => string;
 }) {
+  const start = { textAlign: alignStart() } as const;
+  const total = income + expenses;
+  // Guarded: an empty month would divide by zero and render a NaN width.
+  const inShare = total > 0 ? (income / total) * 100 : 50;
+
   return (
-    <View style={[styles.sumCard, { backgroundColor: tint }, wide && styles.sumCardWide]}>
-      <View style={styles.sumTop}>
-        <Text style={styles.sumLabel} numberOfLines={1}>
-          {label}
-        </Text>
-        <Icon color={ink} size={16} strokeWidth={2.2} />
-      </View>
-      <Text style={styles.sumValue} numberOfLines={1} adjustsFontSizeToFit minimumFontScale={0.7}>
-        {value}
+    <LinearGradient
+      colors={IRIDESCENT}
+      start={{ x: 0, y: 0 }}
+      end={{ x: 1, y: 1 }}
+      style={styles.hero}
+    >
+      <Text style={[styles.heroKicker, start]}>{t('fin.balance')}</Text>
+      <Text
+        style={[styles.heroValue, start]}
+        numberOfLines={1}
+        adjustsFontSizeToFit
+        minimumFontScale={0.6}
+      >
+        {money(balance)}
       </Text>
-    </View>
+
+      {/* Income against outgoings, as one bar rather than two figures. */}
+      <View style={styles.splitTrack}>
+        <View style={[styles.splitIn, { width: `${inShare}%` }]} />
+      </View>
+
+      <View style={styles.heroLegend}>
+        <View style={styles.legendItem}>
+          <View style={[styles.legendDot, { backgroundColor: AURA.green.ink }]} />
+          <Text style={styles.legendLabel} numberOfLines={1}>
+            {t('fin.income')}
+          </Text>
+          <Text style={styles.legendValue} numberOfLines={1}>
+            {money(income)}
+          </Text>
+        </View>
+        <View style={styles.legendItem}>
+          <View style={[styles.legendDot, { backgroundColor: colors.primary }]} />
+          <Text style={styles.legendLabel} numberOfLines={1}>
+            {t('fin.expenses')}
+          </Text>
+          <Text style={styles.legendValue} numberOfLines={1}>
+            {money(expenses)}
+          </Text>
+        </View>
+      </View>
+
+      {/* Debt qualifies the balance rather than standing beside it, so it sits
+          on the same card as a footnote instead of taking a quarter of the
+          grid. Hidden entirely when there is none — a zero is noise. */}
+      {debt !== 0 ? (
+        <View style={styles.heroDebt}>
+          <Handshake color={colors.text} size={14} strokeWidth={2.2} />
+          <Text style={styles.heroDebtText} numberOfLines={1}>
+            {t('fin.debts')} · {money(debt)}
+          </Text>
+        </View>
+      ) : null}
+    </LinearGradient>
   );
 }
 
@@ -359,45 +412,20 @@ export default function FinanceScreen() {
       </View>
 
       <ScrollView showsVerticalScrollIndicator={false} contentContainerStyle={styles.content}>
-        {/* ── The four figures ── */}
-        <Entrance delay={40}>
-          <View style={styles.sumRow}>
-            <SummaryCard
-              label={t('fin.income')}
-              value={money(totals.income)}
-              tint={AURA.green.tint}
-              ink={AURA.green.ink}
-              Icon={TrendingUp}
-            />
-            <SummaryCard
-              label={t('fin.expenses')}
-              value={money(totals.expenses)}
-              tint={AURA.yellow.tint}
-              ink={AURA.yellow.ink}
-              Icon={TrendingDown}
-            />
-          </View>
-          <View style={styles.sumRow}>
-            <SummaryCard
-              label={t('fin.balance')}
-              value={money(totals.balance)}
-              tint={AURA.blue.tint}
-              ink={AURA.blue.ink}
-              Icon={Wallet}
-            />
-            <SummaryCard
-              label={t('fin.debts')}
-              value={money(totals.debtTotal)}
-              tint={colors.surfaceAlt}
-              ink={colors.textMuted}
-              Icon={Handshake}
-            />
-          </View>
+        {/* ── The month, as one card ── */}
+        <Entrance delay={40} from={20}>
+          <BalanceCard
+            balance={totals.balance}
+            income={totals.income}
+            expenses={totals.expenses}
+            debt={totals.debtTotal}
+            money={money}
+          />
         </Entrance>
 
         {/* ── Income ── */}
         <Entrance delay={110}>
-          <View style={styles.section}>
+          <View style={[styles.section, { borderStartColor: AURA.green.ink }]}>
             <View style={styles.sectionHead}>
               <View style={[styles.sectionIcon, { backgroundColor: AURA.green.tint }]}>
                 <TrendingUp color={AURA.green.ink} size={17} strokeWidth={2.2} />
@@ -444,7 +472,7 @@ export default function FinanceScreen() {
 
         {/* ── Expenses ── */}
         <Entrance delay={170}>
-          <View style={styles.section}>
+          <View style={[styles.section, { borderStartColor: AURA.yellow.ink }]}>
             <View style={styles.sectionHead}>
               <View style={[styles.sectionIcon, { backgroundColor: AURA.yellow.tint }]}>
                 <TrendingDown color={AURA.yellow.ink} size={17} strokeWidth={2.2} />
@@ -493,10 +521,10 @@ export default function FinanceScreen() {
 
         {/* ── Debts ── */}
         <Entrance delay={230}>
-          <View style={styles.section}>
+          <View style={[styles.section, { borderStartColor: AURA.blue.ink }]}>
             <View style={styles.sectionHead}>
-              <View style={[styles.sectionIcon, { backgroundColor: colors.surfaceAlt }]}>
-                <Handshake color={colors.textMuted} size={17} strokeWidth={2.2} />
+              <View style={[styles.sectionIcon, { backgroundColor: AURA.blue.tint }]}>
+                <Handshake color={AURA.blue.ink} size={17} strokeWidth={2.2} />
               </View>
               <Text style={[styles.sectionTitle, start]}>{t('fin.debts')}</Text>
               <Pressable
@@ -730,19 +758,57 @@ const styles = StyleSheet.create({
   },
   content: { paddingBottom: spacing.md },
 
-  // ── Summary ──
-  sumRow: { flexDirection: 'row', gap: 10, marginBottom: 10 },
-  sumCard: { flex: 1, borderRadius: radius.md, padding: 14, minHeight: 84 },
-  sumCardWide: { flexBasis: '100%' },
-  sumTop: {
+  // ── The month, as one card ──
+  hero: {
+    borderRadius: radius.lg,
+    padding: spacing.md + 4,
+    marginBottom: spacing.sm,
+  },
+  heroKicker: {
+    fontSize: 12,
+    ...font(700),
+    color: colors.text,
+    opacity: 0.6,
+    letterSpacing: 0.6,
+    textTransform: 'uppercase',
+  },
+  heroValue: {
+    fontSize: 40,
+    ...font(700),
+    color: colors.text,
+    letterSpacing: -1.2,
+    marginTop: 2,
+  },
+  splitTrack: {
+    flexDirection: 'row',
+    height: 8,
+    borderRadius: 4,
+    // The remainder of the track is the expense half, so the bar needs no
+    // second filled view — the ground colour is the other number.
+    backgroundColor: colors.primary,
+    overflow: 'hidden',
+    marginTop: spacing.md,
+  },
+  splitIn: { height: '100%', backgroundColor: AURA.green.ink },
+  heroLegend: { flexDirection: 'row', gap: spacing.md, marginTop: 10 },
+  legendItem: { flex: 1, flexDirection: 'row', alignItems: 'center', gap: 6 },
+  legendDot: { width: 8, height: 8, borderRadius: 4 },
+  legendLabel: { fontSize: 12, ...font(600), color: colors.text, opacity: 0.65 },
+  legendValue: { flex: 1, fontSize: 13, ...font(700), color: colors.text, textAlign: 'right' },
+  heroDebt: {
     flexDirection: 'row',
     alignItems: 'center',
-    justifyContent: 'space-between',
-    gap: 6,
-    marginBottom: 8,
+    gap: 7,
+    alignSelf: 'flex-start',
+    backgroundColor: 'rgba(255,255,255,0.55)',
+    borderRadius: 100,
+    paddingHorizontal: 11,
+    paddingVertical: 6,
+    marginTop: spacing.md,
   },
-  sumLabel: { flexShrink: 1, fontSize: 12.5, ...font(600), color: colors.text, opacity: 0.7 },
-  sumValue: { fontSize: 24, ...font(700), color: colors.text, letterSpacing: -0.6 },
+  heroDebtText: { fontSize: 12.5, ...font(700), color: colors.text },
+
+  // ── Summary ──
 
   // ── Sections ──
   section: {
@@ -752,6 +818,9 @@ const styles = StyleSheet.create({
     marginTop: spacing.md,
     borderWidth: 1,
     borderColor: colors.border,
+    // A coloured spine down the leading edge, so a scroll says which list you
+    // are in without stopping to read the heading.
+    borderStartWidth: 4,
   },
   sectionHead: { flexDirection: 'row', alignItems: 'center', gap: 10, marginBottom: 6 },
   sectionIcon: {

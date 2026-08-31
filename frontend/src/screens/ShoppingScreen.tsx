@@ -13,10 +13,20 @@ import {
 import { useFocusEffect, useNavigation } from '@react-navigation/native';
 import type { NativeStackNavigationProp } from '@react-navigation/native-stack';
 import * as Haptics from 'expo-haptics';
-import { ChevronLeft, Plus, Check, X, Trash2, ShoppingCart } from 'lucide-react-native';
+import {
+  ChevronLeft,
+  Plus,
+  Check,
+  X,
+  Trash2,
+  ShoppingCart,
+  ChevronDown,
+  ChevronUp,
+} from 'lucide-react-native';
 
 import { Screen } from '../components/ui';
 import { Entrance } from '../components/motion';
+import { LinearGradient } from 'expo-linear-gradient';
 import {
   api,
   uuid,
@@ -25,7 +35,7 @@ import {
   type ShoppingCategory,
 } from '../lib/api';
 import type { RootStackParamList } from '../navigation';
-import { colors, spacing, font, radius, AURA, AURA_CYCLE } from '../theme';
+import { colors, spacing, font, radius, AURA, AURA_CYCLE, IRIDESCENT } from '../theme';
 import { t, alignStart } from '../lib/i18n';
 
 // The shopping list. One job, done fast: type a thing, tick it off in the
@@ -113,21 +123,12 @@ function ItemRow({
             ) : null}
           </View>
 
-          {item.note || tint ? (
-            <View style={styles.rowMetaLine}>
-              {tint ? (
-                <View style={[styles.catChip, { backgroundColor: tint.tint }]}>
-                  <Text style={[styles.catText, { color: tint.ink }]} numberOfLines={1}>
-                    {t(`shop.cat.${item.category}`)}
-                  </Text>
-                </View>
-              ) : null}
-              {item.note ? (
-                <Text style={[styles.rowNote, start]} numberOfLines={1}>
-                  {item.note}
-                </Text>
-              ) : null}
-            </View>
+          {/* The category is the group header now, so a row only carries
+              what is particular to it. */}
+          {item.note ? (
+            <Text style={[styles.rowNote, start]} numberOfLines={1}>
+              {item.note}
+            </Text>
           ) : null}
         </Pressable>
 
@@ -173,14 +174,38 @@ export default function ShoppingScreen() {
 
   useFocusEffect(load);
 
-  const { toBuy, bought } = useMemo(() => {
+  const { toBuy, bought, groups } = useMemo(() => {
     const byNewest = (a: ShoppingItem, b: ShoppingItem) =>
       b.createdAt.localeCompare(a.createdAt);
+    const open = items.filter((i) => !i.isBought).sort(byNewest);
+
+    // Grouped by aisle, in the order the categories are declared, so walking
+    // the list matches walking the shop. Uncategorised items land last under
+    // their own heading rather than being scattered through the others.
+    const byCategory = new Map<ShoppingCategory | 'none', ShoppingItem[]>();
+    for (const item of open) {
+      const key = item.category ?? 'none';
+      const bucket = byCategory.get(key);
+      if (bucket) bucket.push(item);
+      else byCategory.set(key, [item]);
+    }
+    const ordered: { key: ShoppingCategory | 'none'; items: ShoppingItem[] }[] = [];
+    for (const cat of SHOPPING_CATEGORIES) {
+      const rows = byCategory.get(cat);
+      if (rows?.length) ordered.push({ key: cat, items: rows });
+    }
+    const none = byCategory.get('none');
+    if (none?.length) ordered.push({ key: 'none', items: none });
+
     return {
-      toBuy: items.filter((i) => !i.isBought).sort(byNewest),
+      toBuy: open,
       bought: items.filter((i) => i.isBought).sort(byNewest),
+      groups: ordered,
     };
   }, [items]);
+
+  /** Whether the trolley is expanded. Collapsed by default — it is history. */
+  const [showBought, setShowBought] = useState(false);
 
   const add = async () => {
     const name = draft.trim();
@@ -333,7 +358,43 @@ export default function ShoppingScreen() {
         </Pressable>
       </View>
 
-      <Text style={[styles.headline, start]}>{t('shop.title')}</Text>
+      {/* ── How far through the shop you are ──
+          A list is a progress bar with words on it, and this is the one fact
+          the old headline could not tell you: whether you are nearly done. */}
+      <Entrance delay={40} from={16}>
+        <LinearGradient
+          colors={IRIDESCENT}
+          start={{ x: 0, y: 0 }}
+          end={{ x: 1, y: 1 }}
+          style={styles.banner}
+        >
+          <View style={styles.bannerTop}>
+            <View style={{ flex: 1 }}>
+              <Text style={[styles.bannerTitle, start]}>{t('shop.title')}</Text>
+              <Text style={[styles.bannerSub, start]}>
+                {t('today.completedOf', { done: bought.length, total: items.length })}
+              </Text>
+            </View>
+            <View style={styles.bannerBadge}>
+              <ShoppingCart color={colors.text} size={22} strokeWidth={2} />
+              {toBuy.length > 0 ? (
+                <View style={styles.bannerCount}>
+                  <Text style={styles.bannerCountText}>{toBuy.length}</Text>
+                </View>
+              ) : null}
+            </View>
+          </View>
+
+          <View style={styles.bannerTrack}>
+            <View
+              style={[
+                styles.bannerFill,
+                { width: `${items.length ? (bought.length / items.length) * 100 : 0}%` },
+              ]}
+            />
+          </View>
+        </LinearGradient>
+      </Entrance>
 
       {/* ── The quick add, the one thing this screen is for ── */}
       <View style={styles.addRow}>
@@ -370,54 +431,97 @@ export default function ShoppingScreen() {
           </View>
         ) : null}
 
-        {toBuy.length > 0 ? (
-          <>
-            <View style={styles.sectionHead}>
-              <Text style={[styles.sectionTitle, start]}>{t('shop.toBuy')}</Text>
-              <Text style={styles.sectionCount}>{toBuy.length}</Text>
-            </View>
-            <View style={styles.card}>
-              {toBuy.map((item, i) => (
-                <ItemRow
-                  key={item.id}
-                  item={item}
-                  index={i}
-                  onToggle={() => toggle(item)}
-                  onEdit={() => openEdit(item)}
-                  onDelete={() => confirmDelete(item)}
-                />
-              ))}
-            </View>
-          </>
-        ) : null}
+        {/* ── One card per aisle ── */}
+        {groups.map((group, gi) => {
+          const skin =
+            group.key === 'none'
+              ? null
+              : AURA[AURA_CYCLE[SHOPPING_CATEGORIES.indexOf(group.key) % AURA_CYCLE.length]];
+          return (
+            <Entrance key={group.key} delay={80 + gi * 60} from={16}>
+              <View style={styles.groupCard}>
+                <View
+                  style={[
+                    styles.groupHead,
+                    { backgroundColor: skin?.tint ?? colors.surfaceAlt },
+                  ]}
+                >
+                  <Text
+                    style={[styles.groupTitle, { color: skin?.ink ?? colors.textMuted }, start]}
+                    numberOfLines={1}
+                  >
+                    {group.key === 'none' ? t('shop.noCategory') : t(`shop.cat.${group.key}`)}
+                  </Text>
+                  <Text style={[styles.groupCount, { color: skin?.ink ?? colors.textMuted }]}>
+                    {group.items.length}
+                  </Text>
+                </View>
+                <View style={styles.groupBody}>
+                  {group.items.map((item, i) => (
+                    <ItemRow
+                      key={item.id}
+                      item={item}
+                      index={i}
+                      onToggle={() => toggle(item)}
+                      onEdit={() => openEdit(item)}
+                      onDelete={() => confirmDelete(item)}
+                    />
+                  ))}
+                </View>
+              </View>
+            </Entrance>
+          );
+        })}
 
+        {/* ── The trolley: one bar, opened only if you want it ──
+            It used to be a second full-height list competing with the one that
+            still needs doing, which is the wrong way round. */}
         {bought.length > 0 ? (
-          <>
-            <View style={styles.sectionHead}>
-              <Text style={[styles.sectionTitle, start]}>{t('shop.bought')}</Text>
-              <Text style={styles.sectionCount}>{bought.length}</Text>
-              <View style={{ flex: 1 }} />
+          <Entrance delay={80 + groups.length * 60} from={16}>
+            <View style={styles.troll}>
+              <Pressable
+                onPress={() => setShowBought((v) => !v)}
+                style={({ pressed }) => [styles.trollHead, pressed && { opacity: 0.72 }]}
+                accessibilityRole="button"
+                accessibilityState={{ expanded: showBought }}
+              >
+                <View style={styles.trollCheck}>
+                  <Check color={colors.primaryText} size={13} strokeWidth={3.2} />
+                </View>
+                <Text style={[styles.trollTitle, start]}>{t('shop.bought')}</Text>
+                <Text style={styles.trollCount}>{bought.length}</Text>
+                {showBought ? (
+                  <ChevronUp color={colors.textMuted} size={18} />
+                ) : (
+                  <ChevronDown color={colors.textMuted} size={18} />
+                )}
+              </Pressable>
+
+              {showBought ? (
+                <View style={styles.groupBody}>
+                  {bought.map((item, i) => (
+                    <ItemRow
+                      key={item.id}
+                      item={item}
+                      index={i}
+                      onToggle={() => toggle(item)}
+                      onEdit={() => openEdit(item)}
+                      onDelete={() => confirmDelete(item)}
+                    />
+                  ))}
+                </View>
+              ) : null}
+
               <Pressable
                 onPress={clearBought}
-                style={styles.clearBtn}
+                style={({ pressed }) => [styles.clearBtn, pressed && { opacity: 0.72 }]}
                 accessibilityRole="button"
               >
+                <Trash2 color={colors.danger} size={15} strokeWidth={2.2} />
                 <Text style={styles.clearText}>{t('shop.clearBought')}</Text>
               </Pressable>
             </View>
-            <View style={[styles.card, styles.cardQuiet]}>
-              {bought.map((item, i) => (
-                <ItemRow
-                  key={item.id}
-                  item={item}
-                  index={i}
-                  onToggle={() => toggle(item)}
-                  onEdit={() => openEdit(item)}
-                  onDelete={() => confirmDelete(item)}
-                />
-              ))}
-            </View>
-          </>
+          </Entrance>
         ) : null}
       </ScrollView>
 
@@ -535,14 +639,6 @@ const styles = StyleSheet.create({
     elevation: 2,
   },
 
-  headline: {
-    fontSize: 32,
-    ...font(700),
-    color: colors.text,
-    letterSpacing: -0.8,
-    marginTop: spacing.md,
-    marginBottom: spacing.md,
-  },
 
   // ── Quick add ──
   addRow: { flexDirection: 'row', alignItems: 'center', gap: 10, marginBottom: spacing.md },
@@ -570,37 +666,113 @@ const styles = StyleSheet.create({
 
   list: { paddingBottom: spacing.md },
 
-  sectionHead: {
+  // ── The banner ──
+  banner: {
+    borderRadius: radius.lg,
+    padding: spacing.md + 2,
+    marginTop: spacing.md,
+    marginBottom: spacing.md,
+  },
+  bannerTop: { flexDirection: 'row', alignItems: 'center', gap: 12 },
+  bannerTitle: { fontSize: 26, ...font(700), color: colors.text, letterSpacing: -0.7 },
+  bannerSub: {
+    fontSize: 13,
+    ...font(600),
+    color: colors.text,
+    opacity: 0.65,
+    marginTop: 2,
+  },
+  bannerBadge: {
+    width: 46,
+    height: 46,
+    borderRadius: 23,
+    backgroundColor: 'rgba(255,255,255,0.65)',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  /** The outstanding count, sat on the badge like a notification dot. */
+  bannerCount: {
+    position: 'absolute',
+    top: -3,
+    insetInlineEnd: -3,
+    minWidth: 20,
+    height: 20,
+    borderRadius: 10,
+    paddingHorizontal: 5,
+    backgroundColor: colors.primary,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  bannerCountText: { fontSize: 11, ...font(700), color: colors.primaryText },
+  bannerTrack: {
+    height: 7,
+    borderRadius: 4,
+    backgroundColor: 'rgba(255,255,255,0.5)',
+    overflow: 'hidden',
+    marginTop: spacing.md,
+  },
+  bannerFill: { height: '100%', borderRadius: 4, backgroundColor: colors.primary },
+
+  // ── One card per aisle ──
+  groupCard: {
+    backgroundColor: colors.surface,
+    borderRadius: radius.md,
+    borderWidth: 1,
+    borderColor: colors.border,
+    overflow: 'hidden',
+    marginBottom: 10,
+  },
+  groupHead: {
     flexDirection: 'row',
     alignItems: 'center',
     gap: 8,
-    marginTop: spacing.sm,
-    marginBottom: spacing.sm,
+    paddingHorizontal: 14,
+    paddingVertical: 9,
   },
-  sectionTitle: { fontSize: 15, ...font(700), color: colors.text },
-  sectionCount: {
-    fontSize: 12,
-    ...font(700),
-    color: colors.textMuted,
-    backgroundColor: colors.surfaceAlt,
-    borderRadius: 100,
-    paddingHorizontal: 8,
-    paddingVertical: 2,
-    overflow: 'hidden',
-  },
-  clearBtn: { paddingVertical: 6, paddingHorizontal: 4 },
-  clearText: { fontSize: 13, ...font(600), color: colors.danger },
+  groupTitle: { flex: 1, fontSize: 13, ...font(700), letterSpacing: 0.2 },
+  groupCount: { fontSize: 12.5, ...font(700), opacity: 0.75 },
+  groupBody: { paddingHorizontal: 14 },
 
-  card: {
+  // ── The trolley, collapsed ──
+  troll: {
     backgroundColor: colors.surface,
     borderRadius: radius.md,
-    paddingHorizontal: 14,
     borderWidth: 1,
     borderColor: colors.border,
-    marginBottom: spacing.md,
+    overflow: 'hidden',
+    marginTop: spacing.sm,
   },
+  trollHead: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10,
+    paddingHorizontal: 14,
+    paddingVertical: 13,
+  },
+  trollCheck: {
+    width: 22,
+    height: 22,
+    borderRadius: 11,
+    backgroundColor: colors.primary,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  trollTitle: { flex: 1, fontSize: 14.5, ...font(700), color: colors.text },
+  trollCount: { fontSize: 12.5, ...font(700), color: colors.textMuted },
+
+
+  clearBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 7,
+    paddingVertical: 12,
+    borderTopWidth: 1,
+    borderTopColor: colors.border,
+  },
+  clearText: { fontSize: 13, ...font(600), color: colors.danger },
+
   /** Already in the trolley — present, but no longer the point. */
-  cardQuiet: { opacity: 0.72 },
 
   row: {
     flexDirection: 'row',
@@ -632,9 +804,6 @@ const styles = StyleSheet.create({
   },
   qtyText: { fontSize: 11.5, ...font(700), color: colors.textMuted },
 
-  rowMetaLine: { flexDirection: 'row', alignItems: 'center', gap: 8, marginTop: 4 },
-  catChip: { borderRadius: 100, paddingHorizontal: 8, paddingVertical: 2 },
-  catText: { fontSize: 11, ...font(700) },
   rowNote: { flexShrink: 1, fontSize: 12.5, ...font(500), color: colors.textMuted },
 
   empty: { alignItems: 'center', paddingVertical: spacing.xl, gap: 6 },

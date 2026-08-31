@@ -111,132 +111,6 @@ function greetingNow(): string {
   return t('today.greeting.evening');
 }
 
-// ── The hero ring ───────────────────────────────────────────────────────────
-
-/**
- * The day's completion, as a ring that fills and a number that counts up to
- * meet it. The stroke is a sweep through the three tile inks; the number is
- * ink, because values wear text colour, never series colour.
- */
-function HeroRing({ progress, onPress }: { progress: number; onPress: () => void }) {
-  const anim = useRef(new Animated.Value(0)).current;
-  const [shown, setShown] = useState(0);
-
-  useEffect(() => {
-    const id = anim.addListener(({ value }) => setShown(Math.round(value)));
-    Animated.timing(anim, {
-      toValue: progress,
-      duration: 1100,
-      easing: Easing.out(Easing.cubic),
-      // SVG props can't ride the native driver; the ring is the one JS-driven
-      // animation on the screen and it is short-lived.
-      useNativeDriver: false,
-    }).start();
-    return () => anim.removeListener(id);
-  }, [progress, anim]);
-
-  const size = 132;
-  const stroke = 12;
-  const r = (size - stroke) / 2;
-  const c = 2 * Math.PI * r;
-
-  return (
-    <Pressable
-      onPress={onPress}
-      style={({ pressed }) => [styles.ringCard, pressed && styles.pressedDim]}
-      accessibilityRole="button"
-      accessibilityLabel={`${progress}% ${t('today.tile.productivity')}`}
-    >
-      <Svg width={size} height={size}>
-        <Defs>
-          {/* The same sweep as the mic button and the chosen day, in the
-              deeper inks so it holds up as a 12px stroke. */}
-          <SvgGradient id="ring" x1="0" y1="0" x2="1" y2="1">
-            <Stop offset="0" stopColor={AURA.green.ink} />
-            <Stop offset="0.5" stopColor={AURA.blue.ink} />
-            <Stop offset="1" stopColor={AURA.yellow.ink} />
-          </SvgGradient>
-        </Defs>
-        <Circle
-          cx={size / 2}
-          cy={size / 2}
-          r={r}
-          stroke="rgba(20, 21, 15, 0.08)"
-          strokeWidth={stroke}
-          fill="none"
-        />
-        <AnimatedCircle
-          cx={size / 2}
-          cy={size / 2}
-          r={r}
-          stroke="url(#ring)"
-          strokeWidth={stroke}
-          strokeLinecap="round"
-          fill="none"
-          strokeDasharray={`${c} ${c}`}
-          strokeDashoffset={anim.interpolate({ inputRange: [0, 100], outputRange: [c, 0] })}
-          transform={`rotate(-90 ${size / 2} ${size / 2})`}
-        />
-      </Svg>
-      <View style={styles.ringCenter}>
-        <Text style={styles.ringPercent}>{shown}%</Text>
-      </View>
-    </Pressable>
-  );
-}
-
-// ── The metrics beside the ring ─────────────────────────────────────────────
-
-/** A number that counts up to its value, and counts again when it changes. */
-function useCountUp(target: number, duration = 800): number {
-  const anim = useRef(new Animated.Value(0)).current;
-  const [shown, setShown] = useState(0);
-  useEffect(() => {
-    const id = anim.addListener(({ value }) => setShown(Math.round(value)));
-    Animated.timing(anim, {
-      toValue: target,
-      duration,
-      easing: Easing.out(Easing.cubic),
-      useNativeDriver: false,
-    }).start();
-    return () => anim.removeListener(id);
-  }, [target, duration, anim]);
-  return shown;
-}
-
-/**
- * One figure in the hero card: a rule in its accent colour, the number, and
- * the word underneath. No chips, no icons — the rule carries the colour, the
- * type carries the meaning, and the three read as one row of a dashboard.
- */
-function Metric({
-  value,
-  label,
-  accent,
-  suffix,
-}: {
-  value: number;
-  label: string;
-  accent: string;
-  suffix?: string;
-}) {
-  const shown = useCountUp(value);
-  return (
-    <View style={styles.metric}>
-      <View style={[styles.metricRule, { backgroundColor: accent }]} />
-      <View style={{ flex: 1 }}>
-        <Text style={styles.metricValue}>
-          {shown}
-          {suffix ? <Text style={styles.metricSuffix}>{suffix}</Text> : null}
-        </Text>
-        <Text style={styles.metricLabel} numberOfLines={1}>
-          {label}
-        </Text>
-      </View>
-    </View>
-  );
-}
-
 // ── The week strip ──────────────────────────────────────────────────────────
 
 function DayPill({
@@ -969,10 +843,6 @@ export default function TodayScreen() {
   const start = { textAlign: alignStart() } as const;
   const stripMirror = isRTL() ? [{ scaleX: -1 as number }] : undefined;
 
-  const dateChipLabel = now.toLocaleDateString(locale(), {
-    day: 'numeric',
-    month: 'short',
-  });
   const dayWord = viewingToday
     ? t('calendar.today')
     : selDate.toLocaleDateString(locale(), { weekday: 'long' });
@@ -988,48 +858,6 @@ export default function TodayScreen() {
       />
 
       <ScrollView showsVerticalScrollIndicator={false} contentContainerStyle={styles.content}>
-        <Entrance delay={40}>
-          <Text style={[styles.explore, start]}>{t('today.explore')}</Text>
-        </Entrance>
-
-        {/* ── The hero: one card — the ring, and the day's figures beside it ── */}
-        <Entrance delay={100} from={26}>
-          <View style={styles.heroCard}>
-            <View style={styles.heroTop}>
-              <Text style={[styles.heroKicker, start]}>{t('today.overview')}</Text>
-              <Pressable
-                onPress={goToCalendar}
-                style={({ pressed }) => [styles.dateChip, pressed && styles.pressedDim]}
-                accessibilityRole="button"
-              >
-                <CalendarDays color={colors.textMuted} size={14} strokeWidth={2.2} />
-                <Text style={styles.dateChipText}>{dateChipLabel}</Text>
-              </Pressable>
-            </View>
-
-            <View style={styles.heroBody}>
-              <HeroRing progress={stats.pct} onPress={() => openSheet('progress')} />
-              <View style={styles.metricStack}>
-                <Metric
-                  value={stats.done}
-                  label={t('today.progress.completed')}
-                  accent={AURA.green.ink}
-                />
-                <Metric
-                  value={Math.max(0, stats.total - stats.done)}
-                  label={t('today.progress.pending')}
-                  accent={AURA.blue.ink}
-                />
-                <Metric
-                  value={stats.events}
-                  label={t('today.tile.events')}
-                  accent={AURA.yellow.ink}
-                />
-              </View>
-            </View>
-          </View>
-        </Entrance>
-
         {/* ── The week, one pill a day, the chosen one in the holographic fill ── */}
         <ScrollView
           ref={stripRef}
@@ -1302,69 +1130,11 @@ const styles = StyleSheet.create({
 
   content: { paddingTop: spacing.md, flexGrow: 1 },
 
-  explore: {
-    fontSize: 26,
-    ...font(700),
-    color: colors.text,
-    letterSpacing: -0.6,
-    marginBottom: spacing.md,
-  },
 
   // ── Hero ──
-  heroCard: {
-    backgroundColor: colors.surface,
-    borderRadius: radius.lg,
-    padding: spacing.md + 2,
-    borderWidth: 1,
-    borderColor: colors.border,
-    shadowColor: '#14150F',
-    shadowOffset: { width: 0, height: 6 },
-    shadowOpacity: 0.05,
-    shadowRadius: 16,
-    elevation: 2,
-  },
-  heroTop: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    gap: 12,
-    marginBottom: spacing.md,
-  },
-  heroKicker: {
-    fontSize: 12,
-    ...font(700),
-    color: colors.textMuted,
-    letterSpacing: 0.8,
-    textTransform: 'uppercase',
-  },
-  heroBody: { flexDirection: 'row', alignItems: 'center', gap: spacing.md },
-  ringCard: {
-    width: 132,
-    height: 132,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  ringCenter: { ...StyleSheet.absoluteFillObject, alignItems: 'center', justifyContent: 'center' },
-  ringPercent: { fontSize: 28, ...font(700), color: colors.text, letterSpacing: -0.8 },
 
-  metricStack: { flex: 1, gap: 14 },
-  metric: { flexDirection: 'row', alignItems: 'center', gap: 10 },
   /** The only colour in the block — a hairline rule, not a filled chip. */
-  metricRule: { width: 3, height: 30, borderRadius: 2 },
-  metricValue: { fontSize: 21, ...font(700), color: colors.text, letterSpacing: -0.5 },
-  metricSuffix: { fontSize: 14, ...font(600), color: colors.textMuted },
-  metricLabel: { fontSize: 12.5, ...font(500), color: colors.textMuted, marginTop: 1 },
 
-  dateChip: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 6,
-    backgroundColor: colors.surfaceAlt,
-    borderRadius: 100,
-    paddingHorizontal: 11,
-    paddingVertical: 7,
-  },
-  dateChipText: { fontSize: 12.5, ...font(600), color: colors.textMuted },
 
   // ── Week strip ──
   strip: { marginTop: spacing.md, flexGrow: 0 },

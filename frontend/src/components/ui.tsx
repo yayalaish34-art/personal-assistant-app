@@ -15,6 +15,7 @@ import {
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Bell } from 'lucide-react-native';
 
+import { Entrance } from './motion';
 import { isRTL } from '../lib/i18n';
 import { colors, radius, spacing, font, TAB_BAR_CLEARANCE } from '../theme';
 
@@ -88,8 +89,28 @@ export function GreetingHeader({
   );
 }
 
-export function Card({ children, style }: { children: ReactNode; style?: StyleProp<ViewStyle> }) {
-  return <View style={[styles.card, style]}>{children}</View>;
+/**
+ * A white block, which arrives rather than appearing.
+ *
+ * The entrance lives here rather than at each call site because every screen
+ * that uses `Card` wants the same thing — a stack that builds in reading order
+ * — and wiring it per card is the kind of thing that gets done on four of six.
+ * `delay` staggers a stack; pass 0 to have one land immediately.
+ */
+export function Card({
+  children,
+  style,
+  delay = 0,
+}: {
+  children: ReactNode;
+  style?: StyleProp<ViewStyle>;
+  delay?: number;
+}) {
+  return (
+    <Entrance delay={delay} from={18}>
+      <View style={[styles.card, style]}>{children}</View>
+    </Entrance>
+  );
 }
 
 export function Title({ children, style }: { children: ReactNode; style?: StyleProp<TextStyle> }) {

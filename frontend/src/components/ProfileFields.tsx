@@ -3,8 +3,9 @@ import * as Haptics from 'expo-haptics';
 import { Mars, Venus, BedDouble } from 'lucide-react-native';
 
 import { EVENT_TYPES, type EventType, type Gender } from '../lib/storage';
-import { colors, spacing, font, radius, TILES, TILE_INK, type TileColor } from '../theme';
-import { t, isRTL, alignStart } from '../lib/i18n';
+import { COUNTRIES, CURRENCIES, currencyOf, currencySymbol } from '../lib/currency';
+import { colors, spacing, font, radius, type AuraKey, AURA } from '../theme';
+import { t, isRTL, alignStart, locale } from '../lib/i18n';
 
 /**
  * The controls the profile is built from.
@@ -76,7 +77,7 @@ export function HourPicker({
 }: {
   value: number;
   onChange: (hour: number) => void;
-  tile: keyof typeof TILES;
+  tile: AuraKey;
   surface?: string;
 }) {
   const mirror = isRTL() ? [{ scaleX: -1 as number }] : undefined;
@@ -100,7 +101,7 @@ export function HourPicker({
             accessibilityState={{ selected: active }}
             style={[
               styles.hourChip,
-              { backgroundColor: active ? TILES[tile] : surface, transform: mirror },
+              { backgroundColor: active ? AURA[tile].tint : surface, transform: mirror },
             ]}
           >
             <Text style={[styles.hourText, active && styles.hourTextActive]}>
@@ -126,7 +127,7 @@ export function HourRangePicker({
   to: number;
   onFrom: (hour: number) => void;
   onTo: (hour: number) => void;
-  tile: keyof typeof TILES;
+  tile: AuraKey;
   surface?: string;
 }) {
   const start = { textAlign: alignStart() } as const;
@@ -200,9 +201,9 @@ export function EventTypePicker({
 }
 
 const GENDER_OPTIONS = [
-  { key: 'male', Icon: Mars, tile: 'blue' },
-  { key: 'female', Icon: Venus, tile: 'yellow' },
-] as const satisfies readonly { key: Exclude<Gender, 'unspecified'>; Icon: typeof Mars; tile: TileColor }[];
+  { key: 'male', Icon: Mars, tile: 'lilac' },
+  { key: 'female', Icon: Venus, tile: 'peach' },
+] as const satisfies readonly { key: Exclude<Gender, 'unspecified'>; Icon: typeof Mars; tile: AuraKey }[];
 
 /**
  * Man / woman / rather not say — asked once, only so the sleep card below can
@@ -234,10 +235,10 @@ export function GenderPicker({
               accessibilityState={{ selected: active }}
               style={[
                 styles.genderCard,
-                { backgroundColor: active ? TILES[tile] : surface },
+                { backgroundColor: active ? AURA[tile].tint : surface },
               ]}
             >
-              <Icon color={active ? TILE_INK[tile] : colors.textMuted} size={26} strokeWidth={2} />
+              <Icon color={active ? AURA[tile].ink : colors.textMuted} size={26} strokeWidth={2} />
               <Text style={[styles.genderLabel, active && styles.genderLabelActive]}>
                 {t(`onboarding.sleep.gender.${key}`)}
               </Text>
@@ -292,13 +293,13 @@ export function SleepInsight({
 }) {
   const hours = sleepDuration(startHour, endHour);
   const fit = hours < SLEEP_TARGET.min ? 'short' : hours > SLEEP_TARGET.max ? 'long' : 'good';
-  const tile: TileColor = fit === 'good' ? 'green' : fit === 'short' ? 'yellow' : 'blue';
+  const tile: AuraKey = fit === 'good' ? 'sky' : fit === 'short' ? 'peach' : 'lilac';
   const start = { textAlign: alignStart() } as const;
 
   return (
     <View style={[styles.insightCard, { backgroundColor: surface }]}>
-      <View style={[styles.insightIcon, { backgroundColor: TILES[tile] }]}>
-        <BedDouble color={TILE_INK[tile]} size={20} strokeWidth={2} />
+      <View style={[styles.insightIcon, { backgroundColor: AURA[tile].tint }]}>
+        <BedDouble color={AURA[tile].ink} size={20} strokeWidth={2} />
       </View>
       <View style={{ flex: 1 }}>
         <Text style={[styles.insightRecommended, start]}>
@@ -312,8 +313,119 @@ export function SleepInsight({
   );
 }
 
+/**
+ * Where they are, and what they spend.
+ *
+ * One question, two stored answers. Picking a country sets the currency with
+ * it, because that is the answer in all but a handful of cases; "somewhere
+ * else" drops to a plain currency list rather than making someone claim a
+ * country they are not in.
+ */
+export function CountryPicker({
+  country,
+  currency,
+  onChange,
+  surface = colors.surface,
+}: {
+  country: string | null;
+  currency: string | null;
+  onChange: (next: { country: string | null; currency: string | null }) => void;
+  surface?: string;
+}) {
+  const showCurrencies = country === null;
+
+  return (
+    <View>
+      <View style={styles.chipWrap}>
+        {COUNTRIES.map((c) => {
+          const active = country === c.code;
+          return (
+            <Pressable
+              key={c.code}
+              onPress={() => {
+                tap();
+                onChange({ country: c.code, currency: currencyOf(c.code) });
+              }}
+              accessibilityRole="button"
+              accessibilityState={{ selected: active }}
+              style={[styles.countryChip, { backgroundColor: active ? colors.primary : surface }]}
+            >
+              <Text style={styles.countryFlag}>{c.flag}</Text>
+              <Text style={[styles.chipText, active && styles.chipTextActive]}>
+                {t(`country.${c.code}`)}
+              </Text>
+            </Pressable>
+          );
+        })}
+        <Pressable
+          onPress={() => {
+            tap();
+            onChange({ country: null, currency });
+          }}
+          accessibilityRole="button"
+          accessibilityState={{ selected: showCurrencies }}
+          style={[
+            styles.countryChip,
+            { backgroundColor: showCurrencies ? colors.primary : surface },
+          ]}
+        >
+          <Text style={[styles.chipText, showCurrencies && styles.chipTextActive]}>
+            {t('country.other')}
+          </Text>
+        </Pressable>
+      </View>
+
+      {/* Only when no country carries the answer already. */}
+      {showCurrencies ? (
+        <>
+          <Text style={[styles.railLabelSmall, { textAlign: alignStart() }]}>
+            {t('onboarding.place.currency')}
+          </Text>
+          <View style={styles.chipWrap}>
+            {CURRENCIES.map((code) => {
+              const active = currency === code;
+              return (
+                <Pressable
+                  key={code}
+                  onPress={() => {
+                    tap();
+                    onChange({ country: null, currency: code });
+                  }}
+                  accessibilityRole="button"
+                  accessibilityState={{ selected: active }}
+                  style={[styles.chip, { backgroundColor: active ? colors.primary : surface }]}
+                >
+                  <Text style={[styles.chipText, active && styles.chipTextActive]}>
+                    {currencySymbol(code, locale())} {code}
+                  </Text>
+                </Pressable>
+              );
+            })}
+          </View>
+        </>
+      ) : null}
+    </View>
+  );
+}
+
 const styles = StyleSheet.create({
   chipWrap: { flexDirection: 'row', flexWrap: 'wrap', gap: 8 },
+  countryChip: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 7,
+    paddingHorizontal: 14,
+    paddingVertical: 10,
+    borderRadius: 50,
+  },
+  countryFlag: { fontSize: 15 },
+  railLabelSmall: {
+    ...font(600),
+    fontSize: 13,
+    color: colors.textMuted,
+    marginTop: spacing.md,
+    marginBottom: 8,
+  },
   chip: {
     paddingHorizontal: 15,
     paddingVertical: 11,

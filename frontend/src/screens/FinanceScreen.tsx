@@ -38,6 +38,8 @@ import {
   type ExpenseCategory,
 } from '../lib/api';
 import { toDateStr } from '../lib/tasks';
+import { storage } from '../lib/storage';
+import { formatMoney } from '../lib/currency';
 import type { RootStackParamList } from '../navigation';
 import { colors, spacing, font, radius, AURA } from '../theme';
 import { t, locale, alignStart } from '../lib/i18n';
@@ -55,9 +57,14 @@ type Editor =
   | { kind: 'income' | 'expense'; entry: MoneyEntry | null }
   | { kind: 'debt'; entry: Debt | null };
 
-/** Money, in the reader's own locale. No currency symbol is invented. */
-function money(n: number): string {
-  return new Intl.NumberFormat(locale(), { maximumFractionDigits: 2 }).format(n);
+/**
+ * Money, in the currency chosen during onboarding and the reader's own locale.
+ *
+ * Curried on the currency rather than reading it globally, so every figure on
+ * one render is formatted the same way even if the profile changes underneath.
+ */
+function moneyIn(currency: string | null) {
+  return (n: number) => formatMoney(n, currency, locale());
 }
 
 /** "12 Aug" — plain dates on rows, so a long list stays scannable. */
@@ -103,6 +110,7 @@ export default function FinanceScreen() {
   const [entries, setEntries] = useState<MoneyEntry[]>([]);
   const [debts, setDebts] = useState<Debt[]>([]);
   const [editor, setEditor] = useState<Editor | null>(null);
+  const [currency, setCurrency] = useState<string | null>(null);
 
   // Sheet fields, held apart from the row until Save.
   const [fDesc, setFDesc] = useState('');
@@ -116,13 +124,15 @@ export default function FinanceScreen() {
     let active = true;
     (async () => {
       try {
-        const [{ entries: e }, { debts: d }] = await Promise.all([
+        const [{ entries: e }, { debts: d }, prof] = await Promise.all([
           api.listMoney(),
           api.listDebts(),
+          storage.getProfile(),
         ]);
         if (!active) return;
         setEntries(e);
         setDebts(d);
+        setCurrency(prof.currency);
       } catch {
         /* local storage; nothing to retry against */
       }
@@ -313,6 +323,7 @@ export default function FinanceScreen() {
     }
   };
 
+  const money = moneyIn(currency);
   const start = { textAlign: alignStart() } as const;
   const catList: readonly string[] =
     editor?.kind === 'income' ? INCOME_CATEGORIES : EXPENSE_CATEGORIES;

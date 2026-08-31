@@ -26,17 +26,23 @@ import {
   Timer,
   CalendarDays,
   Pin,
+  Globe,
 } from 'lucide-react-native';
 
+import { LinearGradient } from 'expo-linear-gradient';
+
 import { Button } from '../components/ui';
+import { Entrance } from '../components/motion';
 import {
   HourRangePicker,
   BufferPicker,
   EventTypePicker,
   GenderPicker,
   SleepInsight,
+  CountryPicker,
 } from '../components/ProfileFields';
 import { storage, defaultProfile, type Profile } from '../lib/storage';
+import { guessCountry, currencyOf } from '../lib/currency';
 import { api } from '../lib/api';
 import {
   getMicrophoneState,
@@ -45,7 +51,7 @@ import {
   requestNotifications,
   type PermissionState,
 } from '../lib/permissions';
-import { colors, spacing, font, radius, TILES, TILE_INK, type TileColor } from '../theme';
+import { colors, spacing, font, radius, AURA, IRIDESCENT, type AuraKey } from '../theme';
 import {
   t,
   LANGUAGES,
@@ -85,6 +91,7 @@ type StepId =
   | 'language'
   | 'intro'
   | 'name'
+  | 'place'
   | 'work'
   | 'sleep'
   | 'buffer'
@@ -96,6 +103,7 @@ const STEPS: StepId[] = [
   'language',
   'intro',
   'name',
+  'place',
   'work',
   'sleep',
   'buffer',
@@ -108,43 +116,66 @@ const STEPS: StepId[] = [
  * The face each step wears.
  *
  * Colour cycles through the app's own tiles rather than meaning anything —
- * the same thing `ROW_TILES` does on the lists. What it buys is a sense of
+ * the same thing `AURA_CYCLE` does on the lists. What it buys is a sense of
  * moving through chapters instead of filling in one long form: nine
  * identically white screens in a row is what made this read as a survey.
  */
-const STEP_SKIN: Record<StepId, { tile: TileColor; Icon: typeof Mic }> = {
-  language: { tile: 'blue', Icon: Languages },
-  intro: { tile: 'green', Icon: Sparkles },
-  name: { tile: 'yellow', Icon: User },
-  work: { tile: 'green', Icon: Clock },
-  sleep: { tile: 'blue', Icon: Moon },
-  buffer: { tile: 'yellow', Icon: Timer },
-  types: { tile: 'green', Icon: CalendarDays },
-  fixed: { tile: 'blue', Icon: Pin },
-  permissions: { tile: 'yellow', Icon: ShieldCheck },
+const STEP_SKIN: Record<StepId, { tile: AuraKey; Icon: typeof Mic }> = {
+  language: { tile: 'lilac', Icon: Languages },
+  intro: { tile: 'sky', Icon: Sparkles },
+  name: { tile: 'peach', Icon: User },
+  place: { tile: 'sky', Icon: Globe },
+  work: { tile: 'sky', Icon: Clock },
+  sleep: { tile: 'lilac', Icon: Moon },
+  buffer: { tile: 'peach', Icon: Timer },
+  types: { tile: 'sky', Icon: CalendarDays },
+  fixed: { tile: 'lilac', Icon: Pin },
+  permissions: { tile: 'peach', Icon: ShieldCheck },
+};
+
+/**
+ * The panel behind each question, as a slice of the app's own gradient.
+ *
+ * Walking the questionnaire walks the sweep: sky at the start, lilac through
+ * the middle, peach at the end. It is a pair rather than all three stops so
+ * each screen is a calm wash instead of a rainbow, and consecutive steps
+ * always share an edge — which is what makes moving between them read as one
+ * surface sliding rather than nine unrelated colours.
+ */
+const STEP_WASH: Record<StepId, readonly [string, string]> = {
+  language: [IRIDESCENT[0], AURA.sky.tint],
+  intro: [AURA.sky.tint, IRIDESCENT[0]],
+  name: [IRIDESCENT[0], IRIDESCENT[1]],
+  place: [IRIDESCENT[1], AURA.sky.tint],
+  work: [AURA.sky.tint, IRIDESCENT[1]],
+  sleep: [IRIDESCENT[1], AURA.lilac.tint],
+  buffer: [AURA.lilac.tint, IRIDESCENT[1]],
+  types: [IRIDESCENT[1], IRIDESCENT[2]],
+  fixed: [IRIDESCENT[2], AURA.peach.tint],
+  permissions: [AURA.peach.tint, IRIDESCENT[2]],
 };
 
 /** The three things worth knowing before answering anything. */
 const INTRO_POINTS = [
-  { key: 'talk', Icon: Mic, tile: 'green' },
-  { key: 'plan', Icon: CalendarCheck, tile: 'blue' },
-  { key: 'private', Icon: ShieldCheck, tile: 'yellow' },
-] as const satisfies readonly { key: string; Icon: typeof Mic; tile: TileColor }[];
+  { key: 'talk', Icon: Mic, tile: 'sky' },
+  { key: 'plan', Icon: CalendarCheck, tile: 'lilac' },
+  { key: 'private', Icon: ShieldCheck, tile: 'peach' },
+] as const satisfies readonly { key: string; Icon: typeof Mic; tile: AuraKey }[];
 
 /** What each permission is, in the order it is asked for. */
 const PERMISSIONS = [
-  { key: 'mic', Icon: Mic, tile: 'green', request: requestMicrophone, read: getMicrophoneState },
+  { key: 'mic', Icon: Mic, tile: 'sky', request: requestMicrophone, read: getMicrophoneState },
   {
     key: 'notify',
     Icon: Bell,
-    tile: 'yellow',
+    tile: 'peach',
     request: requestNotifications,
     read: getNotificationState,
   },
 ] as const satisfies readonly {
   key: string;
   Icon: typeof Mic;
-  tile: TileColor;
+  tile: AuraKey;
   request: () => Promise<PermissionState>;
   read: () => Promise<PermissionState>;
 }[];
@@ -152,10 +183,10 @@ const PERMISSIONS = [
 type PermissionKey = (typeof PERMISSIONS)[number]['key'];
 
 /** Tinted icon square, the same glyph treatment the cards use elsewhere. */
-function IconSquare({ tile, Icon }: { tile: TileColor; Icon: typeof Mic }) {
+function IconSquare({ tile, Icon }: { tile: AuraKey; Icon: typeof Mic }) {
   return (
-    <View style={[styles.iconSquare, { backgroundColor: TILES[tile] }]}>
-      <Icon color={TILE_INK[tile]} size={19} strokeWidth={2.2} />
+    <View style={[styles.iconSquare, { backgroundColor: AURA[tile].tint }]}>
+      <Icon color={AURA[tile].ink} size={19} strokeWidth={2.2} />
     </View>
   );
 }
@@ -186,7 +217,7 @@ function PermissionRow({
   onPress,
 }: {
   Icon: typeof Mic;
-  tile: TileColor;
+  tile: AuraKey;
   title: string;
   body: string;
   state: PermissionState | 'unknown';
@@ -219,7 +250,7 @@ function PermissionRow({
         {busy ? (
           <ActivityIndicator size="small" color={colors.text} />
         ) : granted ? (
-          <Check color={TILE_INK.green} size={17} strokeWidth={3} />
+          <Check color={AURA.sky.ink} size={17} strokeWidth={3} />
         ) : (
           <Text style={styles.permBtnText} numberOfLines={1}>
             {label}
@@ -237,7 +268,15 @@ export default function OnboardingScreen({ onDone }: { onDone: () => void }) {
   const [finished, setFinished] = useState(false);
   const [lang, setLang] = useState<Language>(getLanguage());
   const [name, setName] = useState('');
-  const [profile, setProfile] = useState<Profile>(defaultProfile);
+  const [profile, setProfile] = useState<Profile>(() => {
+    // Pre-answered from the device's timezone, the same way the language
+    // question is: a guess that is usually right costs nothing to correct,
+    // and an empty question costs a decision.
+    const guess = guessCountry();
+    return guess
+      ? { ...defaultProfile, country: guess, currency: currencyOf(guess) }
+      : defaultProfile;
+  });
   const [permissions, setPermissions] = useState<Record<PermissionKey, PermissionState | 'unknown'>>(
     { mic: 'unknown', notify: 'unknown' },
   );
@@ -376,7 +415,7 @@ export default function OnboardingScreen({ onDone }: { onDone: () => void }) {
       <View style={[styles.screen, direction, { paddingTop: insets.top + spacing.lg }]}>
         <View style={styles.doneBody}>
           <View style={styles.doneMark}>
-            <Check color={TILE_INK.green} size={34} strokeWidth={2.4} />
+            <Check color={AURA.sky.ink} size={34} strokeWidth={2.4} />
           </View>
           <Text style={[styles.title, { textAlign: 'center' }]}>{t('onboarding.done.title')}</Text>
           <Text style={[styles.body, { textAlign: 'center' }]}>{t('onboarding.done.body')}</Text>
@@ -399,15 +438,16 @@ export default function OnboardingScreen({ onDone }: { onDone: () => void }) {
       {/* The question lives on a tinted panel of its own, and the answers on
           the paper below it. Before this the two ran together in one column of
           off-white, which is what made nine screens of it read as a form. */}
-      <View
-        style={[
-          styles.hero,
-          { backgroundColor: TILES[skin.tile], paddingTop: insets.top + spacing.md },
-        ]}
+      <LinearGradient
+        key={step}
+        colors={STEP_WASH[step]}
+        start={{ x: 0, y: 0 }}
+        end={{ x: 1, y: 1 }}
+        style={[styles.hero, { paddingTop: insets.top + spacing.md }]}
       >
         <View style={styles.heroTop}>
           <View style={styles.heroBadge}>
-            <StepIcon color={TILE_INK[skin.tile]} size={20} strokeWidth={2.2} />
+            <StepIcon color={colors.text} size={20} strokeWidth={2.2} />
           </View>
           <Text style={styles.stepCount}>
             {t('onboarding.step', { current: index + 1, total: STEPS.length })}
@@ -430,11 +470,17 @@ export default function OnboardingScreen({ onDone }: { onDone: () => void }) {
           ))}
         </View>
 
-        <Text style={[styles.title, start]}>{t(`onboarding.${step}.title`)}</Text>
-        <Text style={[styles.body, start]}>{t(`onboarding.${step}.body`)}</Text>
-      </View>
+        {/* Keyed on the step, so each question arrives rather than swapping
+            its text in place. */}
+        <Entrance key={`q-${step}`} delay={60} from={16}>
+          <Text style={[styles.title, start]}>{t(`onboarding.${step}.title`)}</Text>
+          <Text style={[styles.body, start]}>{t(`onboarding.${step}.body`)}</Text>
+        </Entrance>
+      </LinearGradient>
 
       <ScrollView showsVerticalScrollIndicator={false} contentContainerStyle={styles.content}>
+        {/* The answers follow the question in, one beat behind it. */}
+        <Entrance key={`a-${step}`} delay={160} from={22}>
 
         {step === 'language' ? (
           <View style={styles.chipWrap}>
@@ -486,13 +532,21 @@ export default function OnboardingScreen({ onDone }: { onDone: () => void }) {
           />
         ) : null}
 
+        {step === 'place' ? (
+          <CountryPicker
+            country={profile.country}
+            currency={profile.currency}
+            onChange={({ country, currency }) => patch({ country, currency })}
+          />
+        ) : null}
+
         {step === 'work' ? (
           <HourRangePicker
             from={profile.workStartHour}
             to={profile.workEndHour}
             onFrom={(workStartHour) => patch({ workStartHour })}
             onTo={(workEndHour) => patch({ workEndHour })}
-            tile="green"
+            tile="sky"
           />
         ) : null}
 
@@ -508,7 +562,7 @@ export default function OnboardingScreen({ onDone }: { onDone: () => void }) {
               to={profile.sleepEndHour}
               onFrom={(sleepStartHour) => patch({ sleepStartHour })}
               onTo={(sleepEndHour) => patch({ sleepEndHour })}
-              tile="blue"
+              tile="lilac"
             />
 
             <SleepInsight
@@ -568,6 +622,7 @@ export default function OnboardingScreen({ onDone }: { onDone: () => void }) {
             <Text style={[styles.permFoot, start]}>{t('onboarding.permissions.optional')}</Text>
           </View>
         ) : null}
+        </Entrance>
       </ScrollView>
 
       <View style={[styles.footer, { paddingBottom: Math.max(insets.bottom, spacing.md) }]}>
@@ -715,7 +770,7 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     backgroundColor: colors.surfaceAlt,
   },
-  permBtnDone: { backgroundColor: TILES.green },
+  permBtnDone: { backgroundColor: AURA.sky.tint },
   permBtnText: { ...font(600), fontSize: 13.5, color: colors.text },
   permFoot: {
     ...font(400),
@@ -750,7 +805,7 @@ const styles = StyleSheet.create({
     width: 76,
     height: 76,
     borderRadius: 38,
-    backgroundColor: TILES.green,
+    backgroundColor: AURA.sky.tint,
     alignItems: 'center',
     justifyContent: 'center',
     marginBottom: spacing.md,

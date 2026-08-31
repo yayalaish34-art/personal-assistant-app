@@ -15,8 +15,10 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
 const FORECAST_URL = 'https://api.open-meteo.com/v1/forecast';
 const GEOCODE_URL = 'https://geocoding-api.open-meteo.com/v1/search';
 
-const PLACE_KEY = '@pa/weatherPlace';
-const READING_KEY = '@pa/weatherReading';
+// Versioned: the cached shape gained a place name and a high/low, and an old
+// entry would deserialise into a reading with those fields missing.
+const PLACE_KEY = '@pa/weatherPlace2';
+const READING_KEY = '@pa/weatherReading2';
 
 /** Weather is worth re-asking for about twice an hour. */
 const READING_TTL_MS = 30 * 60 * 1000;
@@ -29,12 +31,19 @@ export type Sky = 'clear' | 'partly' | 'cloud' | 'fog' | 'drizzle' | 'rain' | 's
 export interface Weather {
   /** Whole degrees Celsius. */
   temperature: number;
+  /** What it feels like, which is often the more useful number. */
+  feelsLike: number;
   sky: Sky;
   /** The provider's own daylight flag, which knows the season. */
   isDay: boolean;
+  /** Today's range, for the line under the temperature. */
+  high: number;
+  low: number;
+  /** Where this reading is for — the city, as the geocoder named it. */
+  place: string | null;
 }
 
-type Place = { at: number; latitude: number; longitude: number };
+type Place = { at: number; latitude: number; longitude: number; name: string | null };
 type Reading = { at: number; value: Weather };
 
 /** https://open-meteo.com/en/docs — WMO 4677, grouped to what an icon can say. */
@@ -93,12 +102,19 @@ async function resolvePlace(): Promise<Place | null> {
     );
     if (!res.ok) return null;
     const body = (await res.json()) as {
-      results?: { latitude: number; longitude: number }[];
+      results?: { latitude: number; longitude: number; name?: string }[];
     };
     const hit = body.results?.[0];
     if (!hit) return null;
 
-    const place: Place = { at: Date.now(), latitude: hit.latitude, longitude: hit.longitude };
+    const place: Place = {
+      at: Date.now(),
+      latitude: hit.latitude,
+      longitude: hit.longitude,
+      // The geocoder's own spelling, which is better than the timezone's
+      // underscore-separated one and is what the screen shows.
+      name: hit.name ?? null,
+    };
     await AsyncStorage.setItem(PLACE_KEY, JSON.stringify(place)).catch(() => undefined);
     return place;
   } catch {
@@ -123,19 +139,37 @@ export async function getWeather(): Promise<Weather | null> {
   try {
     const res = await fetch(
       `${FORECAST_URL}?latitude=${place.latitude}&longitude=${place.longitude}` +
-        `&current=temperature_2m,weather_code,is_day&timezone=auto`,
+        `&current=temperature_2m,apparent_temperature,weather_code,is_day` +
+        `&daily=temperature_2m_max,temperature_2m_min&forecast_days=1&timezone=auto`,
     );
     if (!res.ok) return null;
     const body = (await res.json()) as {
-      current?: { temperature_2m?: number; weather_code?: number; is_day?: number };
+      current?: {
+        temperature_2m?: number;
+        apparent_temperature?: number;
+        weather_code?: number;
+        is_day?: number;
+      };
+      daily?: { temperature_2m_max?: number[]; temperature_2m_min?: number[] };
     };
     const current = body.current;
     if (typeof current?.temperature_2m !== 'number') return null;
 
+    const now = Math.round(current.temperature_2m);
+    // The daily arrays are one entry long here, and either can be absent if the
+    // provider trims the response; falling back to the current reading keeps
+    // the line sensible rather than printing an empty range.
+    const high = body.daily?.temperature_2m_max?.[0];
+    const low = body.daily?.temperature_2m_min?.[0];
+
     const value: Weather = {
-      temperature: Math.round(current.temperature_2m),
+      temperature: now,
+      feelsLike: Math.round(current.apparent_temperature ?? current.temperature_2m),
       sky: skyOf(current.weather_code ?? 3),
       isDay: current.is_day === 1,
+      high: typeof high === 'number' ? Math.round(high) : now,
+      low: typeof low === 'number' ? Math.round(low) : now,
+      place: place.name,
     };
     await AsyncStorage.setItem(
       READING_KEY,

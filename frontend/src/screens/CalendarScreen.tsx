@@ -13,6 +13,7 @@ import {
 } from 'lucide-react-native';
 
 import { Screen, GreetingHeader } from '../components/ui';
+import { Entrance } from '../components/motion';
 import { api } from '../lib/api';
 import { storage } from '../lib/storage';
 import {
@@ -24,7 +25,7 @@ import {
   type AgendaItem,
 } from '../lib/tasks';
 import type { RootStackParamList } from '../navigation';
-import { colors, spacing, font, radius, TILES, ROW_TILES } from '../theme';
+import { colors, spacing, font, radius, AURA_CYCLE, AURA } from '../theme';
 import { t, locale, isRTL } from '../lib/i18n';
 
 type Nav = NativeStackNavigationProp<RootStackParamList>;
@@ -197,9 +198,12 @@ export default function CalendarScreen() {
         onBellPress={() => Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light)}
       />
 
-      <Text style={styles.headline}>{t('tab.calendar')}</Text>
+      <Entrance delay={40}>
+        <Text style={styles.headline}>{t('tab.calendar')}</Text>
+      </Entrance>
 
       {/* ── Day / Week / Month ── */}
+      <Entrance delay={100} from={18}>
       <View style={styles.segment}>
         {(['day', 'week', 'month'] as ViewMode[]).map((m) => {
           const active = mode === m;
@@ -221,8 +225,10 @@ export default function CalendarScreen() {
           );
         })}
       </View>
+      </Entrance>
 
       {/* ── Month, with arrows ── */}
+      <Entrance delay={160} from={18}>
       <View style={styles.monthRow}>
         <Text style={styles.monthLabel}>{monthLabel}</Text>
         <View style={styles.monthArrows}>
@@ -242,8 +248,10 @@ export default function CalendarScreen() {
           </Pressable>
         </View>
       </View>
+      </Entrance>
 
       {/* ── The week strip ── */}
+      <Entrance delay={220} from={18}>
       <View style={styles.weekRow}>
         {week.map((d) => {
           const str = toDateStr(d);
@@ -262,6 +270,7 @@ export default function CalendarScreen() {
           );
         })}
       </View>
+      </Entrance>
 
       <ScrollView showsVerticalScrollIndicator={false} contentContainerStyle={styles.timeline}>
         {mode === 'day' ? (
@@ -290,7 +299,7 @@ export default function CalendarScreen() {
                     onLongPress={() => confirmDelete(item)}
                     style={[
                       styles.entry,
-                      { top, height, backgroundColor: TILES[ROW_TILES[index % ROW_TILES.length]] },
+                      { top, height, backgroundColor: AURA[AURA_CYCLE[index % AURA_CYCLE.length]].tint },
                     ]}
                   >
                     <View style={{ flex: 1 }}>
@@ -318,7 +327,7 @@ export default function CalendarScreen() {
                     onLongPress={() => confirmDelete(item)}
                   style={[
                     styles.listRow,
-                    { backgroundColor: TILES[ROW_TILES[index % ROW_TILES.length]] },
+                    { backgroundColor: AURA[AURA_CYCLE[index % AURA_CYCLE.length]].tint },
                   ]}
                 >
                   <View style={{ flex: 1 }}>
@@ -351,7 +360,7 @@ export default function CalendarScreen() {
                     onLongPress={() => confirmDelete(item)}
                 style={[
                   styles.listRow,
-                  { backgroundColor: TILES[ROW_TILES[index % ROW_TILES.length]] },
+                  { backgroundColor: AURA[AURA_CYCLE[index % AURA_CYCLE.length]].tint },
                 ]}
               >
                 <Text style={[styles.entryTitle, { flex: 1 }]} numberOfLines={1}>
@@ -386,7 +395,7 @@ const styles = StyleSheet.create({
     marginBottom: spacing.md,
   },
   segmentItem: { flex: 1, paddingVertical: 11, borderRadius: 100, alignItems: 'center' },
-  segmentItemActive: { backgroundColor: TILES.green },
+  segmentItemActive: { backgroundColor: AURA.sky.tint },
   segmentText: { fontSize: 15, ...font(500), color: colors.textMuted },
   segmentTextActive: { ...font(700), color: colors.text },
 
@@ -399,7 +408,7 @@ const styles = StyleSheet.create({
   weekCell: { flex: 1, alignItems: 'center', gap: 6 },
   weekName: { fontSize: 13, ...font(500), color: colors.textMuted },
   weekDay: { width: 34, height: 34, borderRadius: 17, alignItems: 'center', justifyContent: 'center' },
-  weekDaySelected: { backgroundColor: TILES.green },
+  weekDaySelected: { backgroundColor: AURA.sky.tint },
   weekDayText: { fontSize: 15, ...font(600), color: colors.text },
   weekDayToday: { ...font(700) },
 

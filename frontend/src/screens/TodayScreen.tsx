@@ -22,10 +22,22 @@ import {
   CalendarClock,
   ChevronsRight,
   CircleCheckBig,
+  Check,
+  Sun,
+  Moon,
+  Cloud,
+  CloudSun,
+  CloudMoon,
+  Cloudy,
+  CloudFog,
+  CloudDrizzle,
+  CloudRain,
+  CloudSnow,
+  CloudLightning,
 } from 'lucide-react-native';
 
 import { Screen, GreetingHeader } from '../components/ui';
-import { Entrance } from '../components/motion';
+import { Entrance, useFloat } from '../components/motion';
 import { api } from '../lib/api';
 import { storage } from '../lib/storage';
 import {
@@ -49,7 +61,35 @@ import {
   type AuraKey,
 } from '../theme';
 import { t, locale, alignStart, isRTL } from '../lib/i18n';
-import { getWeather, type Weather } from '../lib/weather';
+import { getWeather, isDaylightNow, type Sky, type Weather } from '../lib/weather';
+
+/**
+ * The glyph for a sky. Clear and near-clear get the sun or the moon, so the
+ * card says what time of day it is at a glance; the rest read the same whether
+ * it is noon or midnight.
+ */
+function skyIcon(sky: Sky, isDay: boolean) {
+  switch (sky) {
+    case 'clear':
+      return isDay ? Sun : Moon;
+    case 'partly':
+      return isDay ? CloudSun : CloudMoon;
+    case 'cloud':
+      return Cloudy;
+    case 'fog':
+      return CloudFog;
+    case 'drizzle':
+      return CloudDrizzle;
+    case 'rain':
+      return CloudRain;
+    case 'snow':
+      return CloudSnow;
+    case 'storm':
+      return CloudLightning;
+    default:
+      return Cloud;
+  }
+}
 
 // The home screen: greeting, the completion ring, a strip of day pills, the
 // pastel stat tiles, and the day's agenda on a white sheet running to the
@@ -488,6 +528,226 @@ function SheetStat({
   );
 }
 
+// ── Weather, at the size it deserves ─────────────────────────────────────────
+
+/**
+ * Today's sky: the place, a description, the temperature and the range.
+ *
+ * This replaced a "· 21°" fragment glued to the date chip, which gave the one
+ * thing a bare number can — how warm it is — while omitting everything that
+ * makes it useful: where the reading is for, what the sky is doing, and
+ * whether the day is going to get colder.
+ */
+function WeatherCard({ weather, onPress }: { weather: Weather | null; onPress: () => void }) {
+  const start = { textAlign: alignStart() } as const;
+  const isDay = weather?.isDay ?? isDaylightNow();
+  const Icon = weather ? skyIcon(weather.sky, isDay) : isDay ? Sun : Moon;
+  const skin = isDay ? AURA.sky : AURA.lilac;
+
+  // A gentle drift on the glyph, so the card is alive without being busy.
+  const float = useFloat(4, 3200, 200);
+
+  return (
+    <Pressable
+      onPress={onPress}
+      style={({ pressed }) => [
+        styles.weatherCard,
+        { backgroundColor: skin.tint },
+        pressed && styles.pressedDim,
+      ]}
+      accessibilityRole="button"
+    >
+      <View style={{ flex: 1 }}>
+        <Text style={[styles.weatherPlace, start]} numberOfLines={1}>
+          {weather?.place ?? t('today.tile.today')}
+        </Text>
+        <Text style={[styles.weatherTemp, start]}>
+          {weather ? `${weather.temperature}°` : '—'}
+        </Text>
+        <Text style={[styles.weatherDesc, { color: skin.ink }, start]} numberOfLines={1}>
+          {weather ? t(`sky.${weather.sky}`) : ''}
+        </Text>
+        {weather ? (
+          <Text style={[styles.weatherRange, start]} numberOfLines={1}>
+            {t('weather.range', { high: weather.high, low: weather.low })}
+            {weather.feelsLike !== weather.temperature
+              ? `   ${t('weather.feelsLike', { deg: weather.feelsLike })}`
+              : ''}
+          </Text>
+        ) : null}
+      </View>
+      <Animated.View style={{ transform: [{ translateY: float }] }}>
+        <Icon color={skin.ink} size={52} strokeWidth={1.5} />
+      </Animated.View>
+    </Pressable>
+  );
+}
+
+// ── Now / next ───────────────────────────────────────────────────────────────
+
+/**
+ * The task in hand, with the things that can be done to it from here.
+ *
+ * Home used to be a place to read numbers and then go elsewhere to act on
+ * them. The buttons are the point: ticking off what you are doing right now is
+ * the most common thing anyone wants from a home screen, and it was three taps
+ * away behind a list.
+ */
+function FocusTask({
+  item,
+  onDone,
+  onOpen,
+  onSnooze,
+}: {
+  item: AgendaItem;
+  onDone: () => void;
+  onOpen: () => void;
+  onSnooze: () => void;
+}) {
+  const start = { textAlign: alignStart() } as const;
+  const st = rowStatus(item, new Date());
+
+  return (
+    <View style={styles.focusCard}>
+      <View style={styles.focusHead}>
+        <View style={[styles.focusDot, { backgroundColor: st.dot }]} />
+        <Text style={styles.focusKicker}>{t('home.now')}</Text>
+      </View>
+
+      <Text style={[styles.focusTitle, start]} numberOfLines={2}>
+        {item.title}
+      </Text>
+      <Text style={[styles.focusMeta, start]} numberOfLines={1}>
+        {t(`today.status.${st.key}`)}
+        {item.time ? ` · ${to12h(item.time)}` : ''}
+      </Text>
+
+      <View style={styles.focusActions}>
+        <Pressable
+          onPress={onDone}
+          style={({ pressed }) => [styles.focusPrimary, pressed && styles.pressedDim]}
+          accessibilityRole="button"
+        >
+          <Check color={colors.primaryText} size={17} strokeWidth={3} />
+          <Text style={styles.focusPrimaryText}>{t('home.done')}</Text>
+        </Pressable>
+        <Pressable
+          onPress={onSnooze}
+          style={({ pressed }) => [styles.focusGhost, pressed && styles.pressedDim]}
+          accessibilityRole="button"
+        >
+          <Text style={styles.focusGhostText}>{t('home.snooze')}</Text>
+        </Pressable>
+        <Pressable
+          onPress={onOpen}
+          style={({ pressed }) => [styles.focusGhost, pressed && styles.pressedDim]}
+          accessibilityRole="button"
+        >
+          <Text style={styles.focusGhostText}>{t('home.open')}</Text>
+        </Pressable>
+      </View>
+    </View>
+  );
+}
+
+/** One of the two things queued behind the current task. */
+function QueuedTask({
+  item,
+  onDone,
+  onOpen,
+}: {
+  item: AgendaItem;
+  onDone: () => void;
+  onOpen: () => void;
+}) {
+  const start = { textAlign: alignStart() } as const;
+  const st = rowStatus(item, new Date());
+
+  return (
+    <Pressable
+      onPress={onOpen}
+      style={({ pressed }) => [styles.queueRow, pressed && styles.pressedDim]}
+      accessibilityRole="button"
+    >
+      <Pressable
+        onPress={onDone}
+        hitSlop={8}
+        accessibilityRole="checkbox"
+        accessibilityState={{ checked: false }}
+      >
+        <View style={styles.queueCheck}>
+          <Check color={colors.textMuted} size={13} strokeWidth={3} />
+        </View>
+      </Pressable>
+      <View style={{ flex: 1 }}>
+        <Text style={[styles.queueTitle, start]} numberOfLines={1}>
+          {item.title}
+        </Text>
+        <View style={styles.queueMetaRow}>
+          <View style={[styles.queueDot, { backgroundColor: st.dot }]} />
+          <Text style={styles.queueMeta} numberOfLines={1}>
+            {item.time ? to12h(item.time) : t(`today.status.${st.key}`)}
+          </Text>
+        </View>
+      </View>
+    </Pressable>
+  );
+}
+
+/** The meeting happening now, with the one after it beneath in miniature. */
+function MeetingCard({
+  current,
+  next,
+  onOpen,
+}: {
+  current: AgendaItem | null;
+  next: AgendaItem | null;
+  onOpen: (item: AgendaItem) => void;
+}) {
+  const start = { textAlign: alignStart() } as const;
+
+  return (
+    <View style={[styles.meetingCard, { backgroundColor: AURA.sky.tint }]}>
+      <Pressable
+        onPress={() => current && onOpen(current)}
+        disabled={!current}
+        style={({ pressed }) => [styles.meetingMain, pressed && styles.pressedDim]}
+        accessibilityRole="button"
+      >
+        <View style={{ flex: 1 }}>
+          <Text style={[styles.meetingKicker, start]}>{t('home.now')}</Text>
+          <Text style={[styles.meetingTitle, start]} numberOfLines={1}>
+            {current ? current.title : t('home.noMeetings')}
+          </Text>
+          {current ? (
+            <Text style={[styles.meetingTime, start]} numberOfLines={1}>
+              {to12h(current.time)}
+            </Text>
+          ) : null}
+        </View>
+        <View style={styles.meetingIcon}>
+          <CalendarClock color={AURA.sky.ink} size={26} strokeWidth={1.8} />
+        </View>
+      </Pressable>
+
+      {/* The one after it, deliberately smaller — it is context, not the point. */}
+      {next ? (
+        <Pressable
+          onPress={() => onOpen(next)}
+          style={({ pressed }) => [styles.meetingNext, pressed && styles.pressedDim]}
+          accessibilityRole="button"
+        >
+          <Text style={styles.meetingNextKicker}>{t('home.next')}</Text>
+          <Text style={[styles.meetingNextTitle, start]} numberOfLines={1}>
+            {next.title}
+          </Text>
+          <Text style={styles.meetingNextTime}>{to12h(next.time)}</Text>
+        </Pressable>
+      ) : null}
+    </View>
+  );
+}
+
 // ── The screen ──────────────────────────────────────────────────────────────
 
 const PILL_W = 56;
@@ -598,14 +858,39 @@ export default function TodayScreen() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [items, filter]);
 
-  /** The next thing on the clock for the chosen day. */
-  const upcoming = useMemo(() => {
+  /**
+   * What to put in front of someone: the thing in hand, then the next two.
+   *
+   * "In hand" is whatever is happening now if anything is, and otherwise the
+   * next thing due — a home screen that leads with a task finished an hour ago
+   * is answering a question nobody asked.
+   */
+  const focus = useMemo(() => {
+    const open = items
+      .filter((i) => statusOf(i, now) !== 'done')
+      .sort((a, b) => (a.time || '99:99').localeCompare(b.time || '99:99'));
+    const live = open.find((i) => statusOf(i, now) === 'inprogress');
+    const head = live ?? open[0] ?? null;
+    const queue = open.filter((i) => i !== head).slice(0, 2);
+    return { head, queue };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [items]);
+
+  /** The meeting on now, and the one after it. */
+  const meetings = useMemo(() => {
     const timed = items
       .filter((i) => i.kind === 'event' && i.time)
       .sort((a, b) => a.time.localeCompare(b.time));
-    if (!viewingToday) return timed[0] ?? null;
-    const nowTime = `${String(now.getHours()).padStart(2, '0')}:${String(now.getMinutes()).padStart(2, '0')}`;
-    return timed.find((i) => i.time >= nowTime) ?? timed[0] ?? null;
+    const nowTime = `${String(now.getHours()).padStart(2, '0')}:${String(
+      now.getMinutes(),
+    ).padStart(2, '0')}`;
+    const running = timed.find((i) => statusOf(i, now) === 'inprogress') ?? null;
+    const ahead = timed.filter((i) => i.time >= nowTime);
+    // Viewing another day has no "now", so the first two of that day stand in.
+    if (!viewingToday) return { current: timed[0] ?? null, next: timed[1] ?? null };
+    const current = running ?? ahead[0] ?? null;
+    const next = ahead.find((i) => i !== current) ?? null;
+    return { current, next };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [items, viewingToday]);
 
@@ -631,6 +916,30 @@ export default function TodayScreen() {
       .updateTask(item.id, { isDone: next, updatedAt: new Date().toISOString() })
       .catch(() => void refresh());
   };
+
+  /** Push a task to tomorrow without opening it. */
+  const snooze = async (item: AgendaItem) => {
+    if (item.kind !== 'task') return;
+    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
+    const when = new Date();
+    when.setDate(when.getDate() + 1);
+    // Keeps the time of day it already had, so "tomorrow" does not silently
+    // become midnight.
+    const [hh, mm] = (item.time || '09:00').split(':').map(Number);
+    when.setHours(hh || 9, mm || 0, 0, 0);
+    setItems((prev) => prev.filter((r) => !(r.kind === 'task' && r.id === item.id)));
+    try {
+      await api.updateTask(item.id, {
+        dueAt: when.toISOString(),
+        updatedAt: new Date().toISOString(),
+      });
+    } catch {
+      void refresh();
+    }
+  };
+
+  const openItem = (item: AgendaItem) =>
+    navigation.navigate('EntryForm', { kind: item.kind, id: item.id });
 
   const pickDay = (d: Date, index: number) => {
     Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
@@ -660,9 +969,10 @@ export default function TodayScreen() {
   const start = { textAlign: alignStart() } as const;
   const stripMirror = isRTL() ? [{ scaleX: -1 as number }] : undefined;
 
-  const dateChipLabel =
-    now.toLocaleDateString(locale(), { day: 'numeric', month: 'short' }) +
-    (weather ? ` · ${weather.temperature}°` : '');
+  const dateChipLabel = now.toLocaleDateString(locale(), {
+    day: 'numeric',
+    month: 'short',
+  });
   const dayWord = viewingToday
     ? t('calendar.today')
     : selDate.toLocaleDateString(locale(), { weekday: 'long' });
@@ -742,10 +1052,52 @@ export default function TodayScreen() {
           ))}
         </ScrollView>
 
-        {/* ── The pastel tiles: how the chosen day is shaped ──
-            Keyed on the day, so picking one re-springs them with fresh
-            numbers instead of quietly swapping the text. */}
-        <Entrance key={`tiles-${selectedStr}`} delay={booted ? 40 : 340} from={18}>
+        {/* ── Today's sky ── */}
+        <Entrance delay={booted ? 30 : 300} from={18}>
+          <WeatherCard weather={weather} onPress={goToCalendar} />
+        </Entrance>
+
+        {/* ── The thing in hand, and what is behind it ──
+            Keyed on the day so picking one re-springs the whole block rather
+            than swapping its text in place. */}
+        <Entrance key={`focus-${selectedStr}`} delay={booted ? 70 : 360} from={20}>
+          {focus.head ? (
+            <>
+              <FocusTask
+                item={focus.head}
+                onDone={() => toggleDone(focus.head!)}
+                onOpen={() => openItem(focus.head!)}
+                onSnooze={() => snooze(focus.head!)}
+              />
+              {focus.queue.length > 0 ? (
+                <View style={styles.queueCard}>
+                  <Text style={[styles.queueKicker, start]}>{t('home.upNext')}</Text>
+                  {focus.queue.map((item) => (
+                    <QueuedTask
+                      key={`${item.kind}-${item.id}`}
+                      item={item}
+                      onDone={() => toggleDone(item)}
+                      onOpen={() => openItem(item)}
+                    />
+                  ))}
+                </View>
+              ) : null}
+            </>
+          ) : (
+            <View style={styles.focusCard}>
+              <Text style={[styles.focusTitle, start]}>{t('home.allDone')}</Text>
+              <Text style={[styles.focusMeta, start]}>{t('home.allDoneBody')}</Text>
+            </View>
+          )}
+        </Entrance>
+
+        {/* ── The meeting on now, with the next one under it ── */}
+        <Entrance key={`meet-${selectedStr}`} delay={booted ? 110 : 410} from={18}>
+          <MeetingCard current={meetings.current} next={meetings.next} onOpen={openItem} />
+        </Entrance>
+
+        {/* ── The pastel tiles: how the chosen day is shaped ── */}
+        <Entrance key={`tiles-${selectedStr}`} delay={booted ? 150 : 450} from={18}>
           <View style={styles.gridRow}>
             <Pressable
               onPress={goToCalendar}
@@ -788,38 +1140,6 @@ export default function TodayScreen() {
               </Text>
             </Pressable>
           </View>
-        </Entrance>
-
-        {/* ── The next thing in the diary ── */}
-        <Entrance key={`up-${selectedStr}`} delay={booted ? 100 : 400} from={18}>
-          <Pressable
-            onPress={goToCalendar}
-            style={({ pressed }) => [
-              styles.wideCard,
-              { backgroundColor: AURA.sky.tint },
-              pressed && styles.pressedDim,
-            ]}
-            accessibilityRole="button"
-          >
-            <View style={{ flex: 1 }}>
-              <Text style={[styles.wideCardKicker, start]}>{t('today.upcomingEvent')}</Text>
-              <Text style={[styles.wideCardTitle, start]} numberOfLines={1}>
-                {upcoming ? upcoming.title : t('today.noEvents')}
-              </Text>
-              <Text style={[styles.wideCardMeta, start]}>
-                {upcoming
-                  ? `${dayWord}, ${to12h(upcoming.time)}`
-                  : selDate.toLocaleDateString(locale(), {
-                      weekday: 'long',
-                      day: 'numeric',
-                      month: 'long',
-                    })}
-              </Text>
-            </View>
-            <View style={styles.wideCardIcon}>
-              <CalendarClock color={colors.text} size={30} strokeWidth={1.6} />
-            </View>
-          </Pressable>
         </Entrance>
 
         {/* ── Hand the day to her ── */}
@@ -1083,6 +1403,167 @@ const styles = StyleSheet.create({
     marginTop: 2,
   },
 
+  // ── Weather ──
+  weatherCard: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 14,
+    borderRadius: radius.lg,
+    padding: spacing.md + 2,
+    marginTop: spacing.md,
+  },
+  weatherPlace: {
+    fontSize: 13,
+    ...font(600),
+    color: colors.text,
+    opacity: 0.7,
+  },
+  weatherTemp: {
+    fontSize: 40,
+    ...font(700),
+    color: colors.text,
+    letterSpacing: -1.2,
+    marginTop: 2,
+  },
+  weatherDesc: { fontSize: 14.5, ...font(700), marginTop: 1 },
+  weatherRange: {
+    fontSize: 12.5,
+    ...font(500),
+    color: colors.text,
+    opacity: 0.6,
+    marginTop: 5,
+  },
+
+  // ── The thing in hand ──
+  focusCard: {
+    backgroundColor: colors.surface,
+    borderRadius: radius.lg,
+    padding: spacing.md + 2,
+    marginTop: spacing.md,
+    borderWidth: 1,
+    borderColor: colors.border,
+  },
+  focusHead: { flexDirection: 'row', alignItems: 'center', gap: 7, marginBottom: 8 },
+  focusDot: { width: 7, height: 7, borderRadius: 3.5 },
+  focusKicker: {
+    fontSize: 11.5,
+    ...font(700),
+    color: colors.textMuted,
+    letterSpacing: 0.6,
+    textTransform: 'uppercase',
+  },
+  focusTitle: {
+    fontSize: 22,
+    ...font(700),
+    color: colors.text,
+    letterSpacing: -0.5,
+    lineHeight: 28,
+  },
+  focusMeta: { fontSize: 13, ...font(600), color: colors.textMuted, marginTop: 4 },
+  focusActions: { flexDirection: 'row', gap: 8, marginTop: spacing.md },
+  focusPrimary: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 7,
+    backgroundColor: colors.primary,
+    borderRadius: 100,
+    paddingHorizontal: 18,
+    paddingVertical: 11,
+  },
+  focusPrimaryText: { fontSize: 14, ...font(700), color: colors.primaryText },
+  focusGhost: {
+    backgroundColor: colors.surfaceAlt,
+    borderRadius: 100,
+    paddingHorizontal: 16,
+    paddingVertical: 11,
+  },
+  focusGhostText: { fontSize: 14, ...font(600), color: colors.text },
+
+  // ── The two behind it ──
+  queueCard: {
+    backgroundColor: colors.surface,
+    borderRadius: radius.md,
+    paddingHorizontal: spacing.md,
+    paddingVertical: 4,
+    marginTop: 10,
+    borderWidth: 1,
+    borderColor: colors.border,
+  },
+  queueKicker: {
+    fontSize: 11,
+    ...font(700),
+    color: colors.textMuted,
+    letterSpacing: 0.6,
+    textTransform: 'uppercase',
+    marginTop: 10,
+    marginBottom: 2,
+  },
+  queueRow: { flexDirection: 'row', alignItems: 'center', gap: 11, paddingVertical: 10 },
+  queueCheck: {
+    width: 22,
+    height: 22,
+    borderRadius: 11,
+    borderWidth: 1.6,
+    borderColor: colors.border,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  queueTitle: { fontSize: 15, ...font(600), color: colors.text },
+  queueMetaRow: { flexDirection: 'row', alignItems: 'center', gap: 5, marginTop: 2 },
+  queueDot: { width: 5, height: 5, borderRadius: 2.5 },
+  queueMeta: { fontSize: 12, ...font(500), color: colors.textMuted },
+
+  // ── Meetings ──
+  meetingCard: { borderRadius: radius.lg, marginTop: 10, overflow: 'hidden' },
+  meetingMain: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 12,
+    padding: spacing.md + 2,
+  },
+  meetingKicker: {
+    fontSize: 11.5,
+    ...font(700),
+    color: colors.text,
+    opacity: 0.55,
+    letterSpacing: 0.6,
+    textTransform: 'uppercase',
+  },
+  meetingTitle: {
+    fontSize: 19,
+    ...font(700),
+    color: colors.text,
+    letterSpacing: -0.4,
+    marginTop: 3,
+  },
+  meetingTime: { fontSize: 14, ...font(600), color: colors.text, opacity: 0.7, marginTop: 2 },
+  meetingIcon: {
+    width: 50,
+    height: 50,
+    borderRadius: radius.md,
+    backgroundColor: colors.surface,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  /** Smaller on purpose: the next meeting is context, not the headline. */
+  meetingNext: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10,
+    paddingHorizontal: spacing.md + 2,
+    paddingVertical: 11,
+    backgroundColor: 'rgba(255,255,255,0.55)',
+  },
+  meetingNextKicker: {
+    fontSize: 10.5,
+    ...font(700),
+    color: colors.textMuted,
+    letterSpacing: 0.5,
+    textTransform: 'uppercase',
+  },
+  meetingNextTitle: { flex: 1, fontSize: 14, ...font(600), color: colors.text },
+  meetingNextTime: { fontSize: 12.5, ...font(700), color: colors.textMuted },
+
   // ── Pastel tiles ──
   gridRow: { flexDirection: 'row', gap: 10, marginTop: spacing.sm },
   gridTile: { flex: 1, minHeight: 104, borderRadius: radius.md, padding: 14 },
@@ -1099,26 +1580,6 @@ const styles = StyleSheet.create({
     color: colors.text,
     opacity: 0.55,
     marginTop: 1,
-  },
-
-  wideCard: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 12,
-    borderRadius: radius.lg,
-    padding: 14,
-    marginTop: 10,
-  },
-  wideCardKicker: { fontSize: 13, ...font(500), color: colors.text, opacity: 0.7 },
-  wideCardTitle: { fontSize: 19, ...font(700), color: colors.text, marginTop: 2 },
-  wideCardMeta: { fontSize: 14, ...font(500), color: colors.text, opacity: 0.7, marginTop: 2 },
-  wideCardIcon: {
-    width: 58,
-    height: 58,
-    borderRadius: radius.md,
-    backgroundColor: colors.surface,
-    alignItems: 'center',
-    justifyContent: 'center',
   },
 
   addBar: {

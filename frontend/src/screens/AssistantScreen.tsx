@@ -20,7 +20,7 @@ import { Screen } from '../components/ui';
 import { api } from '../lib/api';
 import { useVoiceSession } from '../lib/useVoiceSession';
 import type { RootStackParamList } from '../navigation';
-import { colors, spacing, font, TILES, TILE_INK } from '../theme';
+import { colors, spacing, font, AURA } from '../theme';
 import { t, locale, alignStart } from '../lib/i18n';
 
 type Nav = NativeStackNavigationProp<RootStackParamList, 'Assistant'>;
@@ -394,7 +394,7 @@ const styles = StyleSheet.create({
   offerRow: {
     height: 52,
     borderRadius: 14,
-    backgroundColor: TILES.blue,
+    backgroundColor: AURA.lilac.tint,
     flexDirection: 'row',
     alignItems: 'center',
     paddingHorizontal: 14,
@@ -412,7 +412,7 @@ const styles = StyleSheet.create({
     flexShrink: 0,
   },
   offerTimeTaken: { color: colors.primaryText },
-  offerWhen: { flex: 1, fontSize: 14, ...font(600), color: TILE_INK.blue, textAlign: 'right' },
+  offerWhen: { flex: 1, fontSize: 14, ...font(600), color: AURA.lilac.ink, textAlign: 'right' },
   offerWhenTaken: { color: 'rgba(255,255,255,0.75)' },
 
   imageBubble: {
@@ -441,7 +441,7 @@ const styles = StyleSheet.create({
   userBubble: {
     alignSelf: 'flex-end',
     maxWidth: '88%',
-    backgroundColor: TILES.green,
+    backgroundColor: AURA.sky.tint,
     borderRadius: 22,
     borderEndEndRadius: 6,
     paddingHorizontal: 16,

@@ -49,6 +49,10 @@ export type Gender = 'male' | 'female' | 'unspecified';
  * form in which "I work until six" means anything.
  */
 export type Profile = {
+  /** ISO 3166-1 alpha-2, or null when they chose "somewhere else". */
+  country: string | null;
+  /** ISO 4217. What the finance screen formats every amount with. */
+  currency: string | null;
   workStartHour: number;
   workEndHour: number;
   /** Asleep from → to. Crosses midnight when `sleepStartHour > sleepEndHour`. */
@@ -63,6 +67,8 @@ export type Profile = {
 };
 
 export const defaultProfile: Profile = {
+  country: null,
+  currency: null,
   workStartHour: 9,
   workEndHour: 18,
   sleepStartHour: 23,

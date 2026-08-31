@@ -36,12 +36,14 @@ import {
 } from 'lucide-react-native';
 
 import { Screen, GreetingHeader, Card, Button } from '../components/ui';
+import { Entrance } from '../components/motion';
 import {
   HourRangePicker,
   BufferPicker,
   EventTypePicker,
   GenderPicker,
   SleepInsight,
+  CountryPicker,
 } from '../components/ProfileFields';
 import {
   storage,
@@ -53,7 +55,7 @@ import {
 import { getNotificationState, requestNotifications } from '../lib/permissions';
 import { api, type Task, type Event } from '../lib/api';
 import { toDateStr, isLive } from '../lib/tasks';
-import { colors, spacing, font, radius, TILES, TILE_INK, type TileColor } from '../theme';
+import { colors, spacing, font, radius, type AuraKey, AURA } from '../theme';
 import { t, LANGUAGES, getLanguage, setLanguage, alignStart, type Language } from '../lib/i18n';
 
 // Placeholder portrait, matching the Today header avatar.
@@ -93,9 +95,9 @@ function initialsOf(name: string): string {
 }
 
 /** Tinted icon square, same pattern as a card row's leading glyph. */
-function IconSquare({ tile, children }: { tile?: TileColor; children: React.ReactNode }) {
+function IconSquare({ tile, children }: { tile?: AuraKey; children: React.ReactNode }) {
   return (
-    <View style={[styles.iconSquare, { backgroundColor: tile ? TILES[tile] : TILES.neutral }]}>
+    <View style={[styles.iconSquare, { backgroundColor: tile ? AURA[tile].tint : colors.surfaceAlt }]}>
       {children}
     </View>
   );
@@ -333,13 +335,15 @@ export default function SettingsScreen() {
       />
 
       <ScrollView showsVerticalScrollIndicator={false} contentContainerStyle={styles.content}>
-        <Text style={styles.headline}>
-          {t('profile.headline.line1')} {t('profile.headline.line2')}
-        </Text>
+        <Entrance delay={40}>
+          <Text style={styles.headline}>
+            {t('profile.headline.line1')} {t('profile.headline.line2')}
+          </Text>
+        </Entrance>
 
         {/* ── Hero: the one big surface, flat sage — same weight as the
             Today screen's day card, not a glass panel of its own. ── */}
-        <View style={[styles.hero, { backgroundColor: TILES.green }]}>
+        <View style={[styles.hero, { backgroundColor: AURA.sky.tint }]}>
           <View style={styles.heroTop}>
             <View style={styles.avatarRing}>
               <View style={styles.avatar}>
@@ -355,7 +359,7 @@ export default function SettingsScreen() {
               </Text>
               <Text style={styles.heroSub}>{t('profile.workspace')}</Text>
               <View style={styles.statusPill}>
-                <View style={[styles.statusDot, { backgroundColor: TILE_INK.green }]} />
+                <View style={[styles.statusDot, { backgroundColor: AURA.sky.ink }]} />
                 <Text style={styles.statusText}>{t('profile.onDevice')}</Text>
               </View>
             </View>
@@ -384,14 +388,14 @@ export default function SettingsScreen() {
 
         {/* ── Quick stat tiles ── */}
         <View style={styles.tileRow}>
-          <View style={[styles.tile, { backgroundColor: TILES.blue }]}>
+          <View style={[styles.tile, { backgroundColor: AURA.lilac.tint }]}>
             <View style={styles.tileIcon}>
               <ListTodo color={colors.text} size={17} />
             </View>
             <Text style={styles.tileValue}>{stats.open}</Text>
             <Text style={styles.tileLabel}>{t('profile.openTasks')}</Text>
           </View>
-          <View style={[styles.tile, { backgroundColor: TILES.yellow }]}>
+          <View style={[styles.tile, { backgroundColor: AURA.peach.tint }]}>
             <View style={styles.tileIcon}>
               <CheckCircle2 color={colors.text} size={17} />
             </View>
@@ -401,10 +405,10 @@ export default function SettingsScreen() {
         </View>
 
         {/* ── Display name ── */}
-        <Card>
+        <Card delay={100}>
           <View style={styles.cardHeaderRow}>
-            <IconSquare tile="green">
-              <User color={TILE_INK.green} size={18} />
+            <IconSquare tile="sky">
+              <User color={AURA.sky.ink} size={18} />
             </IconSquare>
             <Text style={styles.cardTitle}>{t('profile.displayName')}</Text>
           </View>
@@ -421,10 +425,10 @@ export default function SettingsScreen() {
         </Card>
 
         {/* ── Notifications ── */}
-        <Card>
+        <Card delay={170}>
           <View style={[styles.cardHeaderRow, { marginBottom: 0 }]}>
-            <IconSquare tile="yellow">
-              <Bell color={TILE_INK.yellow} size={18} />
+            <IconSquare tile="peach">
+              <Bell color={AURA.peach.ink} size={18} />
             </IconSquare>
             <View style={{ flex: 1 }}>
               <Text style={styles.cardTitle}>{t('profile.notifications')}</Text>
@@ -444,10 +448,10 @@ export default function SettingsScreen() {
              only be given once. They ride along with every voice turn and are
              what keep her from offering a meeting at two in the morning, so
              they have to be changeable when someone changes job or shift. ── */}
-        <Card>
+        <Card delay={240}>
           <View style={styles.cardHeaderRow}>
-            <IconSquare tile="blue">
-              <CalendarClock color={TILE_INK.blue} size={18} />
+            <IconSquare tile="lilac">
+              <CalendarClock color={AURA.lilac.ink} size={18} />
             </IconSquare>
             <View style={{ flex: 1 }}>
               <Text style={styles.cardTitle}>{t('profile.week')}</Text>
@@ -455,14 +459,26 @@ export default function SettingsScreen() {
             </View>
           </View>
 
-          <Text style={[styles.fieldLabel, alignStartStyle]}>{t('onboarding.work.title')}</Text>
+          <Text style={[styles.fieldLabel, alignStartStyle]}>{t('onboarding.place.title')}</Text>
+          <CountryPicker
+            country={profile.country}
+            currency={profile.currency}
+            onChange={({ country, currency }) =>
+              setProfile((p) => ({ ...p, country, currency }))
+            }
+            surface={colors.surfaceAlt}
+          />
+
+          <Text style={[styles.fieldLabel, alignStartStyle, { marginTop: spacing.md }]}>
+            {t('onboarding.work.title')}
+          </Text>
           <HourRangePicker
             from={profile.workStartHour}
             to={profile.workEndHour}
             onFrom={(workStartHour) => setProfile((p) => ({ ...p, workStartHour }))}
             onTo={(workEndHour) => setProfile((p) => ({ ...p, workEndHour }))}
-            tile="green"
-            surface={TILES.neutral}
+            tile="sky"
+            surface={colors.surfaceAlt}
           />
 
           <Text style={[styles.fieldLabel, alignStartStyle]}>{t('onboarding.sleep.title')}</Text>
@@ -472,28 +488,28 @@ export default function SettingsScreen() {
           <GenderPicker
             value={profile.gender}
             onChange={(gender) => setProfile((p) => ({ ...p, gender }))}
-            surface={TILES.neutral}
+            surface={colors.surfaceAlt}
           />
           <HourRangePicker
             from={profile.sleepStartHour}
             to={profile.sleepEndHour}
             onFrom={(sleepStartHour) => setProfile((p) => ({ ...p, sleepStartHour }))}
             onTo={(sleepEndHour) => setProfile((p) => ({ ...p, sleepEndHour }))}
-            tile="blue"
-            surface={TILES.neutral}
+            tile="lilac"
+            surface={colors.surfaceAlt}
           />
           <SleepInsight
             gender={profile.gender}
             startHour={profile.sleepStartHour}
             endHour={profile.sleepEndHour}
-            surface={TILES.neutral}
+            surface={colors.surfaceAlt}
           />
 
           <Text style={[styles.fieldLabel, alignStartStyle]}>{t('onboarding.buffer.title')}</Text>
           <BufferPicker
             value={profile.bufferMinutes}
             onChange={(bufferMinutes) => setProfile((p) => ({ ...p, bufferMinutes }))}
-            surface={TILES.neutral}
+            surface={colors.surfaceAlt}
           />
 
           <Text style={[styles.fieldLabel, alignStartStyle, { marginTop: spacing.md }]}>
@@ -502,7 +518,7 @@ export default function SettingsScreen() {
           <EventTypePicker
             value={profile.eventTypes}
             onChange={(eventTypes) => setProfile((p) => ({ ...p, eventTypes }))}
-            surface={TILES.neutral}
+            surface={colors.surfaceAlt}
           />
 
           <Text style={[styles.fieldLabel, alignStartStyle, { marginTop: spacing.md }]}>
@@ -520,10 +536,10 @@ export default function SettingsScreen() {
         </Card>
 
         {/* ── Language ── */}
-        <Card>
+        <Card delay={310}>
           <View style={styles.cardHeaderRow}>
-            <IconSquare tile="blue">
-              <Languages color={TILE_INK.blue} size={18} />
+            <IconSquare tile="lilac">
+              <Languages color={AURA.lilac.ink} size={18} />
             </IconSquare>
             <View style={{ flex: 1 }}>
               <Text style={styles.cardTitle}>{t('profile.language')}</Text>
@@ -574,7 +590,7 @@ export default function SettingsScreen() {
         </Card>
 
         {/* ── Local data ── */}
-        <Card>
+        <Card delay={380}>
           <View style={styles.cardHeaderRow}>
             <IconSquare>
               <Database color={colors.textMuted} size={18} />
@@ -596,10 +612,10 @@ export default function SettingsScreen() {
              The App Store requires a reachable privacy policy and a way to
              erase everything; the rest is the usual footer. LEGAL_URLS and
              SUPPORT_EMAIL at the top of this file are what these open. */}
-        <Card>
+        <Card delay={450}>
           <View style={styles.cardHeaderRow}>
-            <IconSquare tile="green">
-              <FileText color={TILE_INK.green} size={18} />
+            <IconSquare tile="sky">
+              <FileText color={AURA.sky.ink} size={18} />
             </IconSquare>
             <View style={{ flex: 1 }}>
               <Text style={styles.cardTitle}>{t('profile.legal')}</Text>
@@ -782,7 +798,7 @@ const styles = StyleSheet.create({
 
   inputWrap: { justifyContent: 'center' },
   input: {
-    backgroundColor: TILES.neutral,
+    backgroundColor: colors.surfaceAlt,
     borderRadius: 14,
     paddingHorizontal: 14,
     paddingVertical: 15,
@@ -807,7 +823,7 @@ const styles = StyleSheet.create({
     paddingHorizontal: 14,
     paddingVertical: 9,
     borderRadius: 50,
-    backgroundColor: TILES.neutral,
+    backgroundColor: colors.surfaceAlt,
   },
   langChipActive: { backgroundColor: colors.primary },
   langChipText: { ...font(600), fontSize: 13.5, color: colors.primary },

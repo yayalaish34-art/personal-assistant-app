@@ -7,7 +7,7 @@ import Svg, { Path, Defs, LinearGradient as SvgGradient, Stop } from 'react-nati
 import { ArrowRight } from 'lucide-react-native';
 
 import { Entrance, useFloat, useBreathe } from '../components/motion';
-import { colors, spacing, font, TILES, TILE_INK, NAV_BAR } from '../theme';
+import { colors, spacing, font, NAV_BAR, AURA } from '../theme';
 import { t, isRTL, alignStart } from '../lib/i18n';
 
 // The opening moment, shown once per launch while the app is warm behind it.
@@ -132,9 +132,9 @@ function Wave() {
       <Svg width={WAVE_W} height={WAVE_H}>
         <Defs>
           <SvgGradient id="wave" x1="0" y1="0" x2="1" y2="0">
-            <Stop offset="0" stopColor={TILES.green} />
-            <Stop offset="0.5" stopColor={TILES.blue} />
-            <Stop offset="1" stopColor={TILES.yellow} />
+            <Stop offset="0" stopColor={AURA.sky.tint} />
+            <Stop offset="0.5" stopColor={AURA.lilac.tint} />
+            <Stop offset="1" stopColor={AURA.peach.tint} />
           </SvgGradient>
         </Defs>
         <AnimatedPath
@@ -242,10 +242,10 @@ const BAR_HEIGHTS = [34, 60, 44, 74, 52, 28];
 const BAR_COLORS = [
   NAV_BAR.accent,
   colors.primary,
-  TILE_INK.blue,
+  AURA.lilac.ink,
   colors.primary,
-  TILE_INK.green,
-  TILE_INK.yellow,
+  AURA.sky.ink,
+  AURA.peach.ink,
 ];
 
 export default function IntroScreen({ onDone }: { onDone: () => void }) {
@@ -315,9 +315,9 @@ export default function IntroScreen({ onDone }: { onDone: () => void }) {
     >
       {/* ── The collage ── */}
       <View>
-        <Drift color={TILE_INK.yellow} size={10} delay={300} style={{ top: -4, insetInlineStart: '55%' }} />
-        <Drift color={TILE_INK.blue} size={8} delay={900} style={{ top: 150, insetInlineStart: -2 }} />
-        <Drift color={TILE_INK.green} size={9} delay={1500} style={{ top: 300, insetInlineEnd: 6 }} />
+        <Drift color={AURA.peach.ink} size={10} delay={300} style={{ top: -4, insetInlineStart: '55%' }} />
+        <Drift color={AURA.lilac.ink} size={8} delay={900} style={{ top: 150, insetInlineStart: -2 }} />
+        <Drift color={AURA.sky.ink} size={9} delay={1500} style={{ top: 300, insetInlineEnd: 6 }} />
 
         <View style={styles.collageRow}>
           {/* The accent blob with a bite taken out of it — the logo's gesture. */}
@@ -339,7 +339,7 @@ export default function IntroScreen({ onDone }: { onDone: () => void }) {
             <Animated.View style={{ transform: [{ translateY: pillFloat }] }}>
               <View style={styles.glassPillClip}>
                 <LinearGradient
-                  colors={[TILES.blue, '#E9F1FA', TILES.green]}
+                  colors={[AURA.lilac.tint, '#E9F1FA', AURA.sky.tint]}
                   start={{ x: 0, y: 0 }}
                   end={{ x: 1, y: 1 }}
                   style={styles.glassPill}

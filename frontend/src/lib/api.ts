@@ -248,7 +248,7 @@ const live = <T extends { deletedAt: string | null }>(rows: T[]) =>
  * never saw a new set. Storing the version instead lets a changed sample reach
  * an install that is already running.
  */
-const SEED_VERSION = '2';
+const SEED_VERSION = '3';
 
 /** Work and life, mixed the way a real month is. */
 const TASK_POOL: [title: string, notes: string, hour: number][] = [
@@ -279,6 +279,77 @@ const TASK_POOL: [title: string, notes: string, hour: number][] = [
   ['Return the parcel', '[Low] Wrong size', 13],
 ];
 
+/** A trolley mid-week: some of it already picked up. */
+const SHOPPING_POOL: [name: string, qty: string | null, note: string | null, cat: ShoppingCategory][] = [
+  ['Milk', '2', null, 'dairy'],
+  ['Bread', null, 'The seeded one', 'bakery'],
+  ['Eggs', '12', null, 'dairy'],
+  ['Tomatoes', '1kg', null, 'produce'],
+  ['Cucumbers', '1kg', null, 'produce'],
+  ['Chicken breast', '1.5kg', null, 'meat'],
+  ['Salmon', '2 fillets', 'For Friday', 'meat'],
+  ['Yoghurt', '6', null, 'dairy'],
+  ['Bananas', null, null, 'produce'],
+  ['Avocado', '3', 'Ripe', 'produce'],
+  ['Olive oil', null, null, 'other'],
+  ['Coffee', null, 'The dark roast', 'other'],
+  ['Washing-up liquid', null, null, 'cleaning'],
+  ['Laundry powder', null, null, 'cleaning'],
+  ['Toilet paper', '9', null, 'cleaning'],
+  ['Shampoo', null, null, 'pharmacy'],
+  ['Toothpaste', '2', null, 'pharmacy'],
+  ['Vitamin D', null, 'Ask the pharmacist', 'pharmacy'],
+  ['Pasta', '3', null, 'other'],
+  ['Rice', '1kg', null, 'other'],
+  ['Cheese', null, 'Something hard', 'dairy'],
+  ['Apples', '1kg', null, 'produce'],
+];
+
+/** A month of money, so the summary cards have something to total. */
+const INCOME_POOL: [desc: string, amount: number, cat: IncomeCategory, day: number][] = [
+  ['Monthly salary', 14200, 'salary', 1],
+  ['Freelance — landing page', 3400, 'business', 6],
+  ['Tax refund', 820, 'refund', 9],
+  ['Freelance — logo work', 1500, 'business', 14],
+  ['Birthday gift', 300, 'gift', 17],
+  ['Reimbursed travel', 240, 'refund', 22],
+  ['Freelance — retainer', 2800, 'business', 24],
+];
+
+const EXPENSE_POOL: [desc: string, amount: number, cat: ExpenseCategory, day: number][] = [
+  ['Rent', 5200, 'housing', 1],
+  ['Weekly shop', 640, 'food', 2],
+  ['Electricity', 380, 'bills', 3],
+  ['Petrol', 300, 'transport', 4],
+  ['Coffee and pastry', 42, 'food', 5],
+  ['Pharmacy', 120, 'health', 6],
+  ['Weekly shop', 580, 'food', 9],
+  ['Internet', 99, 'bills', 10],
+  ['Cinema', 96, 'fun', 11],
+  ['Bus pass', 225, 'transport', 12],
+  ['New trainers', 420, 'shopping', 13],
+  ['Weekly shop', 615, 'food', 16],
+  ['Water bill', 210, 'bills', 17],
+  ['Dentist', 450, 'health', 18],
+  ['Dinner out', 280, 'fun', 19],
+  ['Petrol', 290, 'transport', 20],
+  ['Weekly shop', 700, 'food', 23],
+  ['Phone bill', 89, 'bills', 24],
+  ['Books', 150, 'shopping', 25],
+  ['Gym membership', 199, 'health', 26],
+];
+
+/** Money owed in both directions, some already settled. */
+const DEBT_POOL: [dir: 'owe' | 'owed', person: string, amount: number, desc: string, day: number, settled: boolean][] = [
+  ['owed', 'Maya', 450, 'Concert tickets', 4, false],
+  ['owe', 'Dad', 2000, 'Car insurance', 2, false],
+  ['owed', 'Yoni', 120, 'Lunch', 11, false],
+  ['owe', 'Noa', 300, 'Shared gift', 15, false],
+  ['owed', 'Tal', 80, 'Taxi', 18, true],
+  ['owe', 'Ronen', 650, 'Concert + dinner', 21, false],
+  ['owed', 'Shira', 200, 'Groceries', 25, true],
+];
+
 const EVENT_POOL: [title: string, note: string, hour: number, minute: number][] = [
   ['Daily standup', '[Medium] Blockers and hand-offs', 9, 0],
   ['Review pull requests', '[High] Clear the queue', 11, 0],
@@ -303,6 +374,12 @@ const EVENT_POOL: [title: string, note: string, hour: number, minute: number][] 
  * keeps whatever was created on it. The marker is stored either way, so
  * deleting everything does not bring it back on the next launch.
  */
+/** Local YYYY-MM-DD from calendar fields, for the seeded money rows. */
+function dayStr(year: number, month: number, day: number): string {
+  const p = (n: number) => String(n).padStart(2, '0');
+  return `${year}-${p(month + 1)}-${p(day)}`;
+}
+
 async function seedOnce(): Promise<void> {
   if ((await AsyncStorage.getItem(KEYS.seeded)) === SEED_VERSION) return;
   await AsyncStorage.setItem(KEYS.seeded, SEED_VERSION);
@@ -382,14 +459,76 @@ async function seedOnce(): Promise<void> {
     }
   }
 
-  const [haveEvents, haveTasks] = await Promise.all([
+  // ── The trolley ──
+  // Roughly a third already ticked off, so both halves of the screen have
+  // something in them rather than one empty section.
+  const shopping: ShoppingItem[] = SHOPPING_POOL.map(([name, quantity, note, category], i) => ({
+    id: uuid(),
+    name,
+    quantity,
+    note,
+    category,
+    isBought: i % 3 === 2,
+    createdAt: stamp,
+    updatedAt: stamp,
+    deletedAt: null,
+  }));
+
+  // ── Money ──
+  // Dated across the current month so the totals are a real month's worth and
+  // the rows sort into a sensible order.
+  const money: MoneyEntry[] = [
+    ...INCOME_POOL.map(([description, amount, category, day]) => ({
+      id: uuid(),
+      kind: 'income' as const,
+      description,
+      amount,
+      date: dayStr(year, month, Math.min(day, daysInMonth)),
+      category,
+      createdAt: stamp,
+      updatedAt: stamp,
+      deletedAt: null,
+    })),
+    ...EXPENSE_POOL.map(([description, amount, category, day]) => ({
+      id: uuid(),
+      kind: 'expense' as const,
+      description,
+      amount,
+      date: dayStr(year, month, Math.min(day, daysInMonth)),
+      category,
+      createdAt: stamp,
+      updatedAt: stamp,
+      deletedAt: null,
+    })),
+  ];
+
+  const debts: Debt[] = DEBT_POOL.map(([direction, person, amount, description, day, isSettled]) => ({
+    id: uuid(),
+    direction,
+    person,
+    amount,
+    description,
+    date: dayStr(year, month, Math.min(day, daysInMonth)),
+    isSettled,
+    createdAt: stamp,
+    updatedAt: stamp,
+    deletedAt: null,
+  }));
+
+  const [haveEvents, haveTasks, haveShopping, haveMoney, haveDebts] = await Promise.all([
     readList<Event>(KEYS.events),
     readList<Task>(KEYS.tasks),
+    readList<ShoppingItem>(KEYS.shopping),
+    readList<MoneyEntry>(KEYS.money),
+    readList<Debt>(KEYS.debts),
   ]);
 
   await Promise.all([
     writeList(KEYS.events, [...haveEvents, ...events]),
     writeList(KEYS.tasks, [...haveTasks, ...tasks]),
+    writeList(KEYS.shopping, [...haveShopping, ...shopping]),
+    writeList(KEYS.money, [...haveMoney, ...money]),
+    writeList(KEYS.debts, [...haveDebts, ...debts]),
   ]);
 }
 
@@ -564,7 +703,7 @@ export const api = {
 
   // ── Shopping list ──
   listShopping: async () => ({
-    items: live(await readList<ShoppingItem>(KEYS.shopping)),
+    items: (await seedOnce(), live(await readList<ShoppingItem>(KEYS.shopping))),
   }),
 
   createShoppingItem: async (i: {
@@ -628,7 +767,7 @@ export const api = {
 
   // ── Money: income and expenses ──
   listMoney: async () => ({
-    entries: live(await readList<MoneyEntry>(KEYS.money)),
+    entries: (await seedOnce(), live(await readList<MoneyEntry>(KEYS.money))),
   }),
 
   createMoneyEntry: async (e: {
@@ -687,7 +826,7 @@ export const api = {
 
   // ── Debts ──
   listDebts: async () => ({
-    debts: live(await readList<Debt>(KEYS.debts)),
+    debts: (await seedOnce(), live(await readList<Debt>(KEYS.debts))),
   }),
 
   createDebt: async (d: {

@@ -363,7 +363,7 @@ export default function ShoppingScreen() {
         {items.length === 0 ? (
           <View style={styles.empty}>
             <View style={styles.emptyIcon}>
-              <ShoppingCart color={AURA.sky.ink} size={26} strokeWidth={1.8} />
+              <ShoppingCart color={AURA.green.ink} size={26} strokeWidth={1.8} />
             </View>
             <Text style={styles.emptyTitle}>{t('shop.empty.title')}</Text>
             <Text style={styles.emptyBody}>{t('shop.empty.body')}</Text>
@@ -642,7 +642,7 @@ const styles = StyleSheet.create({
     width: 56,
     height: 56,
     borderRadius: 18,
-    backgroundColor: AURA.sky.tint,
+    backgroundColor: AURA.green.tint,
     alignItems: 'center',
     justifyContent: 'center',
     marginBottom: spacing.sm,

@@ -365,15 +365,15 @@ export default function FinanceScreen() {
             <SummaryCard
               label={t('fin.income')}
               value={money(totals.income)}
-              tint={AURA.sky.tint}
-              ink={AURA.sky.ink}
+              tint={AURA.green.tint}
+              ink={AURA.green.ink}
               Icon={TrendingUp}
             />
             <SummaryCard
               label={t('fin.expenses')}
               value={money(totals.expenses)}
-              tint={AURA.peach.tint}
-              ink={AURA.peach.ink}
+              tint={AURA.yellow.tint}
+              ink={AURA.yellow.ink}
               Icon={TrendingDown}
             />
           </View>
@@ -381,8 +381,8 @@ export default function FinanceScreen() {
             <SummaryCard
               label={t('fin.balance')}
               value={money(totals.balance)}
-              tint={AURA.lilac.tint}
-              ink={AURA.lilac.ink}
+              tint={AURA.blue.tint}
+              ink={AURA.blue.ink}
               Icon={Wallet}
             />
             <SummaryCard
@@ -399,8 +399,8 @@ export default function FinanceScreen() {
         <Entrance delay={110}>
           <View style={styles.section}>
             <View style={styles.sectionHead}>
-              <View style={[styles.sectionIcon, { backgroundColor: AURA.sky.tint }]}>
-                <TrendingUp color={AURA.sky.ink} size={17} strokeWidth={2.2} />
+              <View style={[styles.sectionIcon, { backgroundColor: AURA.green.tint }]}>
+                <TrendingUp color={AURA.green.ink} size={17} strokeWidth={2.2} />
               </View>
               <Text style={[styles.sectionTitle, start]}>{t('fin.income')}</Text>
               <Pressable
@@ -432,7 +432,7 @@ export default function FinanceScreen() {
                       {e.category ? ` · ${t(`fin.inc.${e.category}`)}` : ''}
                     </Text>
                   </View>
-                  <Text style={[styles.amount, { color: AURA.sky.ink }]}>+{money(e.amount)}</Text>
+                  <Text style={[styles.amount, { color: AURA.green.ink }]}>+{money(e.amount)}</Text>
                   <Pressable onPress={() => deleteEntry(e)} hitSlop={8} accessibilityRole="button">
                     <Trash2 color={colors.textMuted} size={16} />
                   </Pressable>
@@ -446,8 +446,8 @@ export default function FinanceScreen() {
         <Entrance delay={170}>
           <View style={styles.section}>
             <View style={styles.sectionHead}>
-              <View style={[styles.sectionIcon, { backgroundColor: AURA.peach.tint }]}>
-                <TrendingDown color={AURA.peach.ink} size={17} strokeWidth={2.2} />
+              <View style={[styles.sectionIcon, { backgroundColor: AURA.yellow.tint }]}>
+                <TrendingDown color={AURA.yellow.ink} size={17} strokeWidth={2.2} />
               </View>
               <Text style={[styles.sectionTitle, start]}>{t('fin.expenses')}</Text>
               <Pressable
@@ -479,7 +479,7 @@ export default function FinanceScreen() {
                       {e.category ? ` · ${t(`fin.exp.${e.category}`)}` : ''}
                     </Text>
                   </View>
-                  <Text style={[styles.amount, { color: AURA.peach.ink }]}>
+                  <Text style={[styles.amount, { color: AURA.yellow.ink }]}>
                     −{money(e.amount)}
                   </Text>
                   <Pressable onPress={() => deleteEntry(e)} hitSlop={8} accessibilityRole="button">
@@ -552,7 +552,7 @@ export default function FinanceScreen() {
                       styles.amount,
                       // Owing is the only figure here that should feel like a
                       // pull on the balance; being owed is neutral good news.
-                      { color: d.direction === 'owe' ? colors.danger : AURA.sky.ink },
+                      { color: d.direction === 'owe' ? colors.danger : AURA.green.ink },
                       d.isSettled && styles.amountSettled,
                     ]}
                   >

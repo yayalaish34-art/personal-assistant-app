@@ -121,54 +121,54 @@ const STEPS: StepId[] = [
  * identically white screens in a row is what made this read as a survey.
  */
 const STEP_SKIN: Record<StepId, { tile: AuraKey; Icon: typeof Mic }> = {
-  language: { tile: 'lilac', Icon: Languages },
-  intro: { tile: 'sky', Icon: Sparkles },
-  name: { tile: 'peach', Icon: User },
-  place: { tile: 'sky', Icon: Globe },
-  work: { tile: 'sky', Icon: Clock },
-  sleep: { tile: 'lilac', Icon: Moon },
-  buffer: { tile: 'peach', Icon: Timer },
-  types: { tile: 'sky', Icon: CalendarDays },
-  fixed: { tile: 'lilac', Icon: Pin },
-  permissions: { tile: 'peach', Icon: ShieldCheck },
+  language: { tile: 'blue', Icon: Languages },
+  intro: { tile: 'green', Icon: Sparkles },
+  name: { tile: 'yellow', Icon: User },
+  place: { tile: 'green', Icon: Globe },
+  work: { tile: 'green', Icon: Clock },
+  sleep: { tile: 'blue', Icon: Moon },
+  buffer: { tile: 'yellow', Icon: Timer },
+  types: { tile: 'green', Icon: CalendarDays },
+  fixed: { tile: 'blue', Icon: Pin },
+  permissions: { tile: 'yellow', Icon: ShieldCheck },
 };
 
 /**
  * The panel behind each question, as a slice of the app's own gradient.
  *
- * Walking the questionnaire walks the sweep: sky at the start, lilac through
- * the middle, peach at the end. It is a pair rather than all three stops so
+ * Walking the questionnaire walks the sweep: green at the start, blue through
+ * the middle, yellow at the end. It is a pair rather than all three stops so
  * each screen is a calm wash instead of a rainbow, and consecutive steps
  * always share an edge — which is what makes moving between them read as one
  * surface sliding rather than nine unrelated colours.
  */
 const STEP_WASH: Record<StepId, readonly [string, string]> = {
-  language: [IRIDESCENT[0], AURA.sky.tint],
-  intro: [AURA.sky.tint, IRIDESCENT[0]],
+  language: [IRIDESCENT[0], AURA.green.tint],
+  intro: [AURA.green.tint, IRIDESCENT[0]],
   name: [IRIDESCENT[0], IRIDESCENT[1]],
-  place: [IRIDESCENT[1], AURA.sky.tint],
-  work: [AURA.sky.tint, IRIDESCENT[1]],
-  sleep: [IRIDESCENT[1], AURA.lilac.tint],
-  buffer: [AURA.lilac.tint, IRIDESCENT[1]],
+  place: [IRIDESCENT[1], AURA.green.tint],
+  work: [AURA.green.tint, IRIDESCENT[1]],
+  sleep: [IRIDESCENT[1], AURA.blue.tint],
+  buffer: [AURA.blue.tint, IRIDESCENT[1]],
   types: [IRIDESCENT[1], IRIDESCENT[2]],
-  fixed: [IRIDESCENT[2], AURA.peach.tint],
-  permissions: [AURA.peach.tint, IRIDESCENT[2]],
+  fixed: [IRIDESCENT[2], AURA.yellow.tint],
+  permissions: [AURA.yellow.tint, IRIDESCENT[2]],
 };
 
 /** The three things worth knowing before answering anything. */
 const INTRO_POINTS = [
-  { key: 'talk', Icon: Mic, tile: 'sky' },
-  { key: 'plan', Icon: CalendarCheck, tile: 'lilac' },
-  { key: 'private', Icon: ShieldCheck, tile: 'peach' },
+  { key: 'talk', Icon: Mic, tile: 'green' },
+  { key: 'plan', Icon: CalendarCheck, tile: 'blue' },
+  { key: 'private', Icon: ShieldCheck, tile: 'yellow' },
 ] as const satisfies readonly { key: string; Icon: typeof Mic; tile: AuraKey }[];
 
 /** What each permission is, in the order it is asked for. */
 const PERMISSIONS = [
-  { key: 'mic', Icon: Mic, tile: 'sky', request: requestMicrophone, read: getMicrophoneState },
+  { key: 'mic', Icon: Mic, tile: 'green', request: requestMicrophone, read: getMicrophoneState },
   {
     key: 'notify',
     Icon: Bell,
-    tile: 'peach',
+    tile: 'yellow',
     request: requestNotifications,
     read: getNotificationState,
   },
@@ -250,7 +250,7 @@ function PermissionRow({
         {busy ? (
           <ActivityIndicator size="small" color={colors.text} />
         ) : granted ? (
-          <Check color={AURA.sky.ink} size={17} strokeWidth={3} />
+          <Check color={AURA.green.ink} size={17} strokeWidth={3} />
         ) : (
           <Text style={styles.permBtnText} numberOfLines={1}>
             {label}
@@ -415,7 +415,7 @@ export default function OnboardingScreen({ onDone }: { onDone: () => void }) {
       <View style={[styles.screen, direction, { paddingTop: insets.top + spacing.lg }]}>
         <View style={styles.doneBody}>
           <View style={styles.doneMark}>
-            <Check color={AURA.sky.ink} size={34} strokeWidth={2.4} />
+            <Check color={AURA.green.ink} size={34} strokeWidth={2.4} />
           </View>
           <Text style={[styles.title, { textAlign: 'center' }]}>{t('onboarding.done.title')}</Text>
           <Text style={[styles.body, { textAlign: 'center' }]}>{t('onboarding.done.body')}</Text>
@@ -546,7 +546,7 @@ export default function OnboardingScreen({ onDone }: { onDone: () => void }) {
             to={profile.workEndHour}
             onFrom={(workStartHour) => patch({ workStartHour })}
             onTo={(workEndHour) => patch({ workEndHour })}
-            tile="sky"
+            tile="green"
           />
         ) : null}
 
@@ -562,7 +562,7 @@ export default function OnboardingScreen({ onDone }: { onDone: () => void }) {
               to={profile.sleepEndHour}
               onFrom={(sleepStartHour) => patch({ sleepStartHour })}
               onTo={(sleepEndHour) => patch({ sleepEndHour })}
-              tile="lilac"
+              tile="blue"
             />
 
             <SleepInsight
@@ -770,7 +770,7 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     backgroundColor: colors.surfaceAlt,
   },
-  permBtnDone: { backgroundColor: AURA.sky.tint },
+  permBtnDone: { backgroundColor: AURA.green.tint },
   permBtnText: { ...font(600), fontSize: 13.5, color: colors.text },
   permFoot: {
     ...font(400),
@@ -805,7 +805,7 @@ const styles = StyleSheet.create({
     width: 76,
     height: 76,
     borderRadius: 38,
-    backgroundColor: AURA.sky.tint,
+    backgroundColor: AURA.green.tint,
     alignItems: 'center',
     justifyContent: 'center',
     marginBottom: spacing.md,

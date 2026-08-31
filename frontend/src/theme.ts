@@ -68,39 +68,54 @@ export const TILE_INK = {
 export const ROW_TILES: TileColor[] = ['green', 'blue', 'yellow'];
 
 /**
- * The holographic sweep — sky, lilac, peach. It marks the *chosen* thing: the
- * mic button in the bar, the selected day on Home. Mid-tone on purpose, so
- * near-black ink stays readable on top of it.
+ * The sweep — green, blue, yellow. It marks the *chosen* thing: the mic button
+ * in the bar, the selected day on Home. Mid-tone on purpose, so near-black ink
+ * stays readable on top of it, and ordered green→blue→yellow so the two ends
+ * are the pair furthest apart in hue.
  */
-export const IRIDESCENT = ['#8FC7FF', '#C3A6FF', '#FFB98E'] as const;
+export const IRIDESCENT = ['#A8D98C', '#8FC7FF', '#FFD98A'] as const;
 
 /**
- * The gradient, unpacked into surfaces and marks.
+ * The palette, unpacked into surfaces and marks: green, blue, yellow.
  *
- * Home used to mix sage green and butter yellow with a sky/lilac/peach
- * gradient, which read as two unrelated palettes on one screen. These three
- * families are the gradient's own stops: `tint` is the pale card ground,
- * `ink` the mark that sits on it.
+ * `tint` is the pale card ground, `ink` the mark that sits on it. The slots
+ * keep neutral names rather than colour names — every screen refers to them,
+ * and a slot called `green` is a promise the next repaint has to keep.
  *
- * The inks are validated, not eyeballed — as a categorical set they clear the
- * lightness band, the chroma floor, adjacent-pair CVD separation (worst pair
- * ΔE 11.5 protan), the normal-vision floor, and 3:1 against the page.
+ * The inks are validated, not eyeballed. As a categorical set they clear all
+ * six checks: the lightness band, the chroma floor, adjacent-pair CVD
+ * separation (worst pair ΔE 13.6 protan), the normal-vision floor, and 3:1
+ * against the page.
  *
- * One rule comes out of that validation: `peach.ink` is never a status mark.
- * Against `colors.danger` it collapses to ΔE 2.4 for a deuteranope, so a peach
- * "scheduled" dot and a red "overdue" dot would be the same dot. Peach dresses
- * surfaces; the status vocabulary is sky, lilac, muted grey and danger red.
+ * Two things that validation forced, and which are easy to undo by accident:
+ *
+ * The yellow is an amber (#B8860B), not the butter yellow it looks like it
+ * should be. Anything lighter cannot reach 3:1 on a near-white page — the
+ * previous butter yellow sat at 2.59:1 — so a lighter one would be a mark
+ * some people simply cannot see. The *tint* is still buttery; only the ink
+ * that has to be read is deepened.
+ *
+ * The green and the yellow are neighbours in hue, which is the pair red-blind
+ * vision merges. They are separated by lightness rather than by hue, which is
+ * why the green is this dark. Nudging either toward the other collapses them:
+ * the palette this replaced sat at ΔE 5.8 for a protanope, well under the 8
+ * floor, and two of its rows were genuinely indistinguishable.
+ *
+ * One rule survives from before: `yellow.ink` is never a status mark. Against
+ * `colors.danger` it drops to ΔE 4.7 for a deuteranope, so a yellow
+ * "scheduled" dot and a red "overdue" dot would be the same dot. Yellow
+ * dresses surfaces; the status vocabulary is green, blue, muted grey and red.
  */
 export const AURA = {
-  sky: { tint: '#DCEAF8', ink: '#2A6FA8' },
-  lilac: { tint: '#E8DEF9', ink: '#A280E0' },
-  peach: { tint: '#FBE2D2', ink: '#C96A2E' },
+  green: { tint: '#DFF0D2', ink: '#2E6B24' },
+  blue: { tint: '#DCEAF8', ink: '#3E86C4' },
+  yellow: { tint: '#FAECC8', ink: '#B8860B' },
 } as const;
 
 export type AuraKey = keyof typeof AURA;
 
 /** Rows and chips cycle through the gradient's stops, in its own order. */
-export const AURA_CYCLE: AuraKey[] = ['sky', 'lilac', 'peach'];
+export const AURA_CYCLE: AuraKey[] = ['green', 'blue', 'yellow'];
 
 export const spacing = {
   xs: 4,

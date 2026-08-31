@@ -201,8 +201,8 @@ export function EventTypePicker({
 }
 
 const GENDER_OPTIONS = [
-  { key: 'male', Icon: Mars, tile: 'lilac' },
-  { key: 'female', Icon: Venus, tile: 'peach' },
+  { key: 'male', Icon: Mars, tile: 'blue' },
+  { key: 'female', Icon: Venus, tile: 'yellow' },
 ] as const satisfies readonly { key: Exclude<Gender, 'unspecified'>; Icon: typeof Mars; tile: AuraKey }[];
 
 /**
@@ -293,7 +293,7 @@ export function SleepInsight({
 }) {
   const hours = sleepDuration(startHour, endHour);
   const fit = hours < SLEEP_TARGET.min ? 'short' : hours > SLEEP_TARGET.max ? 'long' : 'good';
-  const tile: AuraKey = fit === 'good' ? 'sky' : fit === 'short' ? 'peach' : 'lilac';
+  const tile: AuraKey = fit === 'good' ? 'green' : fit === 'short' ? 'yellow' : 'blue';
   const start = { textAlign: alignStart() } as const;
 
   return (

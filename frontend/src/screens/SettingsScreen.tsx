@@ -343,7 +343,7 @@ export default function SettingsScreen() {
 
         {/* ── Hero: the one big surface, flat sage — same weight as the
             Today screen's day card, not a glass panel of its own. ── */}
-        <View style={[styles.hero, { backgroundColor: AURA.sky.tint }]}>
+        <View style={[styles.hero, { backgroundColor: AURA.green.tint }]}>
           <View style={styles.heroTop}>
             <View style={styles.avatarRing}>
               <View style={styles.avatar}>
@@ -359,7 +359,7 @@ export default function SettingsScreen() {
               </Text>
               <Text style={styles.heroSub}>{t('profile.workspace')}</Text>
               <View style={styles.statusPill}>
-                <View style={[styles.statusDot, { backgroundColor: AURA.sky.ink }]} />
+                <View style={[styles.statusDot, { backgroundColor: AURA.green.ink }]} />
                 <Text style={styles.statusText}>{t('profile.onDevice')}</Text>
               </View>
             </View>
@@ -388,14 +388,14 @@ export default function SettingsScreen() {
 
         {/* ── Quick stat tiles ── */}
         <View style={styles.tileRow}>
-          <View style={[styles.tile, { backgroundColor: AURA.lilac.tint }]}>
+          <View style={[styles.tile, { backgroundColor: AURA.blue.tint }]}>
             <View style={styles.tileIcon}>
               <ListTodo color={colors.text} size={17} />
             </View>
             <Text style={styles.tileValue}>{stats.open}</Text>
             <Text style={styles.tileLabel}>{t('profile.openTasks')}</Text>
           </View>
-          <View style={[styles.tile, { backgroundColor: AURA.peach.tint }]}>
+          <View style={[styles.tile, { backgroundColor: AURA.yellow.tint }]}>
             <View style={styles.tileIcon}>
               <CheckCircle2 color={colors.text} size={17} />
             </View>
@@ -407,8 +407,8 @@ export default function SettingsScreen() {
         {/* ── Display name ── */}
         <Card delay={100}>
           <View style={styles.cardHeaderRow}>
-            <IconSquare tile="sky">
-              <User color={AURA.sky.ink} size={18} />
+            <IconSquare tile="green">
+              <User color={AURA.green.ink} size={18} />
             </IconSquare>
             <Text style={styles.cardTitle}>{t('profile.displayName')}</Text>
           </View>
@@ -427,8 +427,8 @@ export default function SettingsScreen() {
         {/* ── Notifications ── */}
         <Card delay={170}>
           <View style={[styles.cardHeaderRow, { marginBottom: 0 }]}>
-            <IconSquare tile="peach">
-              <Bell color={AURA.peach.ink} size={18} />
+            <IconSquare tile="yellow">
+              <Bell color={AURA.yellow.ink} size={18} />
             </IconSquare>
             <View style={{ flex: 1 }}>
               <Text style={styles.cardTitle}>{t('profile.notifications')}</Text>
@@ -450,8 +450,8 @@ export default function SettingsScreen() {
              they have to be changeable when someone changes job or shift. ── */}
         <Card delay={240}>
           <View style={styles.cardHeaderRow}>
-            <IconSquare tile="lilac">
-              <CalendarClock color={AURA.lilac.ink} size={18} />
+            <IconSquare tile="blue">
+              <CalendarClock color={AURA.blue.ink} size={18} />
             </IconSquare>
             <View style={{ flex: 1 }}>
               <Text style={styles.cardTitle}>{t('profile.week')}</Text>
@@ -477,7 +477,7 @@ export default function SettingsScreen() {
             to={profile.workEndHour}
             onFrom={(workStartHour) => setProfile((p) => ({ ...p, workStartHour }))}
             onTo={(workEndHour) => setProfile((p) => ({ ...p, workEndHour }))}
-            tile="sky"
+            tile="green"
             surface={colors.surfaceAlt}
           />
 
@@ -495,7 +495,7 @@ export default function SettingsScreen() {
             to={profile.sleepEndHour}
             onFrom={(sleepStartHour) => setProfile((p) => ({ ...p, sleepStartHour }))}
             onTo={(sleepEndHour) => setProfile((p) => ({ ...p, sleepEndHour }))}
-            tile="lilac"
+            tile="blue"
             surface={colors.surfaceAlt}
           />
           <SleepInsight
@@ -538,8 +538,8 @@ export default function SettingsScreen() {
         {/* ── Language ── */}
         <Card delay={310}>
           <View style={styles.cardHeaderRow}>
-            <IconSquare tile="lilac">
-              <Languages color={AURA.lilac.ink} size={18} />
+            <IconSquare tile="blue">
+              <Languages color={AURA.blue.ink} size={18} />
             </IconSquare>
             <View style={{ flex: 1 }}>
               <Text style={styles.cardTitle}>{t('profile.language')}</Text>
@@ -614,8 +614,8 @@ export default function SettingsScreen() {
              SUPPORT_EMAIL at the top of this file are what these open. */}
         <Card delay={450}>
           <View style={styles.cardHeaderRow}>
-            <IconSquare tile="sky">
-              <FileText color={AURA.sky.ink} size={18} />
+            <IconSquare tile="green">
+              <FileText color={AURA.green.ink} size={18} />
             </IconSquare>
             <View style={{ flex: 1 }}>
               <Text style={styles.cardTitle}>{t('profile.legal')}</Text>

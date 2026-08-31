@@ -132,9 +132,9 @@ function Wave() {
       <Svg width={WAVE_W} height={WAVE_H}>
         <Defs>
           <SvgGradient id="wave" x1="0" y1="0" x2="1" y2="0">
-            <Stop offset="0" stopColor={AURA.sky.tint} />
-            <Stop offset="0.5" stopColor={AURA.lilac.tint} />
-            <Stop offset="1" stopColor={AURA.peach.tint} />
+            <Stop offset="0" stopColor={AURA.green.tint} />
+            <Stop offset="0.5" stopColor={AURA.blue.tint} />
+            <Stop offset="1" stopColor={AURA.yellow.tint} />
           </SvgGradient>
         </Defs>
         <AnimatedPath
@@ -242,10 +242,10 @@ const BAR_HEIGHTS = [34, 60, 44, 74, 52, 28];
 const BAR_COLORS = [
   NAV_BAR.accent,
   colors.primary,
-  AURA.lilac.ink,
+  AURA.blue.ink,
   colors.primary,
-  AURA.sky.ink,
-  AURA.peach.ink,
+  AURA.green.ink,
+  AURA.yellow.ink,
 ];
 
 export default function IntroScreen({ onDone }: { onDone: () => void }) {
@@ -315,9 +315,9 @@ export default function IntroScreen({ onDone }: { onDone: () => void }) {
     >
       {/* ── The collage ── */}
       <View>
-        <Drift color={AURA.peach.ink} size={10} delay={300} style={{ top: -4, insetInlineStart: '55%' }} />
-        <Drift color={AURA.lilac.ink} size={8} delay={900} style={{ top: 150, insetInlineStart: -2 }} />
-        <Drift color={AURA.sky.ink} size={9} delay={1500} style={{ top: 300, insetInlineEnd: 6 }} />
+        <Drift color={AURA.yellow.ink} size={10} delay={300} style={{ top: -4, insetInlineStart: '55%' }} />
+        <Drift color={AURA.blue.ink} size={8} delay={900} style={{ top: 150, insetInlineStart: -2 }} />
+        <Drift color={AURA.green.ink} size={9} delay={1500} style={{ top: 300, insetInlineEnd: 6 }} />
 
         <View style={styles.collageRow}>
           {/* The accent blob with a bite taken out of it — the logo's gesture. */}
@@ -339,7 +339,7 @@ export default function IntroScreen({ onDone }: { onDone: () => void }) {
             <Animated.View style={{ transform: [{ translateY: pillFloat }] }}>
               <View style={styles.glassPillClip}>
                 <LinearGradient
-                  colors={[AURA.lilac.tint, '#E9F1FA', AURA.sky.tint]}
+                  colors={[AURA.blue.tint, '#E9F1FA', AURA.green.tint]}
                   start={{ x: 0, y: 0 }}
                   end={{ x: 1, y: 1 }}
                   style={styles.glassPill}

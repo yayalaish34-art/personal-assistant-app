@@ -152,9 +152,9 @@ function HeroRing({ progress, onPress }: { progress: number; onPress: () => void
           {/* The same sweep as the mic button and the chosen day, in the
               deeper inks so it holds up as a 12px stroke. */}
           <SvgGradient id="ring" x1="0" y1="0" x2="1" y2="1">
-            <Stop offset="0" stopColor={AURA.sky.ink} />
-            <Stop offset="0.5" stopColor={AURA.lilac.ink} />
-            <Stop offset="1" stopColor={AURA.peach.ink} />
+            <Stop offset="0" stopColor={AURA.green.ink} />
+            <Stop offset="0.5" stopColor={AURA.blue.ink} />
+            <Stop offset="1" stopColor={AURA.yellow.ink} />
           </SvgGradient>
         </Defs>
         <Circle
@@ -403,8 +403,8 @@ function rowStatus(item: AgendaItem, now: Date): RowStatus {
   // Sky for settled, lilac for live, grey for not-yet, red for late. Peach is
   // deliberately absent: beside `colors.danger` it is the same mark to a
   // deuteranope (see AURA), and "scheduled" must never read as "overdue".
-  if (s === 'done') return { key: 'done', dot: AURA.sky.ink, pct: 100 };
-  if (s === 'inprogress') return { key: 'inprogress', dot: AURA.lilac.ink, pct: 55 };
+  if (s === 'done') return { key: 'done', dot: AURA.green.ink, pct: 100 };
+  if (s === 'inprogress') return { key: 'inprogress', dot: AURA.blue.ink, pct: 55 };
   if (item.date) {
     const due = new Date(`${item.date}T${(item.time || '23:59').padStart(5, '0')}:00`);
     if (!Number.isNaN(due.getTime()) && due < now) {
@@ -542,7 +542,7 @@ function WeatherCard({ weather, onPress }: { weather: Weather | null; onPress: (
   const start = { textAlign: alignStart() } as const;
   const isDay = weather?.isDay ?? isDaylightNow();
   const Icon = weather ? skyIcon(weather.sky, isDay) : isDay ? Sun : Moon;
-  const skin = isDay ? AURA.sky : AURA.lilac;
+  const skin = isDay ? AURA.green : AURA.blue;
 
   // A gentle drift on the glyph, so the card is alive without being busy.
   const float = useFloat(4, 3200, 200);
@@ -707,7 +707,7 @@ function MeetingCard({
   const start = { textAlign: alignStart() } as const;
 
   return (
-    <View style={[styles.meetingCard, { backgroundColor: AURA.sky.tint }]}>
+    <View style={[styles.meetingCard, { backgroundColor: AURA.green.tint }]}>
       <Pressable
         onPress={() => current && onOpen(current)}
         disabled={!current}
@@ -726,7 +726,7 @@ function MeetingCard({
           ) : null}
         </View>
         <View style={styles.meetingIcon}>
-          <CalendarClock color={AURA.sky.ink} size={26} strokeWidth={1.8} />
+          <CalendarClock color={AURA.green.ink} size={26} strokeWidth={1.8} />
         </View>
       </Pressable>
 
@@ -1013,17 +1013,17 @@ export default function TodayScreen() {
                 <Metric
                   value={stats.done}
                   label={t('today.progress.completed')}
-                  accent={AURA.sky.ink}
+                  accent={AURA.green.ink}
                 />
                 <Metric
                   value={Math.max(0, stats.total - stats.done)}
                   label={t('today.progress.pending')}
-                  accent={AURA.lilac.ink}
+                  accent={AURA.blue.ink}
                 />
                 <Metric
                   value={stats.events}
                   label={t('today.tile.events')}
-                  accent={AURA.peach.ink}
+                  accent={AURA.yellow.ink}
                 />
               </View>
             </View>
@@ -1103,7 +1103,7 @@ export default function TodayScreen() {
               onPress={goToCalendar}
               style={({ pressed }) => [
                 styles.gridTile,
-                { backgroundColor: AURA.sky.tint },
+                { backgroundColor: AURA.green.tint },
                 pressed && styles.pressedDim,
               ]}
               accessibilityRole="button"
@@ -1122,7 +1122,7 @@ export default function TodayScreen() {
               onPress={goToCalendar}
               style={({ pressed }) => [
                 styles.gridTile,
-                { backgroundColor: AURA.lilac.tint },
+                { backgroundColor: AURA.blue.tint },
                 pressed && styles.pressedDim,
               ]}
               accessibilityRole="button"
@@ -1130,7 +1130,7 @@ export default function TodayScreen() {
             >
               <View style={styles.gridTileTop}>
                 <Text style={[styles.gridNumber, start]}>{stats.events}</Text>
-                <CalendarDays color={AURA.lilac.ink} size={22} strokeWidth={1.8} />
+                <CalendarDays color={AURA.blue.ink} size={22} strokeWidth={1.8} />
               </View>
               <Text style={[styles.gridLabelPrimary, start]} numberOfLines={1}>
                 {t('today.tile.events')}
@@ -1148,7 +1148,7 @@ export default function TodayScreen() {
             onPress={openAssistant}
             style={({ pressed }) => [
               styles.addBar,
-              { backgroundColor: AURA.peach.tint },
+              { backgroundColor: AURA.yellow.tint },
               pressed && styles.pressedDim,
             ]}
             accessibilityRole="button"
@@ -1253,13 +1253,13 @@ export default function TodayScreen() {
         title={t('today.progress.title')}
         onClose={() => setSheet(null)}
       >
-        <SheetStat label={t('today.progress.completed')} value={String(stats.done)} tile="sky" />
+        <SheetStat label={t('today.progress.completed')} value={String(stats.done)} tile="green" />
         <SheetStat
           label={t('today.progress.pending')}
           value={String(Math.max(0, stats.total - stats.done))}
-          tile="lilac"
+          tile="blue"
         />
-        <SheetStat label={t('today.progress.total')} value={String(stats.total)} tile="peach" />
+        <SheetStat label={t('today.progress.total')} value={String(stats.total)} tile="yellow" />
         <SheetStat label={t('today.tile.productivity')} value={`${stats.pct}%`} tile="neutral" />
       </Sheet>
 

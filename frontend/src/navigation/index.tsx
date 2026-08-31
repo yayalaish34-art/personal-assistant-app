@@ -133,9 +133,9 @@ function barPath(width: number, dy = 0) {
 }
 
 /**
- * One tab's glyph. The selected one sits on a disc of the holographic sweep —
- * the same light as the mic button and Home's chosen day — and pops in with a
- * small spring when the selection lands on it.
+ * One tab's glyph. The selected one sits on a disc of the green-blue-yellow
+ * sweep — the same light as the mic button and Home's chosen day — and pops in
+ * with a small spring when the selection lands on it.
  */
 function TabGlyph({ Icon, active }: { Icon: typeof House; active: boolean }) {
   const v = useRef(new Animated.Value(active ? 1 : 0)).current;
@@ -173,7 +173,7 @@ function TabGlyph({ Icon, active }: { Icon: typeof House; active: boolean }) {
 }
 
 /**
- * Bottom bar: four outline icons around a raised holographic mic button in the middle.
+ * Bottom bar: four outline icons around a raised gradient mic button in the middle.
  *
  * The button isn't a slot in the row — it floats above the bar, and the bar's
  * top edge scoops down to clear it. The scoop is centred on the bar, so it
@@ -310,7 +310,7 @@ function BottomBar({ state, descriptors, navigation }: BottomTabBarProps) {
           ]}
         />
         <Animated.View style={[styles.fabFillWrap, { transform: [{ scale: pop }] }]}>
-          {/* The holographic sweep from the reference, with ink on top — the
+          {/* The green-blue-yellow sweep, with ink on top — the
               pastels are light enough that a white glyph would wash out. */}
           <LinearGradient
             colors={IRIDESCENT}

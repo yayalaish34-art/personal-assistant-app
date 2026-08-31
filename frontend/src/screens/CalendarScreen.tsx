@@ -395,7 +395,7 @@ const styles = StyleSheet.create({
     marginBottom: spacing.md,
   },
   segmentItem: { flex: 1, paddingVertical: 11, borderRadius: 100, alignItems: 'center' },
-  segmentItemActive: { backgroundColor: AURA.sky.tint },
+  segmentItemActive: { backgroundColor: AURA.green.tint },
   segmentText: { fontSize: 15, ...font(500), color: colors.textMuted },
   segmentTextActive: { ...font(700), color: colors.text },
 
@@ -408,7 +408,7 @@ const styles = StyleSheet.create({
   weekCell: { flex: 1, alignItems: 'center', gap: 6 },
   weekName: { fontSize: 13, ...font(500), color: colors.textMuted },
   weekDay: { width: 34, height: 34, borderRadius: 17, alignItems: 'center', justifyContent: 'center' },
-  weekDaySelected: { backgroundColor: AURA.sky.tint },
+  weekDaySelected: { backgroundColor: AURA.green.tint },
   weekDayText: { fontSize: 15, ...font(600), color: colors.text },
   weekDayToday: { ...font(700) },
 

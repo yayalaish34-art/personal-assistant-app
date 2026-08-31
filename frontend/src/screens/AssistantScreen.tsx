@@ -394,7 +394,7 @@ const styles = StyleSheet.create({
   offerRow: {
     height: 52,
     borderRadius: 14,
-    backgroundColor: AURA.lilac.tint,
+    backgroundColor: AURA.blue.tint,
     flexDirection: 'row',
     alignItems: 'center',
     paddingHorizontal: 14,
@@ -412,7 +412,7 @@ const styles = StyleSheet.create({
     flexShrink: 0,
   },
   offerTimeTaken: { color: colors.primaryText },
-  offerWhen: { flex: 1, fontSize: 14, ...font(600), color: AURA.lilac.ink, textAlign: 'right' },
+  offerWhen: { flex: 1, fontSize: 14, ...font(600), color: AURA.blue.ink, textAlign: 'right' },
   offerWhenTaken: { color: 'rgba(255,255,255,0.75)' },
 
   imageBubble: {
@@ -441,7 +441,7 @@ const styles = StyleSheet.create({
   userBubble: {
     alignSelf: 'flex-end',
     maxWidth: '88%',
-    backgroundColor: AURA.sky.tint,
+    backgroundColor: AURA.green.tint,
     borderRadius: 22,
     borderEndEndRadius: 6,
     paddingHorizontal: 16,

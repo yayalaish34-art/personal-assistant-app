@@ -83,7 +83,7 @@ export function ProgressRing({
       {/* Track + gradient progress arc */}
       <Svg width={size} height={size} style={StyleSheet.absoluteFill}>
         <Defs>
-          {/* Faint lilac tint on the unfilled part of the track. */}
+          {/* Faint tint on the unfilled part of the track. */}
           <SvgLinearGradient id="track" x1="0%" y1="0%" x2="100%" y2="100%">
             <Stop offset="0%" stopColor="#F1EBFC" />
             <Stop offset="100%" stopColor="#E6DBF9" />

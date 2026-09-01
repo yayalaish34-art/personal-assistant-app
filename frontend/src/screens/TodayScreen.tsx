@@ -17,7 +17,6 @@ import { LinearGradient } from 'expo-linear-gradient';
 import Svg, { Circle, Defs, LinearGradient as SvgGradient, Stop } from 'react-native-svg';
 import {
   X,
-  Plus,
   CalendarDays,
   CalendarClock,
   ChevronsRight,
@@ -524,50 +523,6 @@ function FocusTask({
   );
 }
 
-/** One of the two things queued behind the current task. */
-function QueuedTask({
-  item,
-  onDone,
-  onOpen,
-}: {
-  item: AgendaItem;
-  onDone: () => void;
-  onOpen: () => void;
-}) {
-  const start = { textAlign: alignStart() } as const;
-  const st = rowStatus(item, new Date());
-
-  return (
-    <Pressable
-      onPress={onOpen}
-      style={({ pressed }) => [styles.queueRow, pressed && styles.pressedDim]}
-      accessibilityRole="button"
-    >
-      <Pressable
-        onPress={onDone}
-        hitSlop={8}
-        accessibilityRole="checkbox"
-        accessibilityState={{ checked: false }}
-      >
-        <View style={styles.queueCheck}>
-          <Check color={colors.textMuted} size={13} strokeWidth={3} />
-        </View>
-      </Pressable>
-      <View style={{ flex: 1 }}>
-        <Text style={[styles.queueTitle, start]} numberOfLines={1}>
-          {item.title}
-        </Text>
-        <View style={styles.queueMetaRow}>
-          <View style={[styles.queueDot, { backgroundColor: st.dot }]} />
-          <Text style={styles.queueMeta} numberOfLines={1}>
-            {item.time ? to12h(item.time) : t(`today.status.${st.key}`)}
-          </Text>
-        </View>
-      </View>
-    </Pressable>
-  );
-}
-
 /** The meeting happening now, with the one after it beneath in miniature. */
 function MeetingCard({
   current,
@@ -826,11 +781,6 @@ export default function TodayScreen() {
     setSheet(which);
   };
 
-  const openAssistant = () => {
-    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
-    navigation.navigate('Assistant');
-  };
-
   const goToCalendar = () => {
     Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
     (
@@ -890,27 +840,12 @@ export default function TodayScreen() {
             than swapping its text in place. */}
         <Entrance key={`focus-${selectedStr}`} delay={booted ? 70 : 360} from={20}>
           {focus.head ? (
-            <>
-              <FocusTask
-                item={focus.head}
-                onDone={() => toggleDone(focus.head!)}
-                onOpen={() => openItem(focus.head!)}
-                onSnooze={() => snooze(focus.head!)}
-              />
-              {focus.queue.length > 0 ? (
-                <View style={styles.queueCard}>
-                  <Text style={[styles.queueKicker, start]}>{t('home.upNext')}</Text>
-                  {focus.queue.map((item) => (
-                    <QueuedTask
-                      key={`${item.kind}-${item.id}`}
-                      item={item}
-                      onDone={() => toggleDone(item)}
-                      onOpen={() => openItem(item)}
-                    />
-                  ))}
-                </View>
-              ) : null}
-            </>
+            <FocusTask
+              item={focus.head}
+              onDone={() => toggleDone(focus.head!)}
+              onOpen={() => openItem(focus.head!)}
+              onSnooze={() => snooze(focus.head!)}
+            />
           ) : (
             <View style={styles.focusCard}>
               <Text style={[styles.focusTitle, start]}>{t('home.allDone')}</Text>
@@ -967,26 +902,33 @@ export default function TodayScreen() {
                 {dayWord}
               </Text>
             </Pressable>
-          </View>
-        </Entrance>
 
-        {/* ── Hand the day to her ── */}
-        <Entrance key={`add-${selectedStr}`} delay={booted ? 160 : 460} from={18}>
-          <Pressable
-            onPress={openAssistant}
-            style={({ pressed }) => [
-              styles.addBar,
-              { backgroundColor: AURA.yellow.tint },
-              pressed && styles.pressedDim,
-            ]}
-            accessibilityRole="button"
-          >
-            <View style={styles.addCircle}>
-              <Plus color={colors.text} size={24} strokeWidth={2.4} />
-            </View>
-            <Text style={styles.addLabel}>{t('today.addNewTask')}</Text>
-            <ChevronsRight color={colors.text} size={20} strokeWidth={2} />
-          </Pressable>
+            {/* What is queued behind the task in hand. A tile rather than a
+                list: the card above already shows one task in full, and a
+                second list under it was two of the same thing. Tapping opens
+                whichever is next. */}
+            <Pressable
+              onPress={() => (focus.queue[0] ? openItem(focus.queue[0]) : goToCalendar())}
+              style={({ pressed }) => [
+                styles.gridTile,
+                { backgroundColor: AURA.yellow.tint },
+                pressed && styles.pressedDim,
+              ]}
+              accessibilityRole="button"
+              accessibilityLabel={`${focus.queue.length} ${t('home.upNext')}`}
+            >
+              <View style={styles.gridTileTop}>
+                <Text style={[styles.gridNumber, start]}>{focus.queue.length}</Text>
+                <ChevronsRight color={AURA.yellow.ink} size={22} strokeWidth={1.8} />
+              </View>
+              <Text style={[styles.gridLabelPrimary, start]} numberOfLines={1}>
+                {t('home.upNext')}
+              </Text>
+              <Text style={[styles.gridLabelSecondary, start]} numberOfLines={1}>
+                {focus.queue[0] ? focus.queue[0].title : t('home.nothingNext')}
+              </Text>
+            </Pressable>
+          </View>
         </Entrance>
 
         {/* ── The day itself, on its own sheet ── */}
@@ -1249,39 +1191,6 @@ const styles = StyleSheet.create({
   },
   focusGhostText: { fontSize: 14, ...font(600), color: colors.text },
 
-  // ── The two behind it ──
-  queueCard: {
-    backgroundColor: colors.surface,
-    borderRadius: radius.md,
-    paddingHorizontal: spacing.md,
-    paddingVertical: 4,
-    marginTop: 10,
-    borderWidth: 1,
-    borderColor: colors.border,
-  },
-  queueKicker: {
-    fontSize: 11,
-    ...font(700),
-    color: colors.textMuted,
-    letterSpacing: 0.6,
-    textTransform: 'uppercase',
-    marginTop: 10,
-    marginBottom: 2,
-  },
-  queueRow: { flexDirection: 'row', alignItems: 'center', gap: 11, paddingVertical: 10 },
-  queueCheck: {
-    width: 22,
-    height: 22,
-    borderRadius: 11,
-    borderWidth: 1.6,
-    borderColor: colors.border,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  queueTitle: { fontSize: 15, ...font(600), color: colors.text },
-  queueMetaRow: { flexDirection: 'row', alignItems: 'center', gap: 5, marginTop: 2 },
-  queueDot: { width: 5, height: 5, borderRadius: 2.5 },
-  queueMeta: { fontSize: 12, ...font(500), color: colors.textMuted },
 
   // ── Meetings ──
   meetingCard: { borderRadius: radius.lg, marginTop: 10, overflow: 'hidden' },
@@ -1335,15 +1244,17 @@ const styles = StyleSheet.create({
   meetingNextTime: { fontSize: 12.5, ...font(700), color: colors.textMuted },
 
   // ── Pastel tiles ──
-  gridRow: { flexDirection: 'row', gap: 10, marginTop: spacing.sm },
-  gridTile: { flex: 1, minHeight: 104, borderRadius: radius.md, padding: 14 },
+  gridRow: { flexDirection: 'row', gap: 8, marginTop: spacing.sm },
+  // Three across now, so the padding and the type step down a little —
+  // at the two-tile sizes the third tile's title clipped after one word.
+  gridTile: { flex: 1, minHeight: 104, borderRadius: radius.md, padding: 12 },
   gridTileTop: {
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
   },
-  gridNumber: { fontSize: 30, ...font(700), color: colors.text, letterSpacing: -0.5 },
-  gridLabelPrimary: { fontSize: 14, ...font(600), color: colors.text, marginTop: 6 },
+  gridNumber: { fontSize: 26, ...font(700), color: colors.text, letterSpacing: -0.5 },
+  gridLabelPrimary: { fontSize: 13, ...font(600), color: colors.text, marginTop: 6 },
   gridLabelSecondary: {
     fontSize: 13,
     ...font(500),
@@ -1352,23 +1263,6 @@ const styles = StyleSheet.create({
     marginTop: 1,
   },
 
-  addBar: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 10,
-    borderRadius: 100,
-    padding: 10,
-    marginTop: 10,
-  },
-  addCircle: {
-    width: 48,
-    height: 48,
-    borderRadius: 24,
-    backgroundColor: colors.surface,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  addLabel: { fontSize: 16, ...font(600), color: colors.text },
 
   // ── The sheet the day sits on ──
   panelWrap: {

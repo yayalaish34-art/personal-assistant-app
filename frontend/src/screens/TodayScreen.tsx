@@ -415,7 +415,9 @@ function WeatherCard({ weather, onPress }: { weather: Weather | null; onPress: (
   const start = { textAlign: alignStart() } as const;
   const isDay = weather?.isDay ?? isDaylightNow();
   const Icon = weather ? skyIcon(weather.sky, isDay) : isDay ? Sun : Moon;
-  const skin = isDay ? AURA.green : AURA.blue;
+  // Blue either way: a sky is blue, and the sun-or-moon glyph already says
+  // which half of the day it is without the ground colour repeating it.
+  const skin = AURA.blue;
 
   // A gentle drift on the glyph, so the card is alive without being busy.
   const float = useFloat(4, 3200, 200);
@@ -536,7 +538,7 @@ function MeetingCard({
   const start = { textAlign: alignStart() } as const;
 
   return (
-    <View style={[styles.meetingCard, { backgroundColor: AURA.green.tint }]}>
+    <View style={[styles.meetingCard, { backgroundColor: AURA.yellow.tint }]}>
       <Pressable
         onPress={() => current && onOpen(current)}
         disabled={!current}
@@ -555,7 +557,7 @@ function MeetingCard({
           ) : null}
         </View>
         <View style={styles.meetingIcon}>
-          <CalendarClock color={AURA.green.ink} size={26} strokeWidth={1.8} />
+          <CalendarClock color={AURA.yellow.ink} size={26} strokeWidth={1.8} />
         </View>
       </Pressable>
 
@@ -847,9 +849,14 @@ export default function TodayScreen() {
               onSnooze={() => snooze(focus.head!)}
             />
           ) : (
-            <View style={styles.focusCard}>
-              <Text style={[styles.focusTitle, start]}>{t('home.allDone')}</Text>
-              <Text style={[styles.focusMeta, start]}>{t('home.allDoneBody')}</Text>
+            <View style={styles.doneCard}>
+              <View style={styles.doneBadge}>
+                <CircleCheckBig color={AURA.green.ink} size={22} strokeWidth={2.2} />
+              </View>
+              <View style={{ flex: 1 }}>
+                <Text style={[styles.doneTitle, start]}>{t('home.allDone')}</Text>
+                <Text style={[styles.doneBody, start]}>{t('home.allDoneBody')}</Text>
+              </View>
             </View>
           )}
         </Entrance>
@@ -1155,6 +1162,31 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     borderColor: colors.border,
   },
+
+  /**
+   * Nothing left to do. Green, because this is the one place on the screen
+   * where green means what green means — and a finished day reading as a blank
+   * white card looked like a section that had failed to load.
+   */
+  doneCard: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 13,
+    backgroundColor: AURA.green.tint,
+    borderRadius: radius.lg,
+    padding: spacing.md + 2,
+    marginTop: spacing.md,
+  },
+  doneBadge: {
+    width: 44,
+    height: 44,
+    borderRadius: 15,
+    backgroundColor: colors.surface,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  doneTitle: { fontSize: 18, ...font(700), color: colors.text, letterSpacing: -0.3 },
+  doneBody: { fontSize: 13.5, ...font(500), color: colors.text, opacity: 0.7, marginTop: 2 },
   focusHead: { flexDirection: 'row', alignItems: 'center', gap: 7, marginBottom: 8 },
   focusDot: { width: 7, height: 7, borderRadius: 3.5 },
   focusKicker: {

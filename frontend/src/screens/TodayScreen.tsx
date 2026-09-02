@@ -1046,14 +1046,22 @@ const styles = StyleSheet.create({
   pageSheet: {
     flexGrow: 1,
     backgroundColor: colors.surface,
-    borderTopStartRadius: 34,
-    borderTopEndRadius: 34,
-    // Out to the screen edges: Screen pads the page, so the sheet has to undo
+    // Only the top two. The bottom corners stay square and follow the
+    // viewport, so the curve happens once, where the black meets the white.
+    borderTopStartRadius: 36,
+    borderTopEndRadius: 36,
+    // Out to the screen edges: Screen pads the page, so the card has to undo
     // that padding to reach them, then put it back inside itself.
     marginHorizontal: -(spacing.md + 4),
     paddingHorizontal: spacing.md + 4,
     paddingTop: spacing.lg,
     marginTop: spacing.sm,
+    // Past the bottom edge, not up to it. Stopping level with the edge lets
+    // black appear under the white on an overscroll bounce and wherever a
+    // fractional layout height rounds down. The bottom corners are square, so
+    // none of the overhang can be seen.
+    marginBottom: -TAB_BAR_CLEARANCE,
+    paddingBottom: TAB_BAR_CLEARANCE,
   },
 
   // ── Week strip ──

@@ -31,18 +31,19 @@ import { colors, radius, spacing, font, BAND, TAB_BAR_CLEARANCE } from '../theme
 const BAND_DEPTH = 180;
 
 /**
- * The radius the dark's own bottom edge curves through.
+ * How far the dark carries on below the card's top edge.
  *
- * The band ends in a curve rather than being cut off by the card over it. The
- * card supplied the only curve before, and the dark behind it still stopped in
- * a straight line — so the join read as a rounded card sitting on a black bar,
- * with the bar's hard edge showing either side of it a corner's depth below.
- * Curving the dark itself means there is no straight edge anywhere to see.
- *
- * Kept equal to the card's own radius, so the two arcs sit on top of each
- * other and read as one edge.
+ * The white card is the thing with the rounded corners, and a rounded corner
+ * needs ground behind it or it curves into nothing. This is that ground: the
+ * dark runs on past the seam, and the card's arc cuts into it. Deeper than
+ * the card's radius, so the arc is complete before the overhang ends.
  */
+const BAND_CORNER_BLEED = 56;
+
+/** The radius the white turns through where it meets the dark. */
 const BAND_RADIUS = 44;
+
+
 
 export function Screen({
   children,
@@ -83,6 +84,7 @@ export function Screen({
   bandBottom?: number;
 }) {
   const insets = useSafeAreaInsets();
+  const seam = bandBottom ?? Math.max(insets.top, spacing.md) + BAND_DEPTH;
 
   return (
     <View
@@ -102,24 +104,26 @@ export function Screen({
       ]}
     >
       {topBand ? (
-        <View
-          pointerEvents="none"
-          style={[
-            styles.band,
-            // The dark ends level with the card's top edge, and curves through
-            // the same radius the card does.
-            //
-            // The bleed that used to carry it 48px lower is gone. Behind the
-            // card that overhang is invisible, but the card only spans the
-            // scroll's own content — so either side of it the overhang had
-            // nothing over it and showed as a hard black rule across the page,
-            // a corner's depth below the curve. Now the only edge the dark has
-            // is a curved one.
-            {
-              height: bandBottom ?? Math.max(insets.top, spacing.md) + BAND_DEPTH,
-            },
-          ]}
-        />
+        <>
+          {/* The dark, carried past the seam so the card's rounded corners
+              have something to cut into. */}
+          <View
+            pointerEvents="none"
+            style={[styles.band, { height: seam + BAND_CORNER_BLEED }]}
+          />
+          {/* And the card's own white, laid back over the overhang with the
+              same radius — out here on the page, where nothing clips it.
+              The card itself cannot do this job: it lives inside a ScrollView
+              that clips to the padded box, so its negative side margin never
+              actually reaches the screen edges and the overhang showed past
+              it. This view has the page for a parent and no such limit, so the
+              curve is drawn once, in white, over dark that runs the full
+              width. */}
+          <View
+            pointerEvents="none"
+            style={[styles.bandCap, { top: seam, height: BAND_CORNER_BLEED }]}
+          />
+        </>
       ) : null}
       {children}
     </View>
@@ -281,11 +285,21 @@ const styles = StyleSheet.create({
     insetInlineStart: 0,
     insetInlineEnd: 0,
     backgroundColor: BAND.bg,
-    // Its own curve, so the seam is a curve whether or not the card above it
-    // happens to be covering that stretch of the page.
-    borderBottomStartRadius: BAND_RADIUS,
-    borderBottomEndRadius: BAND_RADIUS,
+    // Square. The cap over it carries the curve.
   },
+  /**
+   * The white, and the only rounded thing at the seam. Full width, so the two
+   * corner cut-outs are the only dark left below the join.
+   */
+  bandCap: {
+    position: 'absolute',
+    insetInlineStart: 0,
+    insetInlineEnd: 0,
+    backgroundColor: colors.surface,
+    borderTopStartRadius: BAND_RADIUS,
+    borderTopEndRadius: BAND_RADIUS,
+  },
+
 
   greetingRow: { flexDirection: 'row', alignItems: 'center', gap: 12 },
   avatar: {

@@ -872,7 +872,10 @@ export default function TodayScreen() {
         onLayout={measureSeam}
       />
 
-      <ScrollView showsVerticalScrollIndicator={false} contentContainerStyle={styles.content}>
+      <ScrollView
+        showsVerticalScrollIndicator={false}
+        contentContainerStyle={styles.content}
+      >
         {/* ── The week, one pill a day, the chosen one in the holographic fill ── */}
         <ScrollView
           ref={stripRef}

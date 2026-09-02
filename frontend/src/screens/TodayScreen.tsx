@@ -911,13 +911,15 @@ export default function TodayScreen() {
               onPress={goToCalendar}
               style={({ pressed }) => [
                 styles.countTile,
-                { backgroundColor: AURA.blue.tint },
+                // Green, not blue: the weather card straight above is blue,
+                // and two pale blues stacked read as one block with a seam.
+                { backgroundColor: AURA.green.tint },
                 pressed && styles.pressedDim,
               ]}
               accessibilityRole="button"
               accessibilityLabel={t('home.tasksToday', { count: stats.tasks })}
             >
-              <CalendarDays color={AURA.blue.ink} size={22} strokeWidth={2} />
+              <CalendarDays color={AURA.green.ink} size={22} strokeWidth={2} />
               <Text style={styles.countNum}>{stats.tasks}</Text>
               <Text style={[styles.countLabel, start]} numberOfLines={2}>
                 {t('home.tasksToday', { count: stats.tasks })}

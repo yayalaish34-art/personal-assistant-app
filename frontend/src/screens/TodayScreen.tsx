@@ -49,6 +49,7 @@ import {
   AURA,
   AURA_CYCLE,
   IRIDESCENT,
+  BAND,
   TAB_BAR_CLEARANCE,
   type AuraKey,
 } from '../theme';
@@ -185,7 +186,9 @@ function DayPill({
                 style={{ flex: 1 }}
               />
             </Animated.View>
-            <Text style={styles.pillDay}>{date.getDate()}</Text>
+            <Text style={[styles.pillDay, selected && styles.pillDaySelected]}>
+              {date.getDate()}
+            </Text>
             <Text style={[styles.pillWd, selected && styles.pillWdSelected]} numberOfLines={1}>
               {date.toLocaleDateString(locale(), { weekday: 'short' })}
             </Text>
@@ -826,11 +829,12 @@ export default function TodayScreen() {
   const rowTile = (index: number) => AURA_CYCLE[index % AURA_CYCLE.length];
 
   return (
-    <Screen clearTabBar={false}>
+    <Screen clearTabBar={false} topBand>
       <GreetingHeader
         name={`${greetingNow()}, ${name || t('today.friend')}!`}
         photoUri={PROFILE_PHOTO_URI}
         onBellPress={() => openSheet('alerts')}
+        onDark
       />
 
       <ScrollView showsVerticalScrollIndicator={false} contentContainerStyle={styles.content}>
@@ -856,120 +860,127 @@ export default function TodayScreen() {
           ))}
         </ScrollView>
 
-        {/* ── Today's sky ── */}
-        <Entrance delay={booted ? 30 : 300} from={18}>
-          <WeatherCard weather={weather} onPress={goToCalendar} />
-        </Entrance>
+        {/* ── The sheet ──
+            Everything that is not the greeting or the week lives on one white
+            surface, lifted onto the band by its two rounded top corners. It
+            grows with the content rather than being a fixed height: the day's
+            list is inside it, and the list is as long as the day. */}
+        <View style={styles.pageSheet}>
+          {/* ── Today's sky ── */}
+          <Entrance delay={booted ? 30 : 300} from={18}>
+            <WeatherCard weather={weather} onPress={goToCalendar} />
+          </Entrance>
 
-        {/* ── Nothing left to do ──
+          {/* ── Nothing left to do ──
             Only shown when the day is clear. What used to sit here otherwise
             was a third copy of a task that is already in the list below. */}
-        <Entrance key={`focus-${selectedStr}`} delay={booted ? 70 : 360} from={20}>
-          {focus.head ? null : (
-            <View style={styles.doneCard}>
-              <View style={styles.doneBadge}>
-                <CircleCheckBig color={AURA.green.ink} size={22} strokeWidth={2.2} />
+          <Entrance key={`focus-${selectedStr}`} delay={booted ? 70 : 360} from={20}>
+            {focus.head ? null : (
+              <View style={styles.doneCard}>
+                <View style={styles.doneBadge}>
+                  <CircleCheckBig color={AURA.green.ink} size={22} strokeWidth={2.2} />
+                </View>
+                <View style={{ flex: 1 }}>
+                  <Text style={[styles.doneTitle, start]}>{t('home.allDone')}</Text>
+                  <Text style={[styles.doneBody, start]}>{t('home.allDoneBody')}</Text>
+                </View>
               </View>
-              <View style={{ flex: 1 }}>
-                <Text style={[styles.doneTitle, start]}>{t('home.allDone')}</Text>
-                <Text style={[styles.doneBody, start]}>{t('home.allDoneBody')}</Text>
-              </View>
-            </View>
-          )}
-        </Entrance>
+            )}
+          </Entrance>
 
-        {/* ── What is on now, and how much the day holds ──
+          {/* ── What is on now, and how much the day holds ──
             One band where there were two: a rectangle two squares wide for the
             thing happening, and a square beside it for the count. */}
-        <Entrance key={`top-${selectedStr}`} delay={booted ? 110 : 410} from={18}>
-          <View style={styles.topRow}>
-            <Pressable
-              onPress={() => (meetings.current ? openItem(meetings.current) : goToCalendar())}
-              style={({ pressed }) => [
-                styles.nowWide,
-                { backgroundColor: AURA.yellow.tint },
-                pressed && styles.pressedDim,
-              ]}
-              accessibilityRole="button"
-            >
-              <View style={styles.nowTop}>
-                <Text style={styles.nowKicker}>{t('home.now')}</Text>
-                <CalendarClock color={AURA.yellow.ink} size={18} strokeWidth={2} />
-              </View>
-              <Text style={[styles.nowTitle, start]} numberOfLines={2}>
-                {meetings.current ? meetings.current.title : t('home.nothingNow')}
-              </Text>
-              {meetings.current ? (
-                <Text style={[styles.nowMeta, start]} numberOfLines={1}>
-                  {to12h(meetings.current.time)}
-                  {meetings.next ? `  ·  ${t('home.next')} ${to12h(meetings.next.time)}` : ''}
+          <Entrance key={`top-${selectedStr}`} delay={booted ? 110 : 410} from={18}>
+            <View style={styles.topRow}>
+              <Pressable
+                onPress={() => (meetings.current ? openItem(meetings.current) : goToCalendar())}
+                style={({ pressed }) => [
+                  styles.nowWide,
+                  { backgroundColor: AURA.yellow.tint },
+                  pressed && styles.pressedDim,
+                ]}
+                accessibilityRole="button"
+              >
+                <View style={styles.nowTop}>
+                  <Text style={styles.nowKicker}>{t('home.now')}</Text>
+                  <CalendarClock color={AURA.yellow.ink} size={18} strokeWidth={2} />
+                </View>
+                <Text style={[styles.nowTitle, start]} numberOfLines={2}>
+                  {meetings.current ? meetings.current.title : t('home.nothingNow')}
                 </Text>
-              ) : null}
-            </Pressable>
+                {meetings.current ? (
+                  <Text style={[styles.nowMeta, start]} numberOfLines={1}>
+                    {to12h(meetings.current.time)}
+                    {meetings.next ? `  ·  ${t('home.next')} ${to12h(meetings.next.time)}` : ''}
+                  </Text>
+                ) : null}
+              </Pressable>
 
-            <Pressable
-              onPress={goToCalendar}
-              style={({ pressed }) => [
-                styles.countTile,
-                // Green, not blue: the weather card straight above is blue,
-                // and two pale blues stacked read as one block with a seam.
-                { backgroundColor: AURA.green.tint },
-                pressed && styles.pressedDim,
-              ]}
-              accessibilityRole="button"
-              accessibilityLabel={t('home.tasksToday', { count: stats.tasks })}
-            >
-              <CalendarDays color={AURA.green.ink} size={22} strokeWidth={2} />
-              <Text style={styles.countNum}>{stats.tasks}</Text>
-              <Text style={[styles.countLabel, start]} numberOfLines={2}>
-                {t('home.tasksToday', { count: stats.tasks })}
-              </Text>
-            </Pressable>
-          </View>
-        </Entrance>
-
-        {/* ── The day itself, on its own sheet ── */}
-        <Entrance delay={520} from={40} style={styles.panelWrap}>
-          <View style={styles.panel}>
-            <View style={styles.panelHead}>
-              <View style={{ flex: 1 }}>
-                <Text style={[styles.panelTitle, start]}>{t('today.yourTasks')}</Text>
-                <Text style={[styles.panelSub, start]}>
-                  {t('today.completedOf', { done: stats.done, total: stats.total })}
+              <Pressable
+                onPress={goToCalendar}
+                style={({ pressed }) => [
+                  styles.countTile,
+                  // Green, not blue: the weather card straight above is blue,
+                  // and two pale blues stacked read as one block with a seam.
+                  { backgroundColor: AURA.green.tint },
+                  pressed && styles.pressedDim,
+                ]}
+                accessibilityRole="button"
+                accessibilityLabel={t('home.tasksToday', { count: stats.tasks })}
+              >
+                <CalendarDays color={AURA.green.ink} size={22} strokeWidth={2} />
+                <Text style={styles.countNum}>{stats.tasks}</Text>
+                <Text style={[styles.countLabel, start]} numberOfLines={2}>
+                  {t('home.tasksToday', { count: stats.tasks })}
                 </Text>
-              </View>
-              <SegToggle value={filter} onChange={setFilter} />
+              </Pressable>
             </View>
+          </Entrance>
 
-            <PanelProgress pct={stats.pct} />
-
-            {visible.length === 0 ? (
-              <View style={styles.empty}>
-                <Text style={styles.emptyTitle}>{t('today.empty.title')}</Text>
-                <Text style={styles.emptyBody}>{t('today.empty.body')}</Text>
+          {/* ── The day itself, on its own sheet ── */}
+          <Entrance delay={520} from={40} style={styles.panelWrap}>
+            <View style={styles.panel}>
+              <View style={styles.panelHead}>
+                <View style={{ flex: 1 }}>
+                  <Text style={[styles.panelTitle, start]}>{t('today.yourTasks')}</Text>
+                  <Text style={[styles.panelSub, start]}>
+                    {t('today.completedOf', { done: stats.done, total: stats.total })}
+                  </Text>
+                </View>
+                <SegToggle value={filter} onChange={setFilter} />
               </View>
-            ) : (
-              visible.map((item, index) => (
-                <Entrance
-                  // Rows re-stagger when the day or the filter changes: the
-                  // key remounts them, and mounting is what animates.
-                  key={`${selectedStr}-${filter}-${item.kind}-${item.id}`}
-                  delay={80 + index * 60}
-                >
-                  <TaskRow
-                    item={item}
-                    tile={rowTile(index)}
-                    status={rowStatus(item, now)}
-                    index={index}
-                    onOpen={() => openItem(item)}
-                    onToggle={() => toggleDone(item)}
-                    onSnooze={() => snooze(item)}
-                  />
-                </Entrance>
-              ))
-            )}
-          </View>
-        </Entrance>
+
+              <PanelProgress pct={stats.pct} />
+
+              {visible.length === 0 ? (
+                <View style={styles.empty}>
+                  <Text style={styles.emptyTitle}>{t('today.empty.title')}</Text>
+                  <Text style={styles.emptyBody}>{t('today.empty.body')}</Text>
+                </View>
+              ) : (
+                visible.map((item, index) => (
+                  <Entrance
+                    // Rows re-stagger when the day or the filter changes: the
+                    // key remounts them, and mounting is what animates.
+                    key={`${selectedStr}-${filter}-${item.kind}-${item.id}`}
+                    delay={80 + index * 60}
+                  >
+                    <TaskRow
+                      item={item}
+                      tile={rowTile(index)}
+                      status={rowStatus(item, now)}
+                      index={index}
+                      onOpen={() => openItem(item)}
+                      onToggle={() => toggleDone(item)}
+                      onSnooze={() => snooze(item)}
+                    />
+                  </Entrance>
+                ))
+              )}
+            </View>
+          </Entrance>
+        </View>
       </ScrollView>
 
       {/* ── What the number on the ring is made of ── */}
@@ -1031,19 +1042,36 @@ const styles = StyleSheet.create({
 
   /** The only colour in the block — a hairline rule, not a filled chip. */
 
+  // ── The white sheet the day sits on ──
+  pageSheet: {
+    flexGrow: 1,
+    backgroundColor: colors.surface,
+    borderTopStartRadius: 34,
+    borderTopEndRadius: 34,
+    // Out to the screen edges: Screen pads the page, so the sheet has to undo
+    // that padding to reach them, then put it back inside itself.
+    marginHorizontal: -(spacing.md + 4),
+    paddingHorizontal: spacing.md + 4,
+    paddingTop: spacing.lg,
+    marginTop: spacing.sm,
+  },
+
   // ── Week strip ──
-  strip: { marginTop: spacing.md, flexGrow: 0 },
+  strip: { marginTop: spacing.sm, flexGrow: 0 },
   stripContent: { alignItems: 'center', gap: PILL_GAP, paddingVertical: 12 },
   pill: {
     width: PILL_W,
     height: 74,
     borderRadius: 25,
-    backgroundColor: colors.surface,
+    // A hole in the band rather than a card on it: filled white, all seven
+    // would compete with the one that is actually chosen.
+    backgroundColor: BAND.line,
     alignItems: 'center',
     justifyContent: 'center',
     gap: 2,
     borderWidth: 1,
-    borderColor: colors.border,
+    borderColor: BAND.line,
+    overflow: 'hidden',
   },
   pillSelectedEdge: { borderColor: 'transparent' },
   pillGradient: {
@@ -1057,14 +1085,16 @@ const styles = StyleSheet.create({
     borderWidth: 2,
     borderColor: IRIDESCENT[1],
   },
-  pillDay: { fontSize: 18, ...font(700), color: colors.text },
-  pillWd: { fontSize: 11.5, ...font(600), color: colors.textMuted },
+  pillDay: { fontSize: 18, ...font(700), color: BAND.ink },
+  /** Near-black once the gradient is behind it — what every chosen thing does. */
+  pillDaySelected: { color: colors.text },
+  pillWd: { fontSize: 11.5, ...font(600), color: BAND.sub },
   pillWdSelected: { color: colors.text },
   pillDot: {
     width: 5,
     height: 5,
     borderRadius: 2.5,
-    backgroundColor: colors.alert,
+    backgroundColor: BAND.sub,
     marginTop: 2,
   },
 
@@ -1180,22 +1210,12 @@ const styles = StyleSheet.create({
   // ── The sheet the day sits on ──
   panelWrap: {
     flexGrow: 1,
-    marginTop: spacing.md,
-    marginHorizontal: -(spacing.md + 4),
+    marginTop: spacing.lg,
   },
+  /** Now just the last block on the sheet, not a sheet of its own. */
   panel: {
     flex: 1,
-    backgroundColor: colors.surface,
-    borderTopStartRadius: 30,
-    borderTopEndRadius: 30,
-    paddingHorizontal: spacing.md + 4,
-    paddingTop: spacing.lg,
     paddingBottom: TAB_BAR_CLEARANCE,
-    shadowColor: '#14150F',
-    shadowOffset: { width: 0, height: -6 },
-    shadowOpacity: 0.05,
-    shadowRadius: 16,
-    elevation: 4,
   },
   panelHead: {
     flexDirection: 'row',

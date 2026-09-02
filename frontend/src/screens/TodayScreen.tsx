@@ -18,10 +18,10 @@ import Svg, { Circle, Defs, LinearGradient as SvgGradient, Stop } from 'react-na
 import {
   X,
   CalendarDays,
+  CalendarArrowDown,
   CalendarClock,
   ChevronsRight,
   CircleCheckBig,
-  Check,
   Sun,
   Moon,
   Cloud,
@@ -460,71 +460,6 @@ function WeatherCard({ weather, onPress }: { weather: Weather | null; onPress: (
 
 // ── Now / next ───────────────────────────────────────────────────────────────
 
-/**
- * The task in hand, with the things that can be done to it from here.
- *
- * Home used to be a place to read numbers and then go elsewhere to act on
- * them. The buttons are the point: ticking off what you are doing right now is
- * the most common thing anyone wants from a home screen, and it was three taps
- * away behind a list.
- */
-function FocusTask({
-  item,
-  onDone,
-  onOpen,
-  onSnooze,
-}: {
-  item: AgendaItem;
-  onDone: () => void;
-  onOpen: () => void;
-  onSnooze: () => void;
-}) {
-  const start = { textAlign: alignStart() } as const;
-  const st = rowStatus(item, new Date());
-
-  return (
-    <View style={styles.focusCard}>
-      <View style={styles.focusHead}>
-        <View style={[styles.focusDot, { backgroundColor: st.dot }]} />
-        <Text style={styles.focusKicker}>{t('home.now')}</Text>
-      </View>
-
-      <Text style={[styles.focusTitle, start]} numberOfLines={2}>
-        {item.title}
-      </Text>
-      <Text style={[styles.focusMeta, start]} numberOfLines={1}>
-        {t(`today.status.${st.key}`)}
-        {item.time ? ` · ${to12h(item.time)}` : ''}
-      </Text>
-
-      <View style={styles.focusActions}>
-        <Pressable
-          onPress={onDone}
-          style={({ pressed }) => [styles.focusPrimary, pressed && styles.pressedDim]}
-          accessibilityRole="button"
-        >
-          <Check color={colors.primaryText} size={17} strokeWidth={3} />
-          <Text style={styles.focusPrimaryText}>{t('home.done')}</Text>
-        </Pressable>
-        <Pressable
-          onPress={onSnooze}
-          style={({ pressed }) => [styles.focusGhost, pressed && styles.pressedDim]}
-          accessibilityRole="button"
-        >
-          <Text style={styles.focusGhostText}>{t('home.snooze')}</Text>
-        </Pressable>
-        <Pressable
-          onPress={onOpen}
-          style={({ pressed }) => [styles.focusGhost, pressed && styles.pressedDim]}
-          accessibilityRole="button"
-        >
-          <Text style={styles.focusGhostText}>{t('home.open')}</Text>
-        </Pressable>
-      </View>
-    </View>
-  );
-}
-
 /** The meeting happening now, with the one after it beneath in miniature. */
 function MeetingCard({
   current,
@@ -837,18 +772,11 @@ export default function TodayScreen() {
           <WeatherCard weather={weather} onPress={goToCalendar} />
         </Entrance>
 
-        {/* ── The thing in hand, and what is behind it ──
-            Keyed on the day so picking one re-springs the whole block rather
-            than swapping its text in place. */}
+        {/* ── Nothing left to do ──
+            Only shown when the day is clear. What used to sit here otherwise
+            was a third copy of a task that is already in the list below. */}
         <Entrance key={`focus-${selectedStr}`} delay={booted ? 70 : 360} from={20}>
-          {focus.head ? (
-            <FocusTask
-              item={focus.head}
-              onDone={() => toggleDone(focus.head!)}
-              onOpen={() => openItem(focus.head!)}
-              onSnooze={() => snooze(focus.head!)}
-            />
-          ) : (
+          {focus.head ? null : (
             <View style={styles.doneCard}>
               <View style={styles.doneBadge}>
                 <CircleCheckBig color={AURA.green.ink} size={22} strokeWidth={2.2} />
@@ -1008,13 +936,32 @@ export default function TodayScreen() {
                         </View>
                       </View>
 
-                      <View style={[styles.rowIcon, { backgroundColor: AURA[tile].tint }]}>
-                        {item.kind === 'event' ? (
+                      {/* On a task this is the button that pushes it to
+                          tomorrow; on an event it stays what it was, a mark
+                          saying which of the two kinds this row is. */}
+                      {item.kind === 'task' ? (
+                        <Pressable
+                          onPress={() => snooze(item)}
+                          hitSlop={6}
+                          style={({ pressed }) => [
+                            styles.rowIcon,
+                            { backgroundColor: AURA[tile].tint },
+                            pressed && styles.pressedDim,
+                          ]}
+                          accessibilityRole="button"
+                          accessibilityLabel={t('home.snooze')}
+                        >
+                          <CalendarArrowDown
+                            color={AURA[tile].ink}
+                            size={18}
+                            strokeWidth={2}
+                          />
+                        </Pressable>
+                      ) : (
+                        <View style={[styles.rowIcon, { backgroundColor: AURA[tile].tint }]}>
                           <CalendarDays color={AURA[tile].ink} size={18} strokeWidth={2} />
-                        ) : (
-                          <CircleCheckBig color={AURA[tile].ink} size={18} strokeWidth={2} />
-                        )}
-                      </View>
+                        </View>
+                      )}
                     </Pressable>
                   </Entrance>
                 );
@@ -1153,15 +1100,6 @@ const styles = StyleSheet.create({
     marginTop: 5,
   },
 
-  // ── The thing in hand ──
-  focusCard: {
-    backgroundColor: colors.surface,
-    borderRadius: radius.lg,
-    padding: spacing.md + 2,
-    marginTop: spacing.md,
-    borderWidth: 1,
-    borderColor: colors.border,
-  },
 
   /**
    * Nothing left to do. Green, because this is the one place on the screen
@@ -1187,41 +1125,6 @@ const styles = StyleSheet.create({
   },
   doneTitle: { fontSize: 18, ...font(700), color: colors.text, letterSpacing: -0.3 },
   doneBody: { fontSize: 13.5, ...font(500), color: colors.text, opacity: 0.7, marginTop: 2 },
-  focusHead: { flexDirection: 'row', alignItems: 'center', gap: 7, marginBottom: 8 },
-  focusDot: { width: 7, height: 7, borderRadius: 3.5 },
-  focusKicker: {
-    fontSize: 11.5,
-    ...font(700),
-    color: colors.textMuted,
-    letterSpacing: 0.6,
-    textTransform: 'uppercase',
-  },
-  focusTitle: {
-    fontSize: 22,
-    ...font(700),
-    color: colors.text,
-    letterSpacing: -0.5,
-    lineHeight: 28,
-  },
-  focusMeta: { fontSize: 13, ...font(600), color: colors.textMuted, marginTop: 4 },
-  focusActions: { flexDirection: 'row', gap: 8, marginTop: spacing.md },
-  focusPrimary: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 7,
-    backgroundColor: colors.primary,
-    borderRadius: 100,
-    paddingHorizontal: 18,
-    paddingVertical: 11,
-  },
-  focusPrimaryText: { fontSize: 14, ...font(700), color: colors.primaryText },
-  focusGhost: {
-    backgroundColor: colors.surfaceAlt,
-    borderRadius: 100,
-    paddingHorizontal: 16,
-    paddingVertical: 11,
-  },
-  focusGhostText: { fontSize: 14, ...font(600), color: colors.text },
 
 
   // ── Meetings ──

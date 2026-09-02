@@ -620,6 +620,14 @@ export default function TodayScreen() {
   const [weather, setWeather] = useState<Weather | null>(null);
   const [filter, setFilter] = useState<'left' | 'done'>('left');
   const [sheet, setSheet] = useState<'progress' | 'alerts' | null>(null);
+  /**
+   * Where the white card's top edge is, so the dark behind it can stop in
+   * exactly the same place. Measured rather than computed: everything above
+   * the card feeds into it, and a constant goes stale the first time any of
+   * that changes size.
+   */
+  const [cardTop, setCardTop] = useState<number | undefined>(undefined);
+  const [headerH, setHeaderH] = useState<number | undefined>(undefined);
 
   const today = toDateStr(new Date());
   const [selectedStr, setSelectedStr] = useState(today);
@@ -823,18 +831,29 @@ export default function TodayScreen() {
     ).navigate('Tabs', { screen: 'Calendar' });
   };
 
+  /**
+   * The seam, on the page: the greeting's height, then the card's offset
+   * inside the scroll. Undefined until both halves have reported, which
+   * leaves Screen on its computed first-frame value for one pass.
+   */
+  const bandBottom =
+    headerH !== undefined && cardTop !== undefined ? headerH + cardTop : undefined;
+
   const start = { textAlign: alignStart() } as const;
   const stripMirror = isRTL() ? [{ scaleX: -1 as number }] : undefined;
 
   const rowTile = (index: number) => AURA_CYCLE[index % AURA_CYCLE.length];
 
   return (
-    <Screen clearTabBar={false} topBand>
+    <Screen clearTabBar={false} topBand bandBottom={bandBottom}>
       <GreetingHeader
         name={`${greetingNow()}, ${name || t('today.friend')}!`}
         photoUri={PROFILE_PHOTO_URI}
         onBellPress={() => openSheet('alerts')}
         onDark
+        // The card's y is measured inside the scroll, so the greeting's own
+        // height has to be added back to place the seam on the page.
+        onLayout={(e) => setHeaderH(e.nativeEvent.layout.height)}
       />
 
       <ScrollView showsVerticalScrollIndicator={false} contentContainerStyle={styles.content}>
@@ -865,7 +884,7 @@ export default function TodayScreen() {
             surface, lifted onto the band by its two rounded top corners. It
             grows with the content rather than being a fixed height: the day's
             list is inside it, and the list is as long as the day. */}
-        <View style={styles.pageSheet}>
+        <View style={styles.pageSheet} onLayout={(e) => setCardTop(e.nativeEvent.layout.y)}>
           {/* ── Today's sky ── */}
           <Entrance delay={booted ? 30 : 300} from={18}>
             <WeatherCard weather={weather} onPress={goToCalendar} />
@@ -1055,7 +1074,9 @@ const styles = StyleSheet.create({
     marginHorizontal: -(spacing.md + 4),
     paddingHorizontal: spacing.md + 4,
     paddingTop: spacing.lg,
-    marginTop: spacing.sm,
+    // Room under the rail, so the pills sit in the dark rather than on the
+    // join, and the black reads as a band rather than a margin.
+    marginTop: spacing.lg + spacing.xs,
     // No negative bottom margin here. Under flexGrow the card is sized to the
     // free space and the margin applied after, so a negative one shrinks its
     // box and lifts the bottom edge off the floor — which is exactly the gap

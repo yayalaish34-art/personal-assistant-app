@@ -9,6 +9,7 @@ import {
   TextInputProps,
   StyleProp,
   ViewStyle,
+  ViewProps,
   TextStyle,
   Image,
 } from 'react-native';
@@ -20,21 +21,20 @@ import { isRTL } from '../lib/i18n';
 import { colors, radius, spacing, font, BAND, TAB_BAR_CLEARANCE } from '../theme';
 
 /**
- * How far the dark reaches below the safe-area inset.
+ * Where the dark ends on the very first frame, before the card has measured
+ * itself and said where its top edge really is.
  *
- * It only has to clear the top edge of the card that covers it: 180 puts that
- * edge exactly at the seam (4 + 16 of padding, the 46 greeting row, the
- * rail's 8 + 12 + 74 + 12, and the card's own 8 margin), and the overshoot to
- * 260 is hidden behind the card while leaving room for a taller rail or a
- * bigger font. It must stay far shorter than a screen: past the card's bottom
- * it would be visible, which is the thing this shape is for.
+ * The computed seam on a normal phone: 4 + 16 of padding, the 46 greeting
+ * row, the rail's 8 + 12 + 74 + 12, and the card's own 8 margin. One frame
+ * later the real number replaces it.
  */
-const BAND_DEPTH = 260;
+const BAND_DEPTH = 180;
 
 export function Screen({
   children,
   clearTabBar = true,
   topBand = false,
+  bandBottom,
 }: {
   children: ReactNode;
   // Modals (no tab bar) pass false to skip the extra bottom clearance.
@@ -57,6 +57,16 @@ export function Screen({
    * below the notch and leaves a pale band above it.
    */
   topBand?: boolean;
+  /**
+   * Where the white card's top edge sits, in dp from the top of this view.
+   *
+   * The dark is drawn to exactly this height, so the two cannot drift apart.
+   * A constant was wrong the moment anything above the card changed size: it
+   * carried 80px of overshoot that showed either side of the card — which is
+   * inside the page's padding, while the dark layer spans the full width — as
+   * a hard line across the screen.
+   */
+  bandBottom?: number;
 }) {
   const insets = useSafeAreaInsets();
 
@@ -82,9 +92,12 @@ export function Screen({
           pointerEvents="none"
           style={[
             styles.band,
-            // Past the card's top edge and no further. The inset is part of
-            // it, because the layer starts above the notch.
-            { height: Math.max(insets.top, spacing.md) + BAND_DEPTH },
+            // Exactly to the card's top edge. Until the card has measured
+            // itself, the computed seam stands in for one frame.
+            {
+              height:
+                bandBottom ?? Math.max(insets.top, spacing.md) + BAND_DEPTH,
+            },
           ]}
         />
       ) : null}
@@ -103,6 +116,7 @@ export function GreetingHeader({
   onBellPress,
   unread = true,
   onDark = false,
+  onLayout,
 }: {
   name: string;
   photoUri?: string;
@@ -110,6 +124,8 @@ export function GreetingHeader({
   unread?: boolean;
   /** Flips the row to light ink for a screen whose head is the dark band. */
   onDark?: boolean;
+  /** Reports the row's height, for a screen placing the seam under it. */
+  onLayout?: ViewProps['onLayout'];
 }) {
   const initials =
     name
@@ -120,7 +136,7 @@ export function GreetingHeader({
       .join('') || 'U';
 
   return (
-    <View style={styles.greetingRow}>
+    <View style={styles.greetingRow} onLayout={onLayout}>
       <View style={[styles.avatar, onDark && styles.avatarOnDark]}>
         <Text style={[styles.avatarInitials, onDark && styles.inkOnDark]}>{initials}</Text>
         {photoUri ? <Image source={{ uri: photoUri }} style={styles.avatarPhoto} /> : null}

@@ -19,6 +19,19 @@ import { Entrance } from './motion';
 import { isRTL } from '../lib/i18n';
 import { colors, radius, spacing, font, BAND, TAB_BAR_CLEARANCE } from '../theme';
 
+/**
+ * How much band there is below the safe-area inset: the greeting row, the
+ * rail of day pills, and the gaps around them. The sheet is what covers the
+ * bottom of it, so this only has to be deep enough to reach under the sheet's
+ * top edge — a little over is hidden behind it, a little under shows paper
+ * above the fold.
+ *
+ * Measured, not guessed: 4 + 16 padding, the 46 greeting row, the rail's
+ * 8 + 12 + 74 + 12, and the sheet's own 8 margin come to 180 below the inset.
+ * The extra 20 runs under the sheet's rounded corners.
+ */
+const BAND_BODY = 200;
+
 export function Screen({
   children,
   clearTabBar = true,
@@ -28,12 +41,18 @@ export function Screen({
   // Modals (no tab bar) pass false to skip the extra bottom clearance.
   clearTabBar?: boolean;
   /**
-   * Paints the top of the page — status bar included — in the band colour.
+   * Lays a dark strip across the top of the page, status bar included.
    *
-   * The colour has to be laid down here rather than by the screen's own
-   * content, because the safe-area inset lives on this view: anything a child
-   * draws starts below the notch, leaving a pale strip above it. The child
-   * still decides where the band ends, by opening a white sheet over it.
+   * It has to be drawn here rather than by the screen's own content, because
+   * the safe-area inset lives on this view: anything a child draws starts
+   * below the notch and leaves a pale strip above it.
+   *
+   * A strip and not the page's background. Painting the whole page dark and
+   * covering it with the content's own white sheet only works where that
+   * sheet reaches — past its last row, and inside this view's bottom padding,
+   * the dark ground showed through and the page ended on black. The strip is
+   * tall enough for a greeting and a rail of day pills, the child opens its
+   * sheet over the lower edge, and everything past that is paper.
    */
   topBand?: boolean;
 }) {
@@ -43,7 +62,6 @@ export function Screen({
     <View
       style={[
         styles.screen,
-        topBand && { backgroundColor: BAND.bg },
         {
           paddingTop: Math.max(insets.top, spacing.md) + spacing.xs,
           paddingBottom: clearTabBar ? TAB_BAR_CLEARANCE : spacing.lg,
@@ -55,6 +73,17 @@ export function Screen({
         },
       ]}
     >
+      {topBand ? (
+        <View
+          pointerEvents="none"
+          style={[
+            styles.band,
+            // Down to the pills and no further. The inset is part of it: the
+            // strip starts above the notch, so its height has to carry it.
+            { height: Math.max(insets.top, spacing.md) + BAND_BODY },
+          ]}
+        />
+      ) : null}
       {children}
     </View>
   );
@@ -195,6 +224,14 @@ const styles = StyleSheet.create({
     flex: 1,
     backgroundColor: colors.bg,
     paddingHorizontal: spacing.md + 4,
+  },
+  /** Behind the content, and out past the page's own side padding. */
+  band: {
+    position: 'absolute',
+    top: 0,
+    insetInlineStart: 0,
+    insetInlineEnd: 0,
+    backgroundColor: BAND.bg,
   },
 
   greetingRow: { flexDirection: 'row', alignItems: 'center', gap: 12 },

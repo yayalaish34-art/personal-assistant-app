@@ -123,6 +123,7 @@ export const en = {
   // Home — now / next
   'home.now': 'Now',
   'home.next': 'Next',
+  'home.tasksToday': '{{count}} tasks today',
   'home.upNext': 'Up next',
   'home.nothingNow': 'Nothing on right now',
   'home.nothingNext': 'Nothing after this',

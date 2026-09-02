@@ -300,8 +300,9 @@ function RowRing({ pct, color, delay }: { pct: number; color: string; delay: num
     }).start();
   }, [pct, delay, anim]);
 
-  const size = 50;
-  const stroke = 5;
+  // Sized to sit inside the 46px disc behind it with air to spare.
+  const size = 40;
+  const stroke = 4.5;
   const r = (size - stroke) / 2;
   const c = 2 * Math.PI * r;
 
@@ -460,57 +461,152 @@ function WeatherCard({ weather, onPress }: { weather: Weather | null; onPress: (
 
 // ── Now / next ───────────────────────────────────────────────────────────────
 
-/** The meeting happening now, with the one after it beneath in miniature. */
-function MeetingCard({
-  current,
-  next,
-  onOpen,
-}: {
-  current: AgendaItem | null;
-  next: AgendaItem | null;
-  onOpen: (item: AgendaItem) => void;
-}) {
-  const start = { textAlign: alignStart() } as const;
+/**
+ * How much of the day is behind you, as a bar that fills on arrival.
+ *
+ * Width rather than scaleX: React Native has no transform origin, so a scaled
+ * bar grows from its middle outward, which reads as a pulse rather than as
+ * progress. Width cannot ride the native driver, but this runs once.
+ */
+function PanelProgress({ pct }: { pct: number }) {
+  const anim = useRef(new Animated.Value(0)).current;
+  useEffect(() => {
+    Animated.timing(anim, {
+      toValue: pct,
+      duration: 900,
+      delay: 200,
+      easing: Easing.out(Easing.cubic),
+      useNativeDriver: false,
+    }).start();
+  }, [pct, anim]);
 
   return (
-    <View style={[styles.meetingCard, { backgroundColor: AURA.yellow.tint }]}>
+    <View style={styles.progressTrack}>
+      <Animated.View
+        style={[
+          styles.progressFillWrap,
+          {
+            width: anim.interpolate({
+              inputRange: [0, 100],
+              outputRange: ['0%', '100%'],
+            }),
+          },
+        ]}
+      >
+        <LinearGradient
+          colors={IRIDESCENT}
+          start={{ x: 0, y: 0 }}
+          end={{ x: 1, y: 0 }}
+          style={styles.progressFill}
+        />
+      </Animated.View>
+    </View>
+  );
+}
+
+/**
+ * One line of the day, as a card rather than a table row.
+ *
+ * The spring is the point: a list that answers the finger feels like something
+ * you are handling, and the old rows only dimmed. It rides the native driver,
+ * so a long day scrolls at the same speed it did.
+ */
+function TaskRow({
+  item,
+  tile,
+  status,
+  index,
+  onOpen,
+  onToggle,
+  onSnooze,
+}: {
+  item: AgendaItem;
+  tile: AuraKey;
+  status: RowStatus;
+  index: number;
+  onOpen: () => void;
+  onToggle: () => void;
+  onSnooze: () => void;
+}) {
+  const start = { textAlign: alignStart() } as const;
+  const press = useRef(new Animated.Value(0)).current;
+
+  const spring = (to: number) =>
+    Animated.spring(press, {
+      toValue: to,
+      friction: 7,
+      tension: 140,
+      useNativeDriver: true,
+    }).start();
+
+  return (
+    <Animated.View
+      style={{
+        transform: [
+          { scale: press.interpolate({ inputRange: [0, 1], outputRange: [1, 0.97] }) },
+        ],
+      }}
+    >
       <Pressable
-        onPress={() => current && onOpen(current)}
-        disabled={!current}
-        style={({ pressed }) => [styles.meetingMain, pressed && styles.pressedDim]}
+        onPress={onOpen}
+        onPressIn={() => spring(1)}
+        onPressOut={() => spring(0)}
+        style={[styles.row, { backgroundColor: AURA[tile].tint }]}
         accessibilityRole="button"
       >
-        <View style={{ flex: 1 }}>
-          <Text style={[styles.meetingKicker, start]}>{t('home.now')}</Text>
-          <Text style={[styles.meetingTitle, start]} numberOfLines={1}>
-            {current ? current.title : t('home.noMeetings')}
-          </Text>
-          {current ? (
-            <Text style={[styles.meetingTime, start]} numberOfLines={1}>
-              {to12h(current.time)}
-            </Text>
-          ) : null}
-        </View>
-        <View style={styles.meetingIcon}>
-          <CalendarClock color={AURA.yellow.ink} size={26} strokeWidth={1.8} />
-        </View>
-      </Pressable>
-
-      {/* The one after it, deliberately smaller — it is context, not the point. */}
-      {next ? (
         <Pressable
-          onPress={() => onOpen(next)}
-          style={({ pressed }) => [styles.meetingNext, pressed && styles.pressedDim]}
-          accessibilityRole="button"
+          onPress={item.kind === 'task' ? onToggle : undefined}
+          hitSlop={6}
+          style={styles.rowRingWrap}
+          accessibilityRole={item.kind === 'task' ? 'checkbox' : 'none'}
+          accessibilityState={
+            item.kind === 'task' ? { checked: Boolean(item.isDone) } : undefined
+          }
         >
-          <Text style={styles.meetingNextKicker}>{t('home.next')}</Text>
-          <Text style={[styles.meetingNextTitle, start]} numberOfLines={1}>
-            {next.title}
-          </Text>
-          <Text style={styles.meetingNextTime}>{to12h(next.time)}</Text>
+          <RowRing pct={status.pct} color={status.dot} delay={140 + index * 60} />
         </Pressable>
-      ) : null}
-    </View>
+
+        <View style={{ flex: 1 }}>
+          <Text
+            style={[styles.rowTitle, start, status.key === 'done' && styles.rowTitleDone]}
+            numberOfLines={1}
+          >
+            {item.title}
+          </Text>
+          <View style={styles.rowMeta}>
+            <View style={[styles.statusDot, { backgroundColor: status.dot }]} />
+            <Text
+              style={[
+                styles.rowMetaText,
+                status.key === 'overdue' && { color: colors.danger },
+              ]}
+            >
+              {t(`today.status.${status.key}`)}
+            </Text>
+            {item.time ? <Text style={styles.rowMetaText}> · {to12h(item.time)}</Text> : null}
+          </View>
+        </View>
+
+        {/* On a task this pushes it to tomorrow; on an event it stays a mark
+            saying which of the two kinds this row is. White either way, so it
+            reads as a control sitting on the tint rather than part of it. */}
+        {item.kind === 'task' ? (
+          <Pressable
+            onPress={onSnooze}
+            hitSlop={6}
+            style={({ pressed }) => [styles.rowIcon, pressed && styles.pressedDim]}
+            accessibilityRole="button"
+            accessibilityLabel={t('home.snooze')}
+          >
+            <CalendarArrowDown color={AURA[tile].ink} size={18} strokeWidth={2} />
+          </Pressable>
+        ) : (
+          <View style={styles.rowIcon}>
+            <CalendarDays color={AURA[tile].ink} size={18} strokeWidth={2} />
+          </View>
+        )}
+      </Pressable>
+    </Animated.View>
   );
 }
 
@@ -601,7 +697,6 @@ export default function TodayScreen() {
   }, [centerPill]);
 
   const now = new Date();
-  const selDate = useMemo(() => new Date(`${selectedStr}T12:00:00`), [selectedStr]);
   const viewingToday = selectedStr === today;
 
   const stats = useMemo(() => {
@@ -730,10 +825,6 @@ export default function TodayScreen() {
   const start = { textAlign: alignStart() } as const;
   const stripMirror = isRTL() ? [{ scaleX: -1 as number }] : undefined;
 
-  const dayWord = viewingToday
-    ? t('calendar.today')
-    : selDate.toLocaleDateString(locale(), { weekday: 'long' });
-
   const rowTile = (index: number) => AURA_CYCLE[index % AURA_CYCLE.length];
 
   return (
@@ -789,78 +880,49 @@ export default function TodayScreen() {
           )}
         </Entrance>
 
-        {/* ── The meeting on now, with the next one under it ── */}
-        <Entrance key={`meet-${selectedStr}`} delay={booted ? 110 : 410} from={18}>
-          <MeetingCard current={meetings.current} next={meetings.next} onOpen={openItem} />
-        </Entrance>
-
-        {/* ── The pastel tiles: how the chosen day is shaped ── */}
-        <Entrance key={`tiles-${selectedStr}`} delay={booted ? 150 : 450} from={18}>
-          <View style={styles.gridRow}>
+        {/* ── What is on now, and how much the day holds ──
+            One band where there were two: a rectangle two squares wide for the
+            thing happening, and a square beside it for the count. */}
+        <Entrance key={`top-${selectedStr}`} delay={booted ? 110 : 410} from={18}>
+          <View style={styles.topRow}>
             <Pressable
-              onPress={goToCalendar}
+              onPress={() => (meetings.current ? openItem(meetings.current) : goToCalendar())}
               style={({ pressed }) => [
-                styles.gridTile,
-                { backgroundColor: AURA.green.tint },
-                pressed && styles.pressedDim,
-              ]}
-              accessibilityRole="button"
-              accessibilityLabel={`${stats.tasks} ${t('today.tile.tasks')}`}
-            >
-              <Text style={[styles.gridNumber, start]}>{stats.tasks}</Text>
-              <Text style={[styles.gridLabelPrimary, start]} numberOfLines={1}>
-                {t('today.tile.tasks')}
-              </Text>
-              <Text style={[styles.gridLabelSecondary, start]} numberOfLines={1}>
-                {dayWord}
-              </Text>
-            </Pressable>
-
-            <Pressable
-              onPress={goToCalendar}
-              style={({ pressed }) => [
-                styles.gridTile,
-                { backgroundColor: AURA.blue.tint },
-                pressed && styles.pressedDim,
-              ]}
-              accessibilityRole="button"
-              accessibilityLabel={`${stats.events} ${t('today.tile.events')}`}
-            >
-              <View style={styles.gridTileTop}>
-                <Text style={[styles.gridNumber, start]}>{stats.events}</Text>
-                <CalendarDays color={AURA.blue.ink} size={22} strokeWidth={1.8} />
-              </View>
-              <Text style={[styles.gridLabelPrimary, start]} numberOfLines={1}>
-                {t('today.tile.events')}
-              </Text>
-              <Text style={[styles.gridLabelSecondary, start]} numberOfLines={1}>
-                {dayWord}
-              </Text>
-            </Pressable>
-
-            {/* What is queued behind the task in hand. A tile rather than a
-                list: the card above already shows one task in full, and a
-                second list under it was two of the same thing. Tapping opens
-                whichever is next. */}
-            <Pressable
-              onPress={() => (focus.queue[0] ? openItem(focus.queue[0]) : goToCalendar())}
-              style={({ pressed }) => [
-                styles.gridTile,
+                styles.nowWide,
                 { backgroundColor: AURA.yellow.tint },
                 pressed && styles.pressedDim,
               ]}
               accessibilityRole="button"
-              accessibilityLabel={`${focus.queue.length} ${t('home.upNext')}`}
             >
-              <View style={styles.gridTileTop}>
-                <Text style={[styles.gridNumber, start]}>{focus.queue.length}</Text>
-                <ChevronsRight color={AURA.yellow.ink} size={22} strokeWidth={1.8} />
+              <View style={styles.nowTop}>
+                <Text style={styles.nowKicker}>{t('home.now')}</Text>
+                <CalendarClock color={AURA.yellow.ink} size={18} strokeWidth={2} />
               </View>
-              <Text style={[styles.gridLabelPrimary, start]} numberOfLines={1}>
-                {t('home.upNext')}
+              <Text style={[styles.nowTitle, start]} numberOfLines={2}>
+                {meetings.current ? meetings.current.title : t('home.nothingNow')}
               </Text>
-              <Text style={[styles.gridLabelSecondary, start]} numberOfLines={1}>
-                {focus.queue[0] ? focus.queue[0].title : t('home.nothingNext')}
+              {meetings.current ? (
+                <Text style={[styles.nowMeta, start]} numberOfLines={1}>
+                  {to12h(meetings.current.time)}
+                  {meetings.next ? `  ·  ${t('home.next')} ${to12h(meetings.next.time)}` : ''}
+                </Text>
+              ) : null}
+            </Pressable>
+
+            <Pressable
+              onPress={goToCalendar}
+              style={({ pressed }) => [
+                styles.countTile,
+                { backgroundColor: AURA.blue.tint },
+                pressed && styles.pressedDim,
+              ]}
+              accessibilityRole="button"
+              accessibilityLabel={t('home.tasksToday', { count: stats.tasks })}
+            >
+              <Text style={styles.countEmoji}>📅</Text>
+              <Text style={styles.countNum}>{stats.tasks}</Text>
+              <Text style={[styles.countLabel, start]} numberOfLines={2}>
+                {t('home.tasksToday', { count: stats.tasks })}
               </Text>
             </Pressable>
           </View>
@@ -879,93 +941,32 @@ export default function TodayScreen() {
               <SegToggle value={filter} onChange={setFilter} />
             </View>
 
+            <PanelProgress pct={stats.pct} />
+
             {visible.length === 0 ? (
               <View style={styles.empty}>
                 <Text style={styles.emptyTitle}>{t('today.empty.title')}</Text>
                 <Text style={styles.emptyBody}>{t('today.empty.body')}</Text>
               </View>
             ) : (
-              visible.map((item, index) => {
-                const st = rowStatus(item, now);
-                const tile = rowTile(index);
-                return (
-                  <Entrance
-                    // Rows re-stagger when the day or the filter changes: the
-                    // key remounts them, and mounting is what animates.
-                    key={`${selectedStr}-${filter}-${item.kind}-${item.id}`}
-                    delay={80 + index * 60}
-                  >
-                    <Pressable
-                      onPress={() =>
-                        navigation.navigate('EntryForm', { kind: item.kind, id: item.id })
-                      }
-                      style={({ pressed }) => [styles.row, pressed && styles.pressedDim]}
-                      accessibilityRole="button"
-                    >
-                      <Pressable
-                        onPress={item.kind === 'task' ? () => toggleDone(item) : undefined}
-                        hitSlop={6}
-                        accessibilityRole={item.kind === 'task' ? 'checkbox' : 'none'}
-                        accessibilityState={
-                          item.kind === 'task' ? { checked: Boolean(item.isDone) } : undefined
-                        }
-                      >
-                        <RowRing pct={st.pct} color={st.dot} delay={140 + index * 60} />
-                      </Pressable>
-
-                      <View style={{ flex: 1 }}>
-                        <Text
-                          style={[styles.rowTitle, start, st.key === 'done' && styles.rowTitleDone]}
-                          numberOfLines={1}
-                        >
-                          {item.title}
-                        </Text>
-                        <View style={styles.rowMeta}>
-                          <View style={[styles.statusDot, { backgroundColor: st.dot }]} />
-                          <Text
-                            style={[
-                              styles.rowMetaText,
-                              st.key === 'overdue' && { color: colors.danger },
-                            ]}
-                          >
-                            {t(`today.status.${st.key}`)}
-                          </Text>
-                          {item.time ? (
-                            <Text style={styles.rowMetaText}> · {to12h(item.time)}</Text>
-                          ) : null}
-                        </View>
-                      </View>
-
-                      {/* On a task this is the button that pushes it to
-                          tomorrow; on an event it stays what it was, a mark
-                          saying which of the two kinds this row is. */}
-                      {item.kind === 'task' ? (
-                        <Pressable
-                          onPress={() => snooze(item)}
-                          hitSlop={6}
-                          style={({ pressed }) => [
-                            styles.rowIcon,
-                            { backgroundColor: AURA[tile].tint },
-                            pressed && styles.pressedDim,
-                          ]}
-                          accessibilityRole="button"
-                          accessibilityLabel={t('home.snooze')}
-                        >
-                          <CalendarArrowDown
-                            color={AURA[tile].ink}
-                            size={18}
-                            strokeWidth={2}
-                          />
-                        </Pressable>
-                      ) : (
-                        <View style={[styles.rowIcon, { backgroundColor: AURA[tile].tint }]}>
-                          <CalendarDays color={AURA[tile].ink} size={18} strokeWidth={2} />
-                        </View>
-                      )}
-                    </Pressable>
-                  </Entrance>
-                );
-              })
+              visible.map((item, index) => (
+                <Entrance
+                  // Rows re-stagger when the day or the filter changes: the
+                  // key remounts them, and mounting is what animates.
+                  key={`${selectedStr}-${filter}-${item.kind}-${item.id}`}
+                  delay={80 + index * 60}
+                >
+                  <TaskRow
+                    item={item}
+                    tile={rowTile(index)}
+                    status={rowStatus(item, now)}
+                    index={index}
+                    onOpen={() => openItem(item)}
+                    onToggle={() => toggleDone(item)}
+                    onSnooze={() => snooze(item)}
+                  />
+                </Entrance>
+              ))
             )}
           </View>
         </Entrance>
@@ -1127,77 +1128,61 @@ const styles = StyleSheet.create({
   doneBody: { fontSize: 13.5, ...font(500), color: colors.text, opacity: 0.7, marginTop: 2 },
 
 
-  // ── Meetings ──
-  meetingCard: { borderRadius: radius.lg, marginTop: 10, overflow: 'hidden' },
-  meetingMain: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 12,
-    padding: spacing.md + 2,
-  },
-  meetingKicker: {
-    fontSize: 11.5,
-    ...font(700),
-    color: colors.text,
-    opacity: 0.55,
-    letterSpacing: 0.6,
-    textTransform: 'uppercase',
-  },
-  meetingTitle: {
-    fontSize: 19,
-    ...font(700),
-    color: colors.text,
-    letterSpacing: -0.4,
-    marginTop: 3,
-  },
-  meetingTime: { fontSize: 14, ...font(600), color: colors.text, opacity: 0.7, marginTop: 2 },
-  meetingIcon: {
-    width: 50,
-    height: 50,
-    borderRadius: radius.md,
-    backgroundColor: colors.surface,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
   /** Smaller on purpose: the next meeting is context, not the headline. */
-  meetingNext: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 10,
-    paddingHorizontal: spacing.md + 2,
-    paddingVertical: 11,
-    backgroundColor: 'rgba(255,255,255,0.55)',
-  },
-  meetingNextKicker: {
-    fontSize: 10.5,
-    ...font(700),
-    color: colors.textMuted,
-    letterSpacing: 0.5,
-    textTransform: 'uppercase',
-  },
-  meetingNextTitle: { flex: 1, fontSize: 14, ...font(600), color: colors.text },
-  meetingNextTime: { fontSize: 12.5, ...font(700), color: colors.textMuted },
 
-  // ── Pastel tiles ──
-  gridRow: { flexDirection: 'row', gap: 8, marginTop: spacing.sm },
-  // Three across now, so the padding and the type step down a little —
-  // at the two-tile sizes the third tile's title clipped after one word.
-  gridTile: { flex: 1, minHeight: 104, borderRadius: radius.md, padding: 12 },
-  gridTileTop: {
-    flexDirection: 'row',
-    alignItems: 'center',
+
+
+  // ── What is on now, beside the day's count ──
+  topRow: { flexDirection: 'row', gap: 10, marginTop: spacing.md },
+  /** Two squares wide, so the title has room to be a sentence. */
+  nowWide: {
+    flex: 2,
+    minHeight: 112,
+    borderRadius: radius.md,
+    padding: 14,
     justifyContent: 'space-between',
   },
-  gridNumber: { fontSize: 26, ...font(700), color: colors.text, letterSpacing: -0.5 },
-  gridLabelPrimary: { fontSize: 13, ...font(600), color: colors.text, marginTop: 6 },
-  gridLabelSecondary: {
-    fontSize: 13,
-    ...font(500),
+  nowTop: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' },
+  nowKicker: {
+    fontSize: 11,
+    ...font(700),
     color: colors.text,
     opacity: 0.55,
+    letterSpacing: 0.7,
+    textTransform: 'uppercase',
+  },
+  nowTitle: {
+    fontSize: 17,
+    ...font(700),
+    color: colors.text,
+    letterSpacing: -0.3,
+    lineHeight: 22,
+    marginTop: 6,
+  },
+  nowMeta: { fontSize: 12.5, ...font(600), color: colors.text, opacity: 0.65, marginTop: 4 },
+
+  countTile: {
+    flex: 1,
+    minHeight: 112,
+    borderRadius: radius.md,
+    padding: 14,
+    justifyContent: 'center',
+  },
+  countEmoji: { fontSize: 22 },
+  countNum: {
+    fontSize: 30,
+    ...font(700),
+    color: colors.text,
+    letterSpacing: -0.6,
+    marginTop: 4,
+  },
+  countLabel: {
+    fontSize: 12,
+    ...font(600),
+    color: colors.text,
+    opacity: 0.65,
     marginTop: 1,
   },
-
 
   // ── The sheet the day sits on ──
   panelWrap: {
@@ -1253,25 +1238,46 @@ const styles = StyleSheet.create({
   row: {
     flexDirection: 'row',
     alignItems: 'center',
-    gap: 13,
-    paddingVertical: 11,
-    borderBottomWidth: 1,
-    borderBottomColor: colors.border,
+    gap: 12,
+    padding: 12,
+    borderRadius: radius.md,
+    marginBottom: 8,
   },
-  rowRing: { width: 50, height: 50, alignItems: 'center', justifyContent: 'center' },
-  rowRingText: { fontSize: 11, ...font(700) },
+  /** A white disc under the ring, so it reads on the tint behind it. */
+  rowRingWrap: {
+    width: 46,
+    height: 46,
+    borderRadius: 23,
+    backgroundColor: colors.surface,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  rowRing: { width: 40, height: 40, alignItems: 'center', justifyContent: 'center' },
+  rowRingText: { fontSize: 10, ...font(700) },
   rowTitle: { fontSize: 16, ...font(700), color: colors.text },
   rowTitleDone: { textDecorationLine: 'line-through', opacity: 0.55 },
   rowMeta: { flexDirection: 'row', alignItems: 'center', gap: 5, marginTop: 3 },
   statusDot: { width: 6, height: 6, borderRadius: 3 },
   rowMetaText: { fontSize: 12.5, ...font(600), color: colors.textMuted },
   rowIcon: {
-    width: 40,
-    height: 40,
+    width: 38,
+    height: 38,
     borderRadius: 13,
+    backgroundColor: colors.surface,
     alignItems: 'center',
     justifyContent: 'center',
   },
+
+  // ── The header's progress bar ──
+  progressTrack: {
+    height: 8,
+    borderRadius: 4,
+    backgroundColor: colors.surfaceAlt,
+    overflow: 'hidden',
+    marginBottom: spacing.md,
+  },
+  progressFillWrap: { height: '100%' },
+  progressFill: { flex: 1, borderRadius: 4 },
 
   empty: { alignItems: 'center', paddingVertical: spacing.xl, gap: 6 },
   emptyTitle: { fontSize: 17, ...font(700), color: colors.text },

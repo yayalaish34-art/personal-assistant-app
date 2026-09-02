@@ -117,6 +117,7 @@ export const he: Dict = {
   // Home — now / next
   'home.now': 'עכשיו',
   'home.next': 'הבא',
+  'home.tasksToday': '{{count}} משימות היום',
   'home.upNext': 'בהמשך',
   'home.nothingNow': 'כרגע שום דבר',
   'home.nothingNext': 'אין משימה אחרי זו',

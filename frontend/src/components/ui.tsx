@@ -31,13 +31,18 @@ import { colors, radius, spacing, font, BAND, TAB_BAR_CLEARANCE } from '../theme
 const BAND_DEPTH = 180;
 
 /**
- * How far the dark carries on below the card's top edge.
+ * The radius the dark's own bottom edge curves through.
  *
- * It has to be at least the card's corner radius, or the corners curve into
- * nothing and the join flattens back into a line. Comfortably over it: every
- * pixel past the radius is behind opaque white and cannot be seen.
+ * The band ends in a curve rather than being cut off by the card over it. The
+ * card supplied the only curve before, and the dark behind it still stopped in
+ * a straight line — so the join read as a rounded card sitting on a black bar,
+ * with the bar's hard edge showing either side of it a corner's depth below.
+ * Curving the dark itself means there is no straight edge anywhere to see.
+ *
+ * Kept equal to the card's own radius, so the two arcs sit on top of each
+ * other and read as one edge.
  */
-const BAND_CORNER_BLEED = 48;
+const BAND_RADIUS = 44;
 
 export function Screen({
   children,
@@ -101,21 +106,17 @@ export function Screen({
           pointerEvents="none"
           style={[
             styles.band,
-            // Past the seam by the card's corner radius, not level with it.
+            // The dark ends level with the card's top edge, and curves through
+            // the same radius the card does.
             //
-            // Ending exactly at the card's top edge leaves the rounded
-            // corners nothing to cut into: the dark stops in a straight line
-            // across the full width and the curve has no ground to show
-            // against, so the join reads as a rule. Carried down behind the
-            // card, the only dark still visible is the two slivers outside
-            // the corners — which is the curve.
-            //
-            // The card is opaque and spans the full width below the seam, so
-            // the overhang cannot show anywhere else.
+            // The bleed that used to carry it 48px lower is gone. Behind the
+            // card that overhang is invisible, but the card only spans the
+            // scroll's own content — so either side of it the overhang had
+            // nothing over it and showed as a hard black rule across the page,
+            // a corner's depth below the curve. Now the only edge the dark has
+            // is a curved one.
             {
-              height:
-                (bandBottom ?? Math.max(insets.top, spacing.md) + BAND_DEPTH) +
-                BAND_CORNER_BLEED,
+              height: bandBottom ?? Math.max(insets.top, spacing.md) + BAND_DEPTH,
             },
           ]}
         />
@@ -280,6 +281,10 @@ const styles = StyleSheet.create({
     insetInlineStart: 0,
     insetInlineEnd: 0,
     backgroundColor: BAND.bg,
+    // Its own curve, so the seam is a curve whether or not the card above it
+    // happens to be covering that stretch of the page.
+    borderBottomStartRadius: BAND_RADIUS,
+    borderBottomEndRadius: BAND_RADIUS,
   },
 
   greetingRow: { flexDirection: 'row', alignItems: 'center', gap: 12 },

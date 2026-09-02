@@ -625,9 +625,27 @@ export default function TodayScreen() {
    * exactly the same place. Measured rather than computed: everything above
    * the card feeds into it, and a constant goes stale the first time any of
    * that changes size.
+   *
+   * Measured against the window, not against the card's own parent. Adding the
+   * greeting's height to the card's offset inside the scroll misses everything
+   * between the two — the scroll's own padding, for one — and the dark then
+   * stopped 20px short of the card with the page's white showing through the
+   * gap as a bar. `measureInWindow` is the one number that cannot drift,
+   * because it is the same origin the band is positioned from.
    */
   const [cardTop, setCardTop] = useState<number | undefined>(undefined);
-  const [headerH, setHeaderH] = useState<number | undefined>(undefined);
+  const cardRef = useRef<View>(null);
+  /** Re-measures the seam once layout has settled. */
+  const measureSeam = useCallback(() => {
+    cardRef.current?.measureInWindow((_x, y) => {
+      // Rounded: a fractional height leaves a hairline of page showing between
+      // the dark and the card on a fractional-DPR screen.
+      setCardTop((prev) => {
+        const next = Math.ceil(y);
+        return prev !== undefined && Math.abs(prev - next) < 1 ? prev : next;
+      });
+    });
+  }, []);
 
   const today = toDateStr(new Date());
   const [selectedStr, setSelectedStr] = useState(today);
@@ -836,8 +854,7 @@ export default function TodayScreen() {
    * inside the scroll. Undefined until both halves have reported, which
    * leaves Screen on its computed first-frame value for one pass.
    */
-  const bandBottom =
-    headerH !== undefined && cardTop !== undefined ? headerH + cardTop : undefined;
+  const bandBottom = cardTop;
 
   const start = { textAlign: alignStart() } as const;
   const stripMirror = isRTL() ? [{ scaleX: -1 as number }] : undefined;
@@ -851,9 +868,8 @@ export default function TodayScreen() {
         photoUri={PROFILE_PHOTO_URI}
         onBellPress={() => openSheet('alerts')}
         onDark
-        // The card's y is measured inside the scroll, so the greeting's own
-        // height has to be added back to place the seam on the page.
-        onLayout={(e) => setHeaderH(e.nativeEvent.layout.height)}
+        // The greeting sits above the card, so its height moves the seam.
+        onLayout={measureSeam}
       />
 
       <ScrollView showsVerticalScrollIndicator={false} contentContainerStyle={styles.content}>
@@ -884,7 +900,7 @@ export default function TodayScreen() {
             surface, lifted onto the band by its two rounded top corners. It
             grows with the content rather than being a fixed height: the day's
             list is inside it, and the list is as long as the day. */}
-        <View style={styles.pageSheet} onLayout={(e) => setCardTop(e.nativeEvent.layout.y)}>
+        <View ref={cardRef} style={styles.pageSheet} onLayout={measureSeam}>
           {/* ── Today's sky ── */}
           <Entrance delay={booted ? 30 : 300} from={18}>
             <WeatherCard weather={weather} onPress={goToCalendar} />
@@ -1076,8 +1092,13 @@ const styles = StyleSheet.create({
     paddingTop: spacing.lg,
     // Room under the rail, so the pills sit well inside the dark rather than
     // balanced on the join, and the black reads as a band rather than a
-    // margin above the content.
-    marginTop: spacing.xl + spacing.md,
+    // margin above the content. Deep enough that the dark is the top third of
+    // the screen and clearly the thing the greeting and the week sit *on*.
+    //
+    // The dark follows this: the band is drawn to the card's measured top, so
+    // the gap this opens is filled with black rather than showing as a strip
+    // of page between the two.
+    marginTop: spacing.xl * 3,
     // No negative bottom margin here. Under flexGrow the card is sized to the
     // free space and the margin applied after, so a negative one shrinks its
     // box and lifts the bottom edge off the floor — which is exactly the gap

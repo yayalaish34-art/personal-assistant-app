@@ -30,6 +30,15 @@ import { colors, radius, spacing, font, BAND, TAB_BAR_CLEARANCE } from '../theme
  */
 const BAND_DEPTH = 180;
 
+/**
+ * How far the dark carries on below the card's top edge.
+ *
+ * It has to be at least the card's corner radius, or the corners curve into
+ * nothing and the join flattens back into a line. Comfortably over it: every
+ * pixel past the radius is behind opaque white and cannot be seen.
+ */
+const BAND_CORNER_BLEED = 48;
+
 export function Screen({
   children,
   clearTabBar = true,
@@ -92,11 +101,21 @@ export function Screen({
           pointerEvents="none"
           style={[
             styles.band,
-            // Exactly to the card's top edge. Until the card has measured
-            // itself, the computed seam stands in for one frame.
+            // Past the seam by the card's corner radius, not level with it.
+            //
+            // Ending exactly at the card's top edge leaves the rounded
+            // corners nothing to cut into: the dark stops in a straight line
+            // across the full width and the curve has no ground to show
+            // against, so the join reads as a rule. Carried down behind the
+            // card, the only dark still visible is the two slivers outside
+            // the corners — which is the curve.
+            //
+            // The card is opaque and spans the full width below the seam, so
+            // the overhang cannot show anywhere else.
             {
               height:
-                bandBottom ?? Math.max(insets.top, spacing.md) + BAND_DEPTH,
+                (bandBottom ?? Math.max(insets.top, spacing.md) + BAND_DEPTH) +
+                BAND_CORNER_BLEED,
             },
           ]}
         />

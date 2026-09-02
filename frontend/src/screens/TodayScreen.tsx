@@ -1067,16 +1067,17 @@ const styles = StyleSheet.create({
     backgroundColor: colors.surface,
     // Only the top two. The bottom corners stay square and follow the
     // viewport, so the curve happens once, where the black meets the white.
-    borderTopStartRadius: 36,
-    borderTopEndRadius: 36,
+    borderTopStartRadius: 44,
+    borderTopEndRadius: 44,
     // Out to the screen edges: Screen pads the page, so the card has to undo
     // that padding to reach them, then put it back inside itself.
     marginHorizontal: -(spacing.md + 4),
     paddingHorizontal: spacing.md + 4,
     paddingTop: spacing.lg,
-    // Room under the rail, so the pills sit in the dark rather than on the
-    // join, and the black reads as a band rather than a margin.
-    marginTop: spacing.lg + spacing.xs,
+    // Room under the rail, so the pills sit well inside the dark rather than
+    // balanced on the join, and the black reads as a band rather than a
+    // margin above the content.
+    marginTop: spacing.xl + spacing.md,
     // No negative bottom margin here. Under flexGrow the card is sized to the
     // free space and the margin applied after, so a negative one shrinks its
     // box and lifts the bottom edge off the floor — which is exactly the gap

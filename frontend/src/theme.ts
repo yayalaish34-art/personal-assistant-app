@@ -114,6 +114,27 @@ export const AURA = {
 
 export type AuraKey = keyof typeof AURA;
 
+/**
+ * The band the day is chosen on.
+ *
+ * Home opens on a dark head — the greeting and the week rail — and the rest of
+ * the screen is a white sheet that starts under it with its top corners
+ * rounded, so the page reads as one card lifted onto a darker ground rather
+ * than a stack of loose blocks.
+ *
+ * `ink` is white; `sub` and `line` are the two steps down from it that the
+ * weekday letters and the pill outlines use. They are alphas rather than fixed
+ * greys so the same three work if the band's colour is ever changed.
+ */
+export const BAND = {
+  bg: '#14150F',
+  ink: '#FFFFFF',
+  /** Weekday letters, and any second line on the band. */
+  sub: 'rgba(255, 255, 255, 0.62)',
+  /** The outline on an unchosen day, and the chrome buttons' fill. */
+  line: 'rgba(255, 255, 255, 0.14)',
+} as const;
+
 /** Rows and chips cycle through the gradient's stops, in its own order. */
 export const AURA_CYCLE: AuraKey[] = ['green', 'blue', 'yellow'];
 

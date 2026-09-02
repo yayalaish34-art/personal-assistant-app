@@ -43,14 +43,7 @@ import { Screen, GreetingHeader } from '../components/ui';
 import { Entrance, useFloat } from '../components/motion';
 import { api } from '../lib/api';
 import { storage } from '../lib/storage';
-import {
-  statusOf,
-  to12h,
-  toDateStr,
-  eventToItem,
-  taskToItem,
-  type AgendaItem,
-} from '../lib/tasks';
+import { statusOf, to12h, toDateStr, eventToItem, taskToItem, type AgendaItem } from '../lib/tasks';
 import type { RootStackParamList } from '../navigation';
 import {
   colors,
@@ -60,6 +53,7 @@ import {
   AURA,
   AURA_CYCLE,
   IRIDESCENT,
+  BAND,
   TAB_BAR_CLEARANCE,
   type AuraKey,
 } from '../theme';
@@ -170,8 +164,18 @@ function DayPill({
         <Animated.View
           style={{
             transform: [
-              { translateY: sel.interpolate({ inputRange: [0, 1], outputRange: [0, -7] }) },
-              { scale: sel.interpolate({ inputRange: [0, 1], outputRange: [1, 1.12] }) },
+              {
+                translateY: sel.interpolate({
+                  inputRange: [0, 1],
+                  outputRange: [0, -7],
+                }),
+              },
+              {
+                scale: sel.interpolate({
+                  inputRange: [0, 1],
+                  outputRange: [1, 1.12],
+                }),
+              },
             ],
           }}
         >
@@ -180,9 +184,17 @@ function DayPill({
             style={[
               styles.pillBloom,
               {
-                opacity: bloom.interpolate({ inputRange: [0, 1], outputRange: [0.55, 0] }),
+                opacity: bloom.interpolate({
+                  inputRange: [0, 1],
+                  outputRange: [0.55, 0],
+                }),
                 transform: [
-                  { scale: bloom.interpolate({ inputRange: [0, 1], outputRange: [1, 1.65] }) },
+                  {
+                    scale: bloom.interpolate({
+                      inputRange: [0, 1],
+                      outputRange: [1, 1.65],
+                    }),
+                  },
                 ],
               },
             ]}
@@ -196,7 +208,9 @@ function DayPill({
                 style={{ flex: 1 }}
               />
             </Animated.View>
-            <Text style={styles.pillDay}>{date.getDate()}</Text>
+            <Text style={[styles.pillDay, selected && styles.pillDaySelected]}>
+              {date.getDate()}
+            </Text>
             <Text style={[styles.pillWd, selected && styles.pillWdSelected]} numberOfLines={1}>
               {date.toLocaleDateString(locale(), { weekday: 'short' })}
             </Text>
@@ -279,7 +293,11 @@ function SegToggle({
 
 // ── Task rows ───────────────────────────────────────────────────────────────
 
-type RowStatus = { key: 'done' | 'inprogress' | 'overdue' | 'scheduled'; dot: string; pct: number };
+type RowStatus = {
+  key: 'done' | 'inprogress' | 'overdue' | 'scheduled';
+  dot: string;
+  pct: number;
+};
 
 /** What the small ring and the status line say about one row. */
 function rowStatus(item: AgendaItem, now: Date): RowStatus {
@@ -338,7 +356,10 @@ function RowRing({ pct, color, delay }: { pct: number; color: string; delay: num
             strokeLinecap="round"
             fill="none"
             strokeDasharray={`${c} ${c}`}
-            strokeDashoffset={anim.interpolate({ inputRange: [0, 100], outputRange: [c, 0] })}
+            strokeDashoffset={anim.interpolate({
+              inputRange: [0, 100],
+              outputRange: [c, 0],
+            })}
             transform={`rotate(-90 ${size / 2} ${size / 2})`}
           />
         ) : null}
@@ -402,7 +423,9 @@ function SheetStat({
     <View
       style={[
         styles.sheetStat,
-        { backgroundColor: tile === 'neutral' ? colors.surfaceAlt : AURA[tile].tint },
+        {
+          backgroundColor: tile === 'neutral' ? colors.surfaceAlt : AURA[tile].tint,
+        },
       ]}
     >
       <Text style={[styles.sheetStatLabel, { textAlign: alignStart() }]} numberOfLines={1}>
@@ -504,9 +527,7 @@ function WeatherCard({ weather, onPress }: { weather: Weather | null; onPress: (
         <Text style={[styles.weatherPlace, start]} numberOfLines={1}>
           {weather?.place ?? t('today.tile.today')}
         </Text>
-        <Text style={[styles.weatherTemp, start]}>
-          {weather ? `${weather.temperature}°` : '—'}
-        </Text>
+        <Text style={[styles.weatherTemp, start]}>{weather ? `${weather.temperature}°` : '—'}</Text>
         <Text style={[styles.weatherDesc, { color: skin.ink }, start]} numberOfLines={1}>
           {weather ? t(`sky.${weather.sky}`) : ''}
         </Text>
@@ -610,7 +631,12 @@ function TaskRow({
     <Animated.View
       style={{
         transform: [
-          { scale: press.interpolate({ inputRange: [0, 1], outputRange: [1, 0.97] }) },
+          {
+            scale: press.interpolate({
+              inputRange: [0, 1],
+              outputRange: [1, 0.97],
+            }),
+          },
         ],
       }}
     >
@@ -626,9 +652,7 @@ function TaskRow({
           hitSlop={6}
           style={styles.rowRingWrap}
           accessibilityRole={item.kind === 'task' ? 'checkbox' : 'none'}
-          accessibilityState={
-            item.kind === 'task' ? { checked: Boolean(item.isDone) } : undefined
-          }
+          accessibilityState={item.kind === 'task' ? { checked: Boolean(item.isDone) } : undefined}
         >
           <RowRing pct={status.pct} color={status.dot} delay={140 + index * 60} />
         </Pressable>
@@ -643,10 +667,7 @@ function TaskRow({
           <View style={styles.rowMeta}>
             <View style={[styles.statusDot, { backgroundColor: status.dot }]} />
             <Text
-              style={[
-                styles.rowMetaText,
-                status.key === 'overdue' && { color: colors.danger },
-              ]}
+              style={[styles.rowMetaText, status.key === 'overdue' && { color: colors.danger }]}
             >
               {t(`today.status.${status.key}`)}
             </Text>
@@ -814,9 +835,10 @@ export default function TodayScreen() {
     const timed = items
       .filter((i) => i.kind === 'event' && i.time)
       .sort((a, b) => a.time.localeCompare(b.time));
-    const nowTime = `${String(now.getHours()).padStart(2, '0')}:${String(
-      now.getMinutes(),
-    ).padStart(2, '0')}`;
+    const nowTime = `${String(now.getHours()).padStart(2, '0')}:${String(now.getMinutes()).padStart(
+      2,
+      '0',
+    )}`;
     const running = timed.find((i) => statusOf(i, now) === 'inprogress') ?? null;
     const ahead = timed.filter((i) => i.time >= nowTime);
     // Viewing another day has no "now", so the first two of that day stand in.
@@ -846,7 +868,10 @@ export default function TodayScreen() {
       prev.map((r) => (r.kind === 'task' && r.id === item.id ? { ...r, isDone: next } : r)),
     );
     api
-      .updateTask(item.id, { isDone: next, updatedAt: new Date().toISOString() })
+      .updateTask(item.id, {
+        isDone: next,
+        updatedAt: new Date().toISOString(),
+      })
       .catch(() => void refresh());
   };
 
@@ -914,11 +939,12 @@ export default function TodayScreen() {
   const rowTile = (index: number) => AURA_CYCLE[index % AURA_CYCLE.length];
 
   return (
-    <Screen clearTabBar={false}>
+    <Screen clearTabBar={false} topBand>
       <GreetingHeader
         name={`${greetingNow()}, ${name || t('today.friend')}!`}
         photoUri={PROFILE_PHOTO_URI}
         onBellPress={() => openSheet('alerts')}
+        onDark
       />
 
       <ScrollView
@@ -948,163 +974,175 @@ export default function TodayScreen() {
           ))}
         </ScrollView>
 
-        {/* ── Today's sky ── */}
-        <Entrance delay={booted ? 30 : 300} from={18}>
-          <WeatherCard weather={weather} onPress={goToCalendar} />
-        </Entrance>
+        {/* ── The sheet ──
+            Everything that is not the greeting or the week lives on one white
+            surface, lifted onto the band by its two rounded top corners. It
+            has to grow with the content rather than being a fixed height: the
+            day's list is inside it, and the list is as long as the day. */}
+        <View style={styles.pageSheet}>
+          {/* ── Today's sky ── */}
+          <Entrance delay={booted ? 30 : 300} from={18}>
+            <WeatherCard weather={weather} onPress={goToCalendar} />
+          </Entrance>
 
-        {/* ── Nothing left to do ──
+          {/* ── Nothing left to do ──
             Only shown when the day is clear. What used to sit here otherwise
             was a third copy of a task that is already in the list below. */}
-        <Entrance key={`focus-${selectedStr}`} delay={booted ? 70 : 360} from={20}>
-          {focus.head ? null : (
-            <View style={styles.doneCard}>
-              <View style={styles.doneBadge}>
-                <CircleCheckBig color={AURA.green.ink} size={22} strokeWidth={2.2} />
+          <Entrance key={`focus-${selectedStr}`} delay={booted ? 70 : 360} from={20}>
+            {focus.head ? null : (
+              <View style={styles.doneCard}>
+                <View style={styles.doneBadge}>
+                  <CircleCheckBig color={AURA.green.ink} size={22} strokeWidth={2.2} />
+                </View>
+                <View style={{ flex: 1 }}>
+                  <Text style={[styles.doneTitle, start]}>{t('home.allDone')}</Text>
+                  <Text style={[styles.doneBody, start]}>{t('home.allDoneBody')}</Text>
+                </View>
               </View>
-              <View style={{ flex: 1 }}>
-                <Text style={[styles.doneTitle, start]}>{t('home.allDone')}</Text>
-                <Text style={[styles.doneBody, start]}>{t('home.allDoneBody')}</Text>
-              </View>
-            </View>
-          )}
-        </Entrance>
+            )}
+          </Entrance>
 
-        {/* ── What is on now, and how much the day holds ──
+          {/* ── What is on now, and how much the day holds ──
             One band where there were two: a rectangle two squares wide for the
             thing happening, and a square beside it for the count. */}
-        <Entrance key={`top-${selectedStr}`} delay={booted ? 110 : 410} from={18}>
-          <View style={styles.topRow}>
-            <Pressable
-              onPress={() => (meetings.current ? openItem(meetings.current) : goToCalendar())}
-              style={({ pressed }) => [
-                styles.nowWide,
-                { backgroundColor: AURA.yellow.tint },
-                pressed && styles.pressedDim,
-              ]}
-              accessibilityRole="button"
-            >
-              <View style={styles.nowTop}>
-                <Text style={styles.nowKicker}>{t('home.now')}</Text>
-                <CalendarClock color={AURA.yellow.ink} size={18} strokeWidth={2} />
-              </View>
-              <Text style={[styles.nowTitle, start]} numberOfLines={2}>
-                {meetings.current ? meetings.current.title : t('home.nothingNow')}
-              </Text>
-              {meetings.current ? (
-                <Text style={[styles.nowMeta, start]} numberOfLines={1}>
-                  {to12h(meetings.current.time)}
-                  {meetings.next ? `  ·  ${t('home.next')} ${to12h(meetings.next.time)}` : ''}
+          <Entrance key={`top-${selectedStr}`} delay={booted ? 110 : 410} from={18}>
+            <View style={styles.topRow}>
+              <Pressable
+                onPress={() => (meetings.current ? openItem(meetings.current) : goToCalendar())}
+                style={({ pressed }) => [
+                  styles.nowWide,
+                  { backgroundColor: AURA.yellow.tint },
+                  pressed && styles.pressedDim,
+                ]}
+                accessibilityRole="button"
+              >
+                <View style={styles.nowTop}>
+                  <Text style={styles.nowKicker}>{t('home.now')}</Text>
+                  <CalendarClock color={AURA.yellow.ink} size={18} strokeWidth={2} />
+                </View>
+                <Text style={[styles.nowTitle, start]} numberOfLines={2}>
+                  {meetings.current ? meetings.current.title : t('home.nothingNow')}
                 </Text>
-              ) : null}
-            </Pressable>
+                {meetings.current ? (
+                  <Text style={[styles.nowMeta, start]} numberOfLines={1}>
+                    {to12h(meetings.current.time)}
+                    {meetings.next ? `  ·  ${t('home.next')} ${to12h(meetings.next.time)}` : ''}
+                  </Text>
+                ) : null}
+              </Pressable>
 
-            <Pressable
-              onPress={goToCalendar}
-              style={({ pressed }) => [
-                styles.countTile,
-                { backgroundColor: AURA.blue.tint },
-                pressed && styles.pressedDim,
-              ]}
-              accessibilityRole="button"
-              accessibilityLabel={t('home.tasksToday', { count: stats.tasks })}
-            >
-              <CalendarDays color={AURA.blue.ink} size={22} strokeWidth={2} />
-              <Text style={styles.countNum}>{stats.tasks}</Text>
-              <Text style={[styles.countLabel, start]} numberOfLines={2}>
-                {t('home.tasksToday', { count: stats.tasks })}
-              </Text>
-            </Pressable>
-          </View>
-        </Entrance>
+              <Pressable
+                onPress={goToCalendar}
+                style={({ pressed }) => [
+                  styles.countTile,
+                  { backgroundColor: AURA.blue.tint },
+                  pressed && styles.pressedDim,
+                ]}
+                accessibilityRole="button"
+                accessibilityLabel={t('home.tasksToday', {
+                  count: stats.tasks,
+                })}
+              >
+                <CalendarDays color={AURA.blue.ink} size={22} strokeWidth={2} />
+                <Text style={styles.countNum}>{stats.tasks}</Text>
+                <Text style={[styles.countLabel, start]} numberOfLines={2}>
+                  {t('home.tasksToday', { count: stats.tasks })}
+                </Text>
+              </Pressable>
+            </View>
+          </Entrance>
 
-        {/* ── The four, as four squares ──
+          {/* ── The four, as four squares ──
             The bottom bar has always had these four, as glyphs with no names.
             Here they are said out loud, one square each, with the count that
             decides whether you need to open it. */}
-        <Text style={[styles.sectionsHead, start]}>{t('home.sections')}</Text>
-        <View style={styles.grid}>
-          <View style={styles.gridRow}>
-            <SectionSquare
-              Icon={ListChecks}
-              label={t('home.section.tasks')}
-              value={t('home.section.open', { count: stats.openTasks })}
-              tile="green"
-              delay={booted ? 130 : 430}
-              onPress={goToTasks}
-            />
-            <SectionSquare
-              Icon={CalendarDays}
-              label={t('home.section.calendar')}
-              value={t('home.section.events', { count: stats.events })}
-              tile="blue"
-              delay={booted ? 165 : 465}
-              onPress={() => goToTab('Calendar')}
-            />
-          </View>
-          <View style={styles.gridRow}>
-            <SectionSquare
-              Icon={ShoppingCart}
-              label={t('home.section.shopping')}
-              tile="yellow"
-              delay={booted ? 200 : 500}
-              onPress={() => goToTab('Shopping')}
-            />
-            <SectionSquare
-              Icon={Wallet}
-              label={t('home.section.finance')}
-              tile="neutral"
-              delay={booted ? 235 : 535}
-              onPress={() => goToTab('Finance')}
-            />
-          </View>
-        </View>
-
-        {/* Where the sheet starts, so the Tasks square knows where to land. */}
-        <View onLayout={(e) => setPanelY(e.nativeEvent.layout.y)} />
-
-        {/* ── The day itself, on its own sheet ── */}
-        <Entrance delay={520} from={40} style={styles.panelWrap}>
-          <View style={styles.panel}>
-            <View style={styles.panelHead}>
-              <View style={{ flex: 1 }}>
-                <Text style={[styles.panelTitle, start]}>{t('today.yourTasks')}</Text>
-                <Text style={[styles.panelSub, start]}>
-                  {t('today.completedOf', { done: stats.done, total: stats.total })}
-                </Text>
-              </View>
-              <SegToggle value={filter} onChange={setFilter} />
+          <Text style={[styles.sectionsHead, start]}>{t('home.sections')}</Text>
+          <View style={styles.grid}>
+            <View style={styles.gridRow}>
+              <SectionSquare
+                Icon={ListChecks}
+                label={t('home.section.tasks')}
+                value={t('home.section.open', { count: stats.openTasks })}
+                tile="green"
+                delay={booted ? 130 : 430}
+                onPress={goToTasks}
+              />
+              <SectionSquare
+                Icon={CalendarDays}
+                label={t('home.section.calendar')}
+                value={t('home.section.events', { count: stats.events })}
+                tile="blue"
+                delay={booted ? 165 : 465}
+                onPress={() => goToTab('Calendar')}
+              />
             </View>
-
-            <PanelProgress pct={stats.pct} />
-
-            {visible.length === 0 ? (
-              <View style={styles.empty}>
-                <Text style={styles.emptyTitle}>{t('today.empty.title')}</Text>
-                <Text style={styles.emptyBody}>{t('today.empty.body')}</Text>
-              </View>
-            ) : (
-              visible.map((item, index) => (
-                <Entrance
-                  // Rows re-stagger when the day or the filter changes: the
-                  // key remounts them, and mounting is what animates.
-                  key={`${selectedStr}-${filter}-${item.kind}-${item.id}`}
-                  delay={80 + index * 60}
-                >
-                  <TaskRow
-                    item={item}
-                    tile={rowTile(index)}
-                    status={rowStatus(item, now)}
-                    index={index}
-                    onOpen={() => openItem(item)}
-                    onToggle={() => toggleDone(item)}
-                    onSnooze={() => snooze(item)}
-                  />
-                </Entrance>
-              ))
-            )}
+            <View style={styles.gridRow}>
+              <SectionSquare
+                Icon={ShoppingCart}
+                label={t('home.section.shopping')}
+                tile="yellow"
+                delay={booted ? 200 : 500}
+                onPress={() => goToTab('Shopping')}
+              />
+              <SectionSquare
+                Icon={Wallet}
+                label={t('home.section.finance')}
+                tile="neutral"
+                delay={booted ? 235 : 535}
+                onPress={() => goToTab('Finance')}
+              />
+            </View>
           </View>
-        </Entrance>
+
+          {/* Where the sheet starts, so the Tasks square knows where to land. */}
+          <View onLayout={(e) => setPanelY(e.nativeEvent.layout.y)} />
+
+          {/* ── The day itself, on its own sheet ── */}
+          <Entrance delay={520} from={40} style={styles.panelWrap}>
+            <View style={styles.panel}>
+              <View style={styles.panelHead}>
+                <View style={{ flex: 1 }}>
+                  <Text style={[styles.panelTitle, start]}>{t('today.yourTasks')}</Text>
+                  <Text style={[styles.panelSub, start]}>
+                    {t('today.completedOf', {
+                      done: stats.done,
+                      total: stats.total,
+                    })}
+                  </Text>
+                </View>
+                <SegToggle value={filter} onChange={setFilter} />
+              </View>
+
+              <PanelProgress pct={stats.pct} />
+
+              {visible.length === 0 ? (
+                <View style={styles.empty}>
+                  <Text style={styles.emptyTitle}>{t('today.empty.title')}</Text>
+                  <Text style={styles.emptyBody}>{t('today.empty.body')}</Text>
+                </View>
+              ) : (
+                visible.map((item, index) => (
+                  <Entrance
+                    // Rows re-stagger when the day or the filter changes: the
+                    // key remounts them, and mounting is what animates.
+                    key={`${selectedStr}-${filter}-${item.kind}-${item.id}`}
+                    delay={80 + index * 60}
+                  >
+                    <TaskRow
+                      item={item}
+                      tile={rowTile(index)}
+                      status={rowStatus(item, now)}
+                      index={index}
+                      onOpen={() => openItem(item)}
+                      onToggle={() => toggleDone(item)}
+                      onSnooze={() => snooze(item)}
+                    />
+                  </Entrance>
+                ))
+              )}
+            </View>
+          </Entrance>
+        </View>
       </ScrollView>
 
       {/* ── What the number on the ring is made of ── */}
@@ -1138,7 +1176,10 @@ export default function TodayScreen() {
               key={`${item.kind}-${item.id}`}
               onPress={() => {
                 setSheet(null);
-                navigation.navigate('EntryForm', { kind: item.kind, id: item.id });
+                navigation.navigate('EntryForm', {
+                  kind: item.kind,
+                  id: item.id,
+                });
               }}
               style={styles.sheetRow}
               accessibilityRole="button"
@@ -1162,25 +1203,40 @@ const styles = StyleSheet.create({
 
   content: { paddingTop: spacing.md, flexGrow: 1 },
 
-
   // ── Hero ──
 
   /** The only colour in the block — a hairline rule, not a filled chip. */
 
+  // ── The white sheet the day sits on ──
+  pageSheet: {
+    flexGrow: 1,
+    backgroundColor: colors.surface,
+    borderTopStartRadius: 34,
+    borderTopEndRadius: 34,
+    // Out to the screen edges: Screen pads the page, and the sheet has to
+    // undo that padding to reach them, then put it back inside itself.
+    marginHorizontal: -(spacing.md + 4),
+    paddingHorizontal: spacing.md + 4,
+    paddingTop: spacing.lg,
+    marginTop: spacing.sm,
+  },
 
   // ── Week strip ──
-  strip: { marginTop: spacing.md, flexGrow: 0 },
+  strip: { marginTop: spacing.sm, flexGrow: 0 },
   stripContent: { alignItems: 'center', gap: PILL_GAP, paddingVertical: 12 },
   pill: {
     width: PILL_W,
     height: 74,
     borderRadius: 25,
-    backgroundColor: colors.surface,
+    // A hole in the band rather than a card on it: filled white, seven white
+    // pills would compete with the one that is actually chosen.
+    backgroundColor: BAND.line,
     alignItems: 'center',
     justifyContent: 'center',
     gap: 2,
     borderWidth: 1,
-    borderColor: colors.border,
+    borderColor: BAND.line,
+    overflow: 'hidden',
   },
   pillSelectedEdge: { borderColor: 'transparent' },
   pillGradient: {
@@ -1194,14 +1250,16 @@ const styles = StyleSheet.create({
     borderWidth: 2,
     borderColor: IRIDESCENT[1],
   },
-  pillDay: { fontSize: 18, ...font(700), color: colors.text },
-  pillWd: { fontSize: 11.5, ...font(600), color: colors.textMuted },
+  pillDay: { fontSize: 18, ...font(700), color: BAND.ink },
+  /** Near-black once the gradient is behind it — the pairing every chosen thing uses. */
+  pillDaySelected: { color: colors.text },
+  pillWd: { fontSize: 11.5, ...font(600), color: BAND.sub },
   pillWdSelected: { color: colors.text },
   pillDot: {
     width: 5,
     height: 5,
     borderRadius: 2.5,
-    backgroundColor: colors.alert,
+    backgroundColor: BAND.sub,
     marginTop: 2,
   },
 
@@ -1236,7 +1294,6 @@ const styles = StyleSheet.create({
     marginTop: 5,
   },
 
-
   /**
    * Nothing left to do. Green, because this is the one place on the screen
    * where green means what green means — and a finished day reading as a blank
@@ -1259,13 +1316,21 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
   },
-  doneTitle: { fontSize: 18, ...font(700), color: colors.text, letterSpacing: -0.3 },
-  doneBody: { fontSize: 13.5, ...font(500), color: colors.text, opacity: 0.7, marginTop: 2 },
-
+  doneTitle: {
+    fontSize: 18,
+    ...font(700),
+    color: colors.text,
+    letterSpacing: -0.3,
+  },
+  doneBody: {
+    fontSize: 13.5,
+    ...font(500),
+    color: colors.text,
+    opacity: 0.7,
+    marginTop: 2,
+  },
 
   /** Smaller on purpose: the next meeting is context, not the headline. */
-
-
 
   // ── What is on now, beside the day's count ──
   topRow: { flexDirection: 'row', gap: 10, marginTop: spacing.md },
@@ -1277,7 +1342,11 @@ const styles = StyleSheet.create({
     padding: 14,
     justifyContent: 'space-between',
   },
-  nowTop: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' },
+  nowTop: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+  },
   nowKicker: {
     fontSize: 11,
     ...font(700),
@@ -1294,7 +1363,13 @@ const styles = StyleSheet.create({
     lineHeight: 22,
     marginTop: 6,
   },
-  nowMeta: { fontSize: 12.5, ...font(600), color: colors.text, opacity: 0.65, marginTop: 4 },
+  nowMeta: {
+    fontSize: 12.5,
+    ...font(600),
+    color: colors.text,
+    opacity: 0.65,
+    marginTop: 4,
+  },
 
   countTile: {
     flex: 1,
@@ -1353,27 +1428,22 @@ const styles = StyleSheet.create({
     opacity: 0.62,
     marginBottom: 1,
   },
-  squareLabel: { fontSize: 17, ...font(700), color: colors.text, letterSpacing: -0.3 },
+  squareLabel: {
+    fontSize: 17,
+    ...font(700),
+    color: colors.text,
+    letterSpacing: -0.3,
+  },
 
   // ── The sheet the day sits on ──
   panelWrap: {
     flexGrow: 1,
-    marginTop: spacing.md,
-    marginHorizontal: -(spacing.md + 4),
+    marginTop: spacing.lg,
   },
+  /** Now just the last block on the sheet, not a sheet of its own. */
   panel: {
     flex: 1,
-    backgroundColor: colors.surface,
-    borderTopStartRadius: 30,
-    borderTopEndRadius: 30,
-    paddingHorizontal: spacing.md + 4,
-    paddingTop: spacing.lg,
     paddingBottom: TAB_BAR_CLEARANCE,
-    shadowColor: '#14150F',
-    shadowOffset: { width: 0, height: -6 },
-    shadowOpacity: 0.05,
-    shadowRadius: 16,
-    elevation: 4,
   },
   panelHead: {
     flexDirection: 'row',
@@ -1381,8 +1451,18 @@ const styles = StyleSheet.create({
     gap: 12,
     marginBottom: spacing.md,
   },
-  panelTitle: { fontSize: 22, ...font(700), color: colors.text, letterSpacing: -0.5 },
-  panelSub: { fontSize: 13, ...font(500), color: colors.textMuted, marginTop: 2 },
+  panelTitle: {
+    fontSize: 22,
+    ...font(700),
+    color: colors.text,
+    letterSpacing: -0.5,
+  },
+  panelSub: {
+    fontSize: 13,
+    ...font(500),
+    color: colors.textMuted,
+    marginTop: 2,
+  },
 
   toggle: {
     width: THUMB_TRAVEL * 2 + 8,
@@ -1425,7 +1505,12 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
   },
-  rowRing: { width: 40, height: 40, alignItems: 'center', justifyContent: 'center' },
+  rowRing: {
+    width: 40,
+    height: 40,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
   rowRingText: { fontSize: 10, ...font(700) },
   rowTitle: { fontSize: 16, ...font(700), color: colors.text },
   rowTitleDone: { textDecorationLine: 'line-through', opacity: 0.55 },
@@ -1482,8 +1567,19 @@ const styles = StyleSheet.create({
     marginBottom: spacing.sm,
   },
   sheetHead: { flexDirection: 'row', alignItems: 'flex-start', gap: 12 },
-  sheetTitle: { fontSize: 20, ...font(700), color: colors.text, letterSpacing: -0.4 },
-  sheetBody: { fontSize: 14, ...font(500), color: colors.text, opacity: 0.62, marginTop: 3 },
+  sheetTitle: {
+    fontSize: 20,
+    ...font(700),
+    color: colors.text,
+    letterSpacing: -0.4,
+  },
+  sheetBody: {
+    fontSize: 14,
+    ...font(500),
+    color: colors.text,
+    opacity: 0.62,
+    marginTop: 3,
+  },
   sheetClose: {
     width: 34,
     height: 34,
@@ -1501,7 +1597,12 @@ const styles = StyleSheet.create({
     paddingVertical: 14,
   },
   sheetStatLabel: { flex: 1, fontSize: 15, ...font(600), color: colors.text },
-  sheetStatValue: { fontSize: 22, ...font(700), color: colors.text, letterSpacing: -0.4 },
+  sheetStatValue: {
+    fontSize: 22,
+    ...font(700),
+    color: colors.text,
+    letterSpacing: -0.4,
+  },
   sheetRow: {
     flexDirection: 'row',
     alignItems: 'center',

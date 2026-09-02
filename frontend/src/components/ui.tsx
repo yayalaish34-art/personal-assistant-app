@@ -17,15 +17,25 @@ import { Bell } from 'lucide-react-native';
 
 import { Entrance } from './motion';
 import { isRTL } from '../lib/i18n';
-import { colors, radius, spacing, font, TAB_BAR_CLEARANCE } from '../theme';
+import { colors, radius, spacing, font, BAND, TAB_BAR_CLEARANCE } from '../theme';
 
 export function Screen({
   children,
   clearTabBar = true,
+  topBand = false,
 }: {
   children: ReactNode;
   // Modals (no tab bar) pass false to skip the extra bottom clearance.
   clearTabBar?: boolean;
+  /**
+   * Paints the top of the page — status bar included — in the band colour.
+   *
+   * The colour has to be laid down here rather than by the screen's own
+   * content, because the safe-area inset lives on this view: anything a child
+   * draws starts below the notch, leaving a pale strip above it. The child
+   * still decides where the band ends, by opening a white sheet over it.
+   */
+  topBand?: boolean;
 }) {
   const insets = useSafeAreaInsets();
 
@@ -33,6 +43,7 @@ export function Screen({
     <View
       style={[
         styles.screen,
+        topBand && { backgroundColor: BAND.bg },
         {
           paddingTop: Math.max(insets.top, spacing.md) + spacing.xs,
           paddingBottom: clearTabBar ? TAB_BAR_CLEARANCE : spacing.lg,
@@ -58,11 +69,14 @@ export function GreetingHeader({
   photoUri,
   onBellPress,
   unread = true,
+  onDark = false,
 }: {
   name: string;
   photoUri?: string;
   onBellPress?: () => void;
   unread?: boolean;
+  /** Flips the row to light ink for a screen whose head is the dark band. */
+  onDark?: boolean;
 }) {
   const initials =
     name
@@ -74,15 +88,19 @@ export function GreetingHeader({
 
   return (
     <View style={styles.greetingRow}>
-      <View style={styles.avatar}>
-        <Text style={styles.avatarInitials}>{initials}</Text>
+      <View style={[styles.avatar, onDark && styles.avatarOnDark]}>
+        <Text style={[styles.avatarInitials, onDark && styles.inkOnDark]}>{initials}</Text>
         {photoUri ? <Image source={{ uri: photoUri }} style={styles.avatarPhoto} /> : null}
       </View>
-      <Text style={styles.greetingText} numberOfLines={1}>
+      <Text style={[styles.greetingText, onDark && styles.inkOnDark]} numberOfLines={1}>
         {name}
       </Text>
-      <Pressable onPress={onBellPress} style={styles.bellBtn} accessibilityRole="button">
-        <Bell color={colors.text} size={20} />
+      <Pressable
+        onPress={onBellPress}
+        style={[styles.bellBtn, onDark && styles.bellBtnOnDark]}
+        accessibilityRole="button"
+      >
+        <Bell color={onDark ? BAND.ink : colors.text} size={20} />
         {unread ? <View style={styles.bellDot} /> : null}
       </Pressable>
     </View>
@@ -173,7 +191,11 @@ export function Field(props: TextInputProps & { label?: string }) {
 }
 
 const styles = StyleSheet.create({
-  screen: { flex: 1, backgroundColor: colors.bg, paddingHorizontal: spacing.md + 4 },
+  screen: {
+    flex: 1,
+    backgroundColor: colors.bg,
+    paddingHorizontal: spacing.md + 4,
+  },
 
   greetingRow: { flexDirection: 'row', alignItems: 'center', gap: 12 },
   avatar: {
@@ -186,8 +208,15 @@ const styles = StyleSheet.create({
     overflow: 'hidden',
   },
   avatarInitials: { ...font(700), fontSize: 16, color: colors.text },
-  avatarPhoto: { ...StyleSheet.absoluteFillObject, width: '100%', height: '100%' },
+  avatarPhoto: {
+    ...StyleSheet.absoluteFillObject,
+    width: '100%',
+    height: '100%',
+  },
   greetingText: { flex: 1, fontSize: 19, ...font(700), color: colors.text },
+  /** Type and glyphs once the row is standing on the band. */
+  inkOnDark: { color: BAND.ink },
+  avatarOnDark: { backgroundColor: BAND.line },
   bellBtn: {
     width: 46,
     height: 46,
@@ -200,6 +229,12 @@ const styles = StyleSheet.create({
     shadowOpacity: 0.06,
     shadowRadius: 12,
     elevation: 2,
+  },
+  /** On the band the button is a hole in it, not a white disc floating over it. */
+  bellBtnOnDark: {
+    backgroundColor: BAND.line,
+    shadowOpacity: 0,
+    elevation: 0,
   },
   bellDot: {
     position: 'absolute',
@@ -217,7 +252,12 @@ const styles = StyleSheet.create({
     padding: spacing.md + 2,
     marginBottom: spacing.md,
   },
-  title: { color: colors.text, fontSize: 18, ...font(700), marginBottom: spacing.sm },
+  title: {
+    color: colors.text,
+    fontSize: 18,
+    ...font(700),
+    marginBottom: spacing.sm,
+  },
   muted: { color: colors.textMuted, fontSize: 14, ...font(500) },
 
   button: {
@@ -231,7 +271,12 @@ const styles = StyleSheet.create({
   buttonPrimary: { backgroundColor: colors.primary },
   buttonQuiet: { backgroundColor: colors.surface },
   buttonText: { color: colors.primaryText, ...font(600), fontSize: 16 },
-  label: { color: colors.text, marginBottom: spacing.sm, fontSize: 15, ...font(600) },
+  label: {
+    color: colors.text,
+    marginBottom: spacing.sm,
+    fontSize: 15,
+    ...font(600),
+  },
   input: {
     backgroundColor: colors.surface,
     color: colors.text,

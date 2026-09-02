@@ -1056,11 +1056,10 @@ const styles = StyleSheet.create({
     paddingHorizontal: spacing.md + 4,
     paddingTop: spacing.lg,
     marginTop: spacing.sm,
-    // Past the bottom edge, not up to it. Stopping level with the edge lets
-    // black appear under the white on an overscroll bounce and wherever a
-    // fractional layout height rounds down. The bottom corners are square, so
-    // none of the overhang can be seen.
-    marginBottom: -TAB_BAR_CLEARANCE,
+    // No negative bottom margin here. Under flexGrow the card is sized to the
+    // free space and the margin applied after, so a negative one shrinks its
+    // box and lifts the bottom edge off the floor — which is exactly the gap
+    // it was meant to close.
     paddingBottom: TAB_BAR_CLEARANCE,
   },
 

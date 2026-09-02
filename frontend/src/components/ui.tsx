@@ -19,6 +19,18 @@ import { Entrance } from './motion';
 import { isRTL } from '../lib/i18n';
 import { colors, radius, spacing, font, BAND, TAB_BAR_CLEARANCE } from '../theme';
 
+/**
+ * How far the dark reaches below the safe-area inset.
+ *
+ * It only has to clear the top edge of the card that covers it: 180 puts that
+ * edge exactly at the seam (4 + 16 of padding, the 46 greeting row, the
+ * rail's 8 + 12 + 74 + 12, and the card's own 8 margin), and the overshoot to
+ * 260 is hidden behind the card while leaving room for a taller rail or a
+ * bigger font. It must stay far shorter than a screen: past the card's bottom
+ * it would be visible, which is the thing this shape is for.
+ */
+const BAND_DEPTH = 260;
+
 export function Screen({
   children,
   clearTabBar = true,
@@ -28,20 +40,21 @@ export function Screen({
   // Modals (no tab bar) pass false to skip the extra bottom clearance.
   clearTabBar?: boolean;
   /**
-   * Makes the page itself dark, top to bottom, status bar included.
+   * Lays a dark ground under the top of the page, status bar included.
    *
-   * The whole page and not a strip across the top. The child lays one white
-   * card over it, and the black has to still be there *behind* that card's
-   * two rounded top corners — that is what turns the join into a curve. A
-   * strip has nothing behind its corners for the curve to cut into.
+   * The child lays a white card over it, and the dark has to still be there
+   * *behind* that card's two rounded top corners — that is what turns the
+   * join into a curve rather than a line.
+   *
+   * It is a layer with a fixed depth rather than the page's own background.
+   * Painting the whole page dark makes every pixel the card fails to cover
+   * show black: past its bottom edge, and either side of it if a margin is a
+   * pixel out. Bounded, the dark can only ever appear where it is wanted, and
+   * everything the card misses falls back to paper.
    *
    * It has to be set here rather than by the screen's own content, because
    * the safe-area inset lives on this view: anything a child draws starts
    * below the notch and leaves a pale band above it.
-   *
-   * The card is then responsible for reaching the bottom of the viewport, so
-   * this view drops its own bottom padding — that padding sits outside the
-   * card, and left in it ends the page on a dark strip under the white.
    */
   topBand?: boolean;
 }) {
@@ -51,7 +64,7 @@ export function Screen({
     <View
       style={[
         styles.screen,
-        topBand && { backgroundColor: BAND.bg },
+        topBand && styles.screenBanded,
         {
           paddingTop: Math.max(insets.top, spacing.md) + spacing.xs,
           // None when a card is going to cover the bottom itself.
@@ -64,6 +77,17 @@ export function Screen({
         },
       ]}
     >
+      {topBand ? (
+        <View
+          pointerEvents="none"
+          style={[
+            styles.band,
+            // Past the card's top edge and no further. The inset is part of
+            // it, because the layer starts above the notch.
+            { height: Math.max(insets.top, spacing.md) + BAND_DEPTH },
+          ]}
+        />
+      ) : null}
       {children}
     </View>
   );
@@ -204,6 +228,23 @@ const styles = StyleSheet.create({
     flex: 1,
     backgroundColor: colors.bg,
     paddingHorizontal: spacing.md + 4,
+  },
+  /**
+   * The page under a banded screen is the card's own white, not the app's
+   * off-white. Anything the card leaves uncovered then reads as more card
+   * rather than as a faint cream seam beside it.
+   */
+  screenBanded: { backgroundColor: colors.surface },
+  /**
+   * Behind everything, and out past the page's own side padding so it reaches
+   * the screen edges the way the card over it does.
+   */
+  band: {
+    position: 'absolute',
+    top: 0,
+    insetInlineStart: 0,
+    insetInlineEnd: 0,
+    backgroundColor: BAND.bg,
   },
 
   greetingRow: { flexDirection: 'row', alignItems: 'center', gap: 12 },

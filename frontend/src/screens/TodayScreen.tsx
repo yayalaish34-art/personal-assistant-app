@@ -21,6 +21,9 @@ import {
   CalendarArrowDown,
   CalendarClock,
   ChevronsRight,
+  ListChecks,
+  ShoppingCart,
+  Wallet,
   CircleCheckBig,
   Sun,
   Moon,
@@ -33,6 +36,7 @@ import {
   CloudRain,
   CloudSnow,
   CloudLightning,
+  House,
 } from 'lucide-react-native';
 
 import { Screen, GreetingHeader } from '../components/ui';
@@ -409,6 +413,62 @@ function SheetStat({
   );
 }
 
+/**
+ * One of the four, as a square.
+ *
+ * The app is four things — tasks, the diary, the shopping, the money — and
+ * until now the only way to say so was the row of glyphs at the bottom of the
+ * screen, which names none of them. Four squares on the home screen do: equal
+ * size because they are equally important, in the palette's own order, and
+ * each one carrying the number that answers "do I need to go in there".
+ *
+ * `aspectRatio` rather than a fixed height, so they stay square on a small
+ * phone and on a tablet without a breakpoint.
+ */
+function SectionSquare({
+  Icon,
+  label,
+  value,
+  tile,
+  delay,
+  onPress,
+}: {
+  Icon: typeof House;
+  label: string;
+  /** The count, where there is one to give. Omitted rather than faked. */
+  value?: string;
+  tile: AuraKey | 'neutral';
+  delay: number;
+  onPress: () => void;
+}) {
+  const skin = tile === 'neutral' ? { tint: colors.surfaceAlt, ink: colors.textMuted } : AURA[tile];
+
+  return (
+    <Entrance delay={delay} from={16} style={styles.squareWrap}>
+      <Pressable
+        onPress={onPress}
+        style={({ pressed }) => [
+          styles.square,
+          { backgroundColor: skin.tint },
+          pressed && styles.pressedDim,
+        ]}
+        accessibilityRole="button"
+        accessibilityLabel={value ? `${label}, ${value}` : label}
+      >
+        <View style={styles.squareBadge}>
+          <Icon color={skin.ink} size={20} strokeWidth={2.1} />
+        </View>
+        <View>
+          {value ? <Text style={styles.squareValue}>{value}</Text> : null}
+          <Text style={[styles.squareLabel, { textAlign: alignStart() }]} numberOfLines={1}>
+            {label}
+          </Text>
+        </View>
+      </Pressable>
+    </Entrance>
+  );
+}
+
 // ── Weather, at the size it deserves ─────────────────────────────────────────
 
 /**
@@ -633,6 +693,8 @@ export default function TodayScreen() {
   const [weather, setWeather] = useState<Weather | null>(null);
   const [filter, setFilter] = useState<'left' | 'done'>('left');
   const [sheet, setSheet] = useState<'progress' | 'alerts' | null>(null);
+  /** Where the day's sheet begins, so the Tasks square can scroll to it. */
+  const [panelY, setPanelY] = useState(0);
 
   const today = toDateStr(new Date());
   const [selectedStr, setSelectedStr] = useState(today);
@@ -688,6 +750,8 @@ export default function TodayScreen() {
     };
   }, []);
 
+  /** The page itself, for the one square that leads somewhere on this screen. */
+  const pageRef = useRef<ScrollView>(null);
   // The strip keeps the chosen day in the middle of the rail.
   const stripRef = useRef<ScrollView>(null);
   const centerPill = useCallback(
@@ -715,6 +779,7 @@ export default function TodayScreen() {
       pct: total ? Math.round((done / total) * 100) : 0,
       tasks: items.filter((i) => i.kind === 'task').length,
       events: items.filter((i) => i.kind === 'event').length,
+      openTasks: items.filter((i) => i.kind === 'task' && statusOf(i, now) !== 'done').length,
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [items]);
@@ -820,13 +885,27 @@ export default function TodayScreen() {
     setSheet(which);
   };
 
-  const goToCalendar = () => {
+  /**
+   * Opens one of the four by name.
+   *
+   * The tab navigator's own helpers aren't reachable from a screen inside it
+   * without the parent's types; the navigation itself bubbles up fine.
+   */
+  const goToTab = (screen: 'Calendar' | 'Shopping' | 'Finance') => {
     Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
     (
       navigation as unknown as {
         navigate: (name: string, params: { screen: string }) => void;
       }
-    ).navigate('Tabs', { screen: 'Calendar' });
+    ).navigate('Tabs', { screen });
+  };
+
+  const goToCalendar = () => goToTab('Calendar');
+
+  /** Tasks are already on this screen, so that square scrolls to them. */
+  const goToTasks = () => {
+    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+    pageRef.current?.scrollTo({ y: Math.max(panelY - 12, 0), animated: true });
   };
 
   const start = { textAlign: alignStart() } as const;
@@ -842,7 +921,11 @@ export default function TodayScreen() {
         onBellPress={() => openSheet('alerts')}
       />
 
-      <ScrollView showsVerticalScrollIndicator={false} contentContainerStyle={styles.content}>
+      <ScrollView
+        ref={pageRef}
+        showsVerticalScrollIndicator={false}
+        contentContainerStyle={styles.content}
+      >
         {/* ── The week, one pill a day, the chosen one in the holographic fill ── */}
         <ScrollView
           ref={stripRef}
@@ -934,6 +1017,51 @@ export default function TodayScreen() {
             </Pressable>
           </View>
         </Entrance>
+
+        {/* ── The four, as four squares ──
+            The bottom bar has always had these four, as glyphs with no names.
+            Here they are said out loud, one square each, with the count that
+            decides whether you need to open it. */}
+        <Text style={[styles.sectionsHead, start]}>{t('home.sections')}</Text>
+        <View style={styles.grid}>
+          <View style={styles.gridRow}>
+            <SectionSquare
+              Icon={ListChecks}
+              label={t('home.section.tasks')}
+              value={t('home.section.open', { count: stats.openTasks })}
+              tile="green"
+              delay={booted ? 130 : 430}
+              onPress={goToTasks}
+            />
+            <SectionSquare
+              Icon={CalendarDays}
+              label={t('home.section.calendar')}
+              value={t('home.section.events', { count: stats.events })}
+              tile="blue"
+              delay={booted ? 165 : 465}
+              onPress={() => goToTab('Calendar')}
+            />
+          </View>
+          <View style={styles.gridRow}>
+            <SectionSquare
+              Icon={ShoppingCart}
+              label={t('home.section.shopping')}
+              tile="yellow"
+              delay={booted ? 200 : 500}
+              onPress={() => goToTab('Shopping')}
+            />
+            <SectionSquare
+              Icon={Wallet}
+              label={t('home.section.finance')}
+              tile="neutral"
+              delay={booted ? 235 : 535}
+              onPress={() => goToTab('Finance')}
+            />
+          </View>
+        </View>
+
+        {/* Where the sheet starts, so the Tasks square knows where to land. */}
+        <View onLayout={(e) => setPanelY(e.nativeEvent.layout.y)} />
 
         {/* ── The day itself, on its own sheet ── */}
         <Entrance delay={520} from={40} style={styles.panelWrap}>
@@ -1189,6 +1317,43 @@ const styles = StyleSheet.create({
     opacity: 0.65,
     marginTop: 1,
   },
+
+  // ── The four, as four squares ──
+  sectionsHead: {
+    fontSize: 18,
+    ...font(700),
+    color: colors.text,
+    letterSpacing: -0.3,
+    marginTop: spacing.lg,
+    marginBottom: spacing.sm + 2,
+  },
+  grid: { gap: 10 },
+  gridRow: { flexDirection: 'row', gap: 10 },
+  squareWrap: { flex: 1 },
+  square: {
+    // Square, not a card: the four are peers, and a row of equal squares is
+    // the shortest way to say so.
+    aspectRatio: 1,
+    borderRadius: radius.md,
+    padding: 14,
+    justifyContent: 'space-between',
+  },
+  squareBadge: {
+    width: 38,
+    height: 38,
+    borderRadius: 13,
+    backgroundColor: colors.surface,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  squareValue: {
+    fontSize: 13,
+    ...font(600),
+    color: colors.text,
+    opacity: 0.62,
+    marginBottom: 1,
+  },
+  squareLabel: { fontSize: 17, ...font(700), color: colors.text, letterSpacing: -0.3 },
 
   // ── The sheet the day sits on ──
   panelWrap: {

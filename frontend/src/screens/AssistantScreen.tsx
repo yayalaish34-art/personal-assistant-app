@@ -517,7 +517,13 @@ export default function AssistantScreen() {
                             {clockRange(iso, offer.durationMinutes)}
                           </Text>
                           <Text
-                            style={[styles.offerWhen, taken && styles.offerWhenTaken]}
+                            style={[
+                              styles.offerWhen,
+                              // The far end of the row from the time, whichever
+                              // end that is.
+                              { textAlign: rtl ? 'left' : 'right' },
+                              taken && styles.offerWhenTaken,
+                            ]}
                             numberOfLines={1}
                           >
                             {whenLabel(iso)}
@@ -563,9 +569,9 @@ export default function AssistantScreen() {
             style={[
               styles.halo,
               {
-                width: 230 - i * 34,
-                height: 230 - i * 34,
-                borderRadius: (230 - i * 34) / 2,
+                width: 236 - i * 26,
+                height: 236 - i * 26,
+                borderRadius: (236 - i * 26) / 2,
                 backgroundColor: tint,
                 transform: [{ scale: haloScale }],
               },
@@ -613,13 +619,13 @@ export default function AssistantScreen() {
           accessibilityRole="button"
           accessibilityLabel={t('assistant.send')}
         >
-          <Send
-            color={draft.trim() ? '#FFFFFF' : VOICE.accent}
-            size={18}
-            strokeWidth={2.2}
-            // The plane points along the line of writing, whichever way that runs.
-            style={rtl ? styles.sendGlyphRTL : undefined}
-          />
+          {/* The plane points along the line of writing, whichever way that
+              runs. The flip is on this View and not on the glyph itself: on
+              web the transform lands on the <svg> element, whose origin is its
+              top-left corner, and the plane flies out of the button. */}
+          <View style={rtl ? styles.sendGlyphRTL : undefined}>
+            <Send color={draft.trim() ? '#FFFFFF' : VOICE.accent} size={18} strokeWidth={2.2} />
+          </View>
         </Pressable>
       </View>
 
@@ -760,7 +766,7 @@ const styles = StyleSheet.create({
     flexShrink: 0,
   },
   offerTimeTaken: { color: '#FFFFFF' },
-  offerWhen: { flex: 1, fontSize: 14, ...font(600), color: VOICE.accent, textAlign: 'right' },
+  offerWhen: { flex: 1, fontSize: 14, ...font(600), color: VOICE.accent },
   offerWhenTaken: { color: 'rgba(255,255,255,0.78)' },
 
   undoBar: {
@@ -827,6 +833,10 @@ const styles = StyleSheet.create({
   },
   composerInput: {
     flex: 1,
+    // The browser's own focus ring is a hard black rectangle inside the pill.
+    // Dropping it is normally a sin; here the field *is* the whole pill, which
+    // carries its own shadow, and the caret says where the typing goes.
+    outlineWidth: 0,
     paddingHorizontal: 14,
     paddingVertical: 12,
     fontSize: 15,

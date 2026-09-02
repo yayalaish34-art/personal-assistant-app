@@ -128,6 +128,14 @@ export const he: Dict = {
   'home.open': 'פתח',
   'home.allDone': 'הכל בוצע',
   'home.allDoneBody': 'לא נשאר כלום ברשימה של היום.',
+  // ארבע הרובריקות, כארבעה ריבועים במסך הבית
+  'home.sections': 'הרובריקות שלך',
+  'home.section.tasks': 'משימות',
+  'home.section.open': '{{count}} פתוחות',
+  'home.section.calendar': 'לוח שנה',
+  'home.section.events': '{{count}} היום',
+  'home.section.shopping': 'קניות',
+  'home.section.finance': 'כספים',
 
   // Country & currency
   'onboarding.place.title': 'איפה את?',
@@ -351,6 +359,7 @@ export const he: Dict = {
   'profile.deleteAccountBody': 'מוחק כל משימה, אירוע ושיחה במכשיר הזה ומאפס את ההגדרות. אי אפשר לבטל.',
   'profile.deleted': 'הכל נמחק',
   'profile.deletedBody': 'לא נשאר כלום במכשיר.',
+  'common.close': 'סגירה',
   'common.cancel': 'ביטול',
   'common.delete': 'מחק',
   'common.error': 'שגיאה',

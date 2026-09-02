@@ -134,6 +134,14 @@ export const en = {
   'home.open': 'Open',
   'home.allDone': 'Everything is done',
   'home.allDoneBody': 'Nothing left on today’s list.',
+  // The four squares: one per part of the app, opened from home.
+  'home.sections': 'Your four',
+  'home.section.tasks': 'Tasks',
+  'home.section.open': '{{count}} open',
+  'home.section.calendar': 'Calendar',
+  'home.section.events': '{{count}} today',
+  'home.section.shopping': 'Shopping',
+  'home.section.finance': 'Finance',
 
   // Country & currency
   'onboarding.place.title': 'Where are you?',
@@ -363,6 +371,7 @@ export const en = {
   'profile.deleteAccountBody': 'Erases every task, event and conversation on this device, and resets your settings. This cannot be undone.',
   'profile.deleted': 'Everything deleted',
   'profile.deletedBody': 'Nothing is left on this device.',
+  'common.close': 'Close',
   'common.cancel': 'Cancel',
   'common.delete': 'Delete',
   'common.error': 'Error',

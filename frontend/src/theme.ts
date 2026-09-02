@@ -145,7 +145,12 @@ export const VOICE = {
   /** The round chrome buttons in the header, and the composer's field. */
   chrome: '#FFFFFF',
   /** The breathing halo behind the orb, palest first. */
-  halo: ['rgba(124, 92, 240, 0.05)', 'rgba(124, 92, 240, 0.09)', 'rgba(124, 92, 240, 0.14)'] as const,
+  halo: [
+    'rgba(124, 92, 240, 0.035)',
+    'rgba(124, 92, 240, 0.05)',
+    'rgba(124, 92, 240, 0.065)',
+    'rgba(124, 92, 240, 0.085)',
+  ] as const,
   /** The sound she is listening to, drawn either side of the orb. */
   wave: '#9E7CEE',
   /** The dotted orbit and the motes riding it. */

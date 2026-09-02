@@ -21,9 +21,6 @@ import {
   CalendarArrowDown,
   CalendarClock,
   ChevronsRight,
-  ListChecks,
-  ShoppingCart,
-  Wallet,
   CircleCheckBig,
   Sun,
   Moon,
@@ -36,7 +33,6 @@ import {
   CloudRain,
   CloudSnow,
   CloudLightning,
-  House,
 } from 'lucide-react-native';
 
 import { Screen, GreetingHeader } from '../components/ui';
@@ -53,7 +49,6 @@ import {
   AURA,
   AURA_CYCLE,
   IRIDESCENT,
-  BAND,
   TAB_BAR_CLEARANCE,
   type AuraKey,
 } from '../theme';
@@ -164,18 +159,8 @@ function DayPill({
         <Animated.View
           style={{
             transform: [
-              {
-                translateY: sel.interpolate({
-                  inputRange: [0, 1],
-                  outputRange: [0, -7],
-                }),
-              },
-              {
-                scale: sel.interpolate({
-                  inputRange: [0, 1],
-                  outputRange: [1, 1.12],
-                }),
-              },
+              { translateY: sel.interpolate({ inputRange: [0, 1], outputRange: [0, -7] }) },
+              { scale: sel.interpolate({ inputRange: [0, 1], outputRange: [1, 1.12] }) },
             ],
           }}
         >
@@ -184,17 +169,9 @@ function DayPill({
             style={[
               styles.pillBloom,
               {
-                opacity: bloom.interpolate({
-                  inputRange: [0, 1],
-                  outputRange: [0.55, 0],
-                }),
+                opacity: bloom.interpolate({ inputRange: [0, 1], outputRange: [0.55, 0] }),
                 transform: [
-                  {
-                    scale: bloom.interpolate({
-                      inputRange: [0, 1],
-                      outputRange: [1, 1.65],
-                    }),
-                  },
+                  { scale: bloom.interpolate({ inputRange: [0, 1], outputRange: [1, 1.65] }) },
                 ],
               },
             ]}
@@ -208,9 +185,7 @@ function DayPill({
                 style={{ flex: 1 }}
               />
             </Animated.View>
-            <Text style={[styles.pillDay, selected && styles.pillDaySelected]}>
-              {date.getDate()}
-            </Text>
+            <Text style={styles.pillDay}>{date.getDate()}</Text>
             <Text style={[styles.pillWd, selected && styles.pillWdSelected]} numberOfLines={1}>
               {date.toLocaleDateString(locale(), { weekday: 'short' })}
             </Text>
@@ -293,11 +268,7 @@ function SegToggle({
 
 // ── Task rows ───────────────────────────────────────────────────────────────
 
-type RowStatus = {
-  key: 'done' | 'inprogress' | 'overdue' | 'scheduled';
-  dot: string;
-  pct: number;
-};
+type RowStatus = { key: 'done' | 'inprogress' | 'overdue' | 'scheduled'; dot: string; pct: number };
 
 /** What the small ring and the status line say about one row. */
 function rowStatus(item: AgendaItem, now: Date): RowStatus {
@@ -356,10 +327,7 @@ function RowRing({ pct, color, delay }: { pct: number; color: string; delay: num
             strokeLinecap="round"
             fill="none"
             strokeDasharray={`${c} ${c}`}
-            strokeDashoffset={anim.interpolate({
-              inputRange: [0, 100],
-              outputRange: [c, 0],
-            })}
+            strokeDashoffset={anim.interpolate({ inputRange: [0, 100], outputRange: [c, 0] })}
             transform={`rotate(-90 ${size / 2} ${size / 2})`}
           />
         ) : null}
@@ -423,9 +391,7 @@ function SheetStat({
     <View
       style={[
         styles.sheetStat,
-        {
-          backgroundColor: tile === 'neutral' ? colors.surfaceAlt : AURA[tile].tint,
-        },
+        { backgroundColor: tile === 'neutral' ? colors.surfaceAlt : AURA[tile].tint },
       ]}
     >
       <Text style={[styles.sheetStatLabel, { textAlign: alignStart() }]} numberOfLines={1}>
@@ -433,62 +399,6 @@ function SheetStat({
       </Text>
       <Text style={styles.sheetStatValue}>{value}</Text>
     </View>
-  );
-}
-
-/**
- * One of the four, as a square.
- *
- * The app is four things — tasks, the diary, the shopping, the money — and
- * until now the only way to say so was the row of glyphs at the bottom of the
- * screen, which names none of them. Four squares on the home screen do: equal
- * size because they are equally important, in the palette's own order, and
- * each one carrying the number that answers "do I need to go in there".
- *
- * `aspectRatio` rather than a fixed height, so they stay square on a small
- * phone and on a tablet without a breakpoint.
- */
-function SectionSquare({
-  Icon,
-  label,
-  value,
-  tile,
-  delay,
-  onPress,
-}: {
-  Icon: typeof House;
-  label: string;
-  /** The count, where there is one to give. Omitted rather than faked. */
-  value?: string;
-  tile: AuraKey | 'neutral';
-  delay: number;
-  onPress: () => void;
-}) {
-  const skin = tile === 'neutral' ? { tint: colors.surfaceAlt, ink: colors.textMuted } : AURA[tile];
-
-  return (
-    <Entrance delay={delay} from={16} style={styles.squareWrap}>
-      <Pressable
-        onPress={onPress}
-        style={({ pressed }) => [
-          styles.square,
-          { backgroundColor: skin.tint },
-          pressed && styles.pressedDim,
-        ]}
-        accessibilityRole="button"
-        accessibilityLabel={value ? `${label}, ${value}` : label}
-      >
-        <View style={styles.squareBadge}>
-          <Icon color={skin.ink} size={20} strokeWidth={2.1} />
-        </View>
-        <View>
-          {value ? <Text style={styles.squareValue}>{value}</Text> : null}
-          <Text style={[styles.squareLabel, { textAlign: alignStart() }]} numberOfLines={1}>
-            {label}
-          </Text>
-        </View>
-      </Pressable>
-    </Entrance>
   );
 }
 
@@ -630,14 +540,7 @@ function TaskRow({
   return (
     <Animated.View
       style={{
-        transform: [
-          {
-            scale: press.interpolate({
-              inputRange: [0, 1],
-              outputRange: [1, 0.97],
-            }),
-          },
-        ],
+        transform: [{ scale: press.interpolate({ inputRange: [0, 1], outputRange: [1, 0.97] }) }],
       }}
     >
       <Pressable
@@ -714,8 +617,6 @@ export default function TodayScreen() {
   const [weather, setWeather] = useState<Weather | null>(null);
   const [filter, setFilter] = useState<'left' | 'done'>('left');
   const [sheet, setSheet] = useState<'progress' | 'alerts' | null>(null);
-  /** Where the day's sheet begins, so the Tasks square can scroll to it. */
-  const [panelY, setPanelY] = useState(0);
 
   const today = toDateStr(new Date());
   const [selectedStr, setSelectedStr] = useState(today);
@@ -771,8 +672,6 @@ export default function TodayScreen() {
     };
   }, []);
 
-  /** The page itself, for the one square that leads somewhere on this screen. */
-  const pageRef = useRef<ScrollView>(null);
   // The strip keeps the chosen day in the middle of the rail.
   const stripRef = useRef<ScrollView>(null);
   const centerPill = useCallback(
@@ -800,7 +699,6 @@ export default function TodayScreen() {
       pct: total ? Math.round((done / total) * 100) : 0,
       tasks: items.filter((i) => i.kind === 'task').length,
       events: items.filter((i) => i.kind === 'event').length,
-      openTasks: items.filter((i) => i.kind === 'task' && statusOf(i, now) !== 'done').length,
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [items]);
@@ -868,10 +766,7 @@ export default function TodayScreen() {
       prev.map((r) => (r.kind === 'task' && r.id === item.id ? { ...r, isDone: next } : r)),
     );
     api
-      .updateTask(item.id, {
-        isDone: next,
-        updatedAt: new Date().toISOString(),
-      })
+      .updateTask(item.id, { isDone: next, updatedAt: new Date().toISOString() })
       .catch(() => void refresh());
   };
 
@@ -911,26 +806,18 @@ export default function TodayScreen() {
   };
 
   /**
-   * Opens one of the four by name.
+   * Opens the diary.
    *
    * The tab navigator's own helpers aren't reachable from a screen inside it
    * without the parent's types; the navigation itself bubbles up fine.
    */
-  const goToTab = (screen: 'Calendar' | 'Shopping' | 'Finance') => {
+  const goToCalendar = () => {
     Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
     (
       navigation as unknown as {
         navigate: (name: string, params: { screen: string }) => void;
       }
-    ).navigate('Tabs', { screen });
-  };
-
-  const goToCalendar = () => goToTab('Calendar');
-
-  /** Tasks are already on this screen, so that square scrolls to them. */
-  const goToTasks = () => {
-    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
-    pageRef.current?.scrollTo({ y: Math.max(panelY - 12, 0), animated: true });
+    ).navigate('Tabs', { screen: 'Calendar' });
   };
 
   const start = { textAlign: alignStart() } as const;
@@ -939,19 +826,14 @@ export default function TodayScreen() {
   const rowTile = (index: number) => AURA_CYCLE[index % AURA_CYCLE.length];
 
   return (
-    <Screen clearTabBar={false} topBand>
+    <Screen clearTabBar={false}>
       <GreetingHeader
         name={`${greetingNow()}, ${name || t('today.friend')}!`}
         photoUri={PROFILE_PHOTO_URI}
         onBellPress={() => openSheet('alerts')}
-        onDark
       />
 
-      <ScrollView
-        ref={pageRef}
-        showsVerticalScrollIndicator={false}
-        contentContainerStyle={styles.content}
-      >
+      <ScrollView showsVerticalScrollIndicator={false} contentContainerStyle={styles.content}>
         {/* ── The week, one pill a day, the chosen one in the holographic fill ── */}
         <ScrollView
           ref={stripRef}
@@ -974,175 +856,118 @@ export default function TodayScreen() {
           ))}
         </ScrollView>
 
-        {/* ── The sheet ──
-            Everything that is not the greeting or the week lives on one white
-            surface, lifted onto the band by its two rounded top corners. It
-            has to grow with the content rather than being a fixed height: the
-            day's list is inside it, and the list is as long as the day. */}
-        <View style={styles.pageSheet}>
-          {/* ── Today's sky ── */}
-          <Entrance delay={booted ? 30 : 300} from={18}>
-            <WeatherCard weather={weather} onPress={goToCalendar} />
-          </Entrance>
+        {/* ── Today's sky ── */}
+        <Entrance delay={booted ? 30 : 300} from={18}>
+          <WeatherCard weather={weather} onPress={goToCalendar} />
+        </Entrance>
 
-          {/* ── Nothing left to do ──
+        {/* ── Nothing left to do ──
             Only shown when the day is clear. What used to sit here otherwise
             was a third copy of a task that is already in the list below. */}
-          <Entrance key={`focus-${selectedStr}`} delay={booted ? 70 : 360} from={20}>
-            {focus.head ? null : (
-              <View style={styles.doneCard}>
-                <View style={styles.doneBadge}>
-                  <CircleCheckBig color={AURA.green.ink} size={22} strokeWidth={2.2} />
-                </View>
-                <View style={{ flex: 1 }}>
-                  <Text style={[styles.doneTitle, start]}>{t('home.allDone')}</Text>
-                  <Text style={[styles.doneBody, start]}>{t('home.allDoneBody')}</Text>
-                </View>
+        <Entrance key={`focus-${selectedStr}`} delay={booted ? 70 : 360} from={20}>
+          {focus.head ? null : (
+            <View style={styles.doneCard}>
+              <View style={styles.doneBadge}>
+                <CircleCheckBig color={AURA.green.ink} size={22} strokeWidth={2.2} />
               </View>
-            )}
-          </Entrance>
+              <View style={{ flex: 1 }}>
+                <Text style={[styles.doneTitle, start]}>{t('home.allDone')}</Text>
+                <Text style={[styles.doneBody, start]}>{t('home.allDoneBody')}</Text>
+              </View>
+            </View>
+          )}
+        </Entrance>
 
-          {/* ── What is on now, and how much the day holds ──
+        {/* ── What is on now, and how much the day holds ──
             One band where there were two: a rectangle two squares wide for the
             thing happening, and a square beside it for the count. */}
-          <Entrance key={`top-${selectedStr}`} delay={booted ? 110 : 410} from={18}>
-            <View style={styles.topRow}>
-              <Pressable
-                onPress={() => (meetings.current ? openItem(meetings.current) : goToCalendar())}
-                style={({ pressed }) => [
-                  styles.nowWide,
-                  { backgroundColor: AURA.yellow.tint },
-                  pressed && styles.pressedDim,
-                ]}
-                accessibilityRole="button"
-              >
-                <View style={styles.nowTop}>
-                  <Text style={styles.nowKicker}>{t('home.now')}</Text>
-                  <CalendarClock color={AURA.yellow.ink} size={18} strokeWidth={2} />
-                </View>
-                <Text style={[styles.nowTitle, start]} numberOfLines={2}>
-                  {meetings.current ? meetings.current.title : t('home.nothingNow')}
-                </Text>
-                {meetings.current ? (
-                  <Text style={[styles.nowMeta, start]} numberOfLines={1}>
-                    {to12h(meetings.current.time)}
-                    {meetings.next ? `  ·  ${t('home.next')} ${to12h(meetings.next.time)}` : ''}
-                  </Text>
-                ) : null}
-              </Pressable>
-
-              <Pressable
-                onPress={goToCalendar}
-                style={({ pressed }) => [
-                  styles.countTile,
-                  { backgroundColor: AURA.blue.tint },
-                  pressed && styles.pressedDim,
-                ]}
-                accessibilityRole="button"
-                accessibilityLabel={t('home.tasksToday', {
-                  count: stats.tasks,
-                })}
-              >
-                <CalendarDays color={AURA.blue.ink} size={22} strokeWidth={2} />
-                <Text style={styles.countNum}>{stats.tasks}</Text>
-                <Text style={[styles.countLabel, start]} numberOfLines={2}>
-                  {t('home.tasksToday', { count: stats.tasks })}
-                </Text>
-              </Pressable>
-            </View>
-          </Entrance>
-
-          {/* ── The four, as four squares ──
-            The bottom bar has always had these four, as glyphs with no names.
-            Here they are said out loud, one square each, with the count that
-            decides whether you need to open it. */}
-          <Text style={[styles.sectionsHead, start]}>{t('home.sections')}</Text>
-          <View style={styles.grid}>
-            <View style={styles.gridRow}>
-              <SectionSquare
-                Icon={ListChecks}
-                label={t('home.section.tasks')}
-                value={t('home.section.open', { count: stats.openTasks })}
-                tile="green"
-                delay={booted ? 130 : 430}
-                onPress={goToTasks}
-              />
-              <SectionSquare
-                Icon={CalendarDays}
-                label={t('home.section.calendar')}
-                value={t('home.section.events', { count: stats.events })}
-                tile="blue"
-                delay={booted ? 165 : 465}
-                onPress={() => goToTab('Calendar')}
-              />
-            </View>
-            <View style={styles.gridRow}>
-              <SectionSquare
-                Icon={ShoppingCart}
-                label={t('home.section.shopping')}
-                tile="yellow"
-                delay={booted ? 200 : 500}
-                onPress={() => goToTab('Shopping')}
-              />
-              <SectionSquare
-                Icon={Wallet}
-                label={t('home.section.finance')}
-                tile="neutral"
-                delay={booted ? 235 : 535}
-                onPress={() => goToTab('Finance')}
-              />
-            </View>
-          </View>
-
-          {/* Where the sheet starts, so the Tasks square knows where to land. */}
-          <View onLayout={(e) => setPanelY(e.nativeEvent.layout.y)} />
-
-          {/* ── The day itself, on its own sheet ── */}
-          <Entrance delay={520} from={40} style={styles.panelWrap}>
-            <View style={styles.panel}>
-              <View style={styles.panelHead}>
-                <View style={{ flex: 1 }}>
-                  <Text style={[styles.panelTitle, start]}>{t('today.yourTasks')}</Text>
-                  <Text style={[styles.panelSub, start]}>
-                    {t('today.completedOf', {
-                      done: stats.done,
-                      total: stats.total,
-                    })}
-                  </Text>
-                </View>
-                <SegToggle value={filter} onChange={setFilter} />
+        <Entrance key={`top-${selectedStr}`} delay={booted ? 110 : 410} from={18}>
+          <View style={styles.topRow}>
+            <Pressable
+              onPress={() => (meetings.current ? openItem(meetings.current) : goToCalendar())}
+              style={({ pressed }) => [
+                styles.nowWide,
+                { backgroundColor: AURA.yellow.tint },
+                pressed && styles.pressedDim,
+              ]}
+              accessibilityRole="button"
+            >
+              <View style={styles.nowTop}>
+                <Text style={styles.nowKicker}>{t('home.now')}</Text>
+                <CalendarClock color={AURA.yellow.ink} size={18} strokeWidth={2} />
               </View>
+              <Text style={[styles.nowTitle, start]} numberOfLines={2}>
+                {meetings.current ? meetings.current.title : t('home.nothingNow')}
+              </Text>
+              {meetings.current ? (
+                <Text style={[styles.nowMeta, start]} numberOfLines={1}>
+                  {to12h(meetings.current.time)}
+                  {meetings.next ? `  ·  ${t('home.next')} ${to12h(meetings.next.time)}` : ''}
+                </Text>
+              ) : null}
+            </Pressable>
 
-              <PanelProgress pct={stats.pct} />
+            <Pressable
+              onPress={goToCalendar}
+              style={({ pressed }) => [
+                styles.countTile,
+                { backgroundColor: AURA.blue.tint },
+                pressed && styles.pressedDim,
+              ]}
+              accessibilityRole="button"
+              accessibilityLabel={t('home.tasksToday', { count: stats.tasks })}
+            >
+              <CalendarDays color={AURA.blue.ink} size={22} strokeWidth={2} />
+              <Text style={styles.countNum}>{stats.tasks}</Text>
+              <Text style={[styles.countLabel, start]} numberOfLines={2}>
+                {t('home.tasksToday', { count: stats.tasks })}
+              </Text>
+            </Pressable>
+          </View>
+        </Entrance>
 
-              {visible.length === 0 ? (
-                <View style={styles.empty}>
-                  <Text style={styles.emptyTitle}>{t('today.empty.title')}</Text>
-                  <Text style={styles.emptyBody}>{t('today.empty.body')}</Text>
-                </View>
-              ) : (
-                visible.map((item, index) => (
-                  <Entrance
-                    // Rows re-stagger when the day or the filter changes: the
-                    // key remounts them, and mounting is what animates.
-                    key={`${selectedStr}-${filter}-${item.kind}-${item.id}`}
-                    delay={80 + index * 60}
-                  >
-                    <TaskRow
-                      item={item}
-                      tile={rowTile(index)}
-                      status={rowStatus(item, now)}
-                      index={index}
-                      onOpen={() => openItem(item)}
-                      onToggle={() => toggleDone(item)}
-                      onSnooze={() => snooze(item)}
-                    />
-                  </Entrance>
-                ))
-              )}
+        {/* ── The day itself, on its own sheet ── */}
+        <Entrance delay={520} from={40} style={styles.panelWrap}>
+          <View style={styles.panel}>
+            <View style={styles.panelHead}>
+              <View style={{ flex: 1 }}>
+                <Text style={[styles.panelTitle, start]}>{t('today.yourTasks')}</Text>
+                <Text style={[styles.panelSub, start]}>
+                  {t('today.completedOf', { done: stats.done, total: stats.total })}
+                </Text>
+              </View>
+              <SegToggle value={filter} onChange={setFilter} />
             </View>
-          </Entrance>
-        </View>
+
+            <PanelProgress pct={stats.pct} />
+
+            {visible.length === 0 ? (
+              <View style={styles.empty}>
+                <Text style={styles.emptyTitle}>{t('today.empty.title')}</Text>
+                <Text style={styles.emptyBody}>{t('today.empty.body')}</Text>
+              </View>
+            ) : (
+              visible.map((item, index) => (
+                <Entrance
+                  // Rows re-stagger when the day or the filter changes: the
+                  // key remounts them, and mounting is what animates.
+                  key={`${selectedStr}-${filter}-${item.kind}-${item.id}`}
+                  delay={80 + index * 60}
+                >
+                  <TaskRow
+                    item={item}
+                    tile={rowTile(index)}
+                    status={rowStatus(item, now)}
+                    index={index}
+                    onOpen={() => openItem(item)}
+                    onToggle={() => toggleDone(item)}
+                    onSnooze={() => snooze(item)}
+                  />
+                </Entrance>
+              ))
+            )}
+          </View>
+        </Entrance>
       </ScrollView>
 
       {/* ── What the number on the ring is made of ── */}
@@ -1176,10 +1001,7 @@ export default function TodayScreen() {
               key={`${item.kind}-${item.id}`}
               onPress={() => {
                 setSheet(null);
-                navigation.navigate('EntryForm', {
-                  kind: item.kind,
-                  id: item.id,
-                });
+                navigation.navigate('EntryForm', { kind: item.kind, id: item.id });
               }}
               style={styles.sheetRow}
               accessibilityRole="button"
@@ -1207,36 +1029,19 @@ const styles = StyleSheet.create({
 
   /** The only colour in the block — a hairline rule, not a filled chip. */
 
-  // ── The white sheet the day sits on ──
-  pageSheet: {
-    flexGrow: 1,
-    backgroundColor: colors.surface,
-    borderTopStartRadius: 34,
-    borderTopEndRadius: 34,
-    // Out to the screen edges: Screen pads the page, and the sheet has to
-    // undo that padding to reach them, then put it back inside itself.
-    marginHorizontal: -(spacing.md + 4),
-    paddingHorizontal: spacing.md + 4,
-    paddingTop: spacing.lg,
-    marginTop: spacing.sm,
-  },
-
   // ── Week strip ──
-  strip: { marginTop: spacing.sm, flexGrow: 0 },
+  strip: { marginTop: spacing.md, flexGrow: 0 },
   stripContent: { alignItems: 'center', gap: PILL_GAP, paddingVertical: 12 },
   pill: {
     width: PILL_W,
     height: 74,
     borderRadius: 25,
-    // A hole in the band rather than a card on it: filled white, seven white
-    // pills would compete with the one that is actually chosen.
-    backgroundColor: BAND.line,
+    backgroundColor: colors.surface,
     alignItems: 'center',
     justifyContent: 'center',
     gap: 2,
     borderWidth: 1,
-    borderColor: BAND.line,
-    overflow: 'hidden',
+    borderColor: colors.border,
   },
   pillSelectedEdge: { borderColor: 'transparent' },
   pillGradient: {
@@ -1250,16 +1055,14 @@ const styles = StyleSheet.create({
     borderWidth: 2,
     borderColor: IRIDESCENT[1],
   },
-  pillDay: { fontSize: 18, ...font(700), color: BAND.ink },
-  /** Near-black once the gradient is behind it — the pairing every chosen thing uses. */
-  pillDaySelected: { color: colors.text },
-  pillWd: { fontSize: 11.5, ...font(600), color: BAND.sub },
+  pillDay: { fontSize: 18, ...font(700), color: colors.text },
+  pillWd: { fontSize: 11.5, ...font(600), color: colors.textMuted },
   pillWdSelected: { color: colors.text },
   pillDot: {
     width: 5,
     height: 5,
     borderRadius: 2.5,
-    backgroundColor: BAND.sub,
+    backgroundColor: colors.alert,
     marginTop: 2,
   },
 
@@ -1316,19 +1119,8 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
   },
-  doneTitle: {
-    fontSize: 18,
-    ...font(700),
-    color: colors.text,
-    letterSpacing: -0.3,
-  },
-  doneBody: {
-    fontSize: 13.5,
-    ...font(500),
-    color: colors.text,
-    opacity: 0.7,
-    marginTop: 2,
-  },
+  doneTitle: { fontSize: 18, ...font(700), color: colors.text, letterSpacing: -0.3 },
+  doneBody: { fontSize: 13.5, ...font(500), color: colors.text, opacity: 0.7, marginTop: 2 },
 
   /** Smaller on purpose: the next meeting is context, not the headline. */
 
@@ -1342,11 +1134,7 @@ const styles = StyleSheet.create({
     padding: 14,
     justifyContent: 'space-between',
   },
-  nowTop: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-  },
+  nowTop: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' },
   nowKicker: {
     fontSize: 11,
     ...font(700),
@@ -1363,13 +1151,7 @@ const styles = StyleSheet.create({
     lineHeight: 22,
     marginTop: 6,
   },
-  nowMeta: {
-    fontSize: 12.5,
-    ...font(600),
-    color: colors.text,
-    opacity: 0.65,
-    marginTop: 4,
-  },
+  nowMeta: { fontSize: 12.5, ...font(600), color: colors.text, opacity: 0.65, marginTop: 4 },
 
   countTile: {
     flex: 1,
@@ -1393,57 +1175,25 @@ const styles = StyleSheet.create({
     marginTop: 1,
   },
 
-  // ── The four, as four squares ──
-  sectionsHead: {
-    fontSize: 18,
-    ...font(700),
-    color: colors.text,
-    letterSpacing: -0.3,
-    marginTop: spacing.lg,
-    marginBottom: spacing.sm + 2,
-  },
-  grid: { gap: 10 },
-  gridRow: { flexDirection: 'row', gap: 10 },
-  squareWrap: { flex: 1 },
-  square: {
-    // Square, not a card: the four are peers, and a row of equal squares is
-    // the shortest way to say so.
-    aspectRatio: 1,
-    borderRadius: radius.md,
-    padding: 14,
-    justifyContent: 'space-between',
-  },
-  squareBadge: {
-    width: 38,
-    height: 38,
-    borderRadius: 13,
-    backgroundColor: colors.surface,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  squareValue: {
-    fontSize: 13,
-    ...font(600),
-    color: colors.text,
-    opacity: 0.62,
-    marginBottom: 1,
-  },
-  squareLabel: {
-    fontSize: 17,
-    ...font(700),
-    color: colors.text,
-    letterSpacing: -0.3,
-  },
-
   // ── The sheet the day sits on ──
   panelWrap: {
     flexGrow: 1,
-    marginTop: spacing.lg,
+    marginTop: spacing.md,
+    marginHorizontal: -(spacing.md + 4),
   },
-  /** Now just the last block on the sheet, not a sheet of its own. */
   panel: {
     flex: 1,
+    backgroundColor: colors.surface,
+    borderTopStartRadius: 30,
+    borderTopEndRadius: 30,
+    paddingHorizontal: spacing.md + 4,
+    paddingTop: spacing.lg,
     paddingBottom: TAB_BAR_CLEARANCE,
+    shadowColor: '#14150F',
+    shadowOffset: { width: 0, height: -6 },
+    shadowOpacity: 0.05,
+    shadowRadius: 16,
+    elevation: 4,
   },
   panelHead: {
     flexDirection: 'row',
@@ -1451,18 +1201,8 @@ const styles = StyleSheet.create({
     gap: 12,
     marginBottom: spacing.md,
   },
-  panelTitle: {
-    fontSize: 22,
-    ...font(700),
-    color: colors.text,
-    letterSpacing: -0.5,
-  },
-  panelSub: {
-    fontSize: 13,
-    ...font(500),
-    color: colors.textMuted,
-    marginTop: 2,
-  },
+  panelTitle: { fontSize: 22, ...font(700), color: colors.text, letterSpacing: -0.5 },
+  panelSub: { fontSize: 13, ...font(500), color: colors.textMuted, marginTop: 2 },
 
   toggle: {
     width: THUMB_TRAVEL * 2 + 8,
@@ -1505,12 +1245,7 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
   },
-  rowRing: {
-    width: 40,
-    height: 40,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
+  rowRing: { width: 40, height: 40, alignItems: 'center', justifyContent: 'center' },
   rowRingText: { fontSize: 10, ...font(700) },
   rowTitle: { fontSize: 16, ...font(700), color: colors.text },
   rowTitleDone: { textDecorationLine: 'line-through', opacity: 0.55 },
@@ -1567,19 +1302,8 @@ const styles = StyleSheet.create({
     marginBottom: spacing.sm,
   },
   sheetHead: { flexDirection: 'row', alignItems: 'flex-start', gap: 12 },
-  sheetTitle: {
-    fontSize: 20,
-    ...font(700),
-    color: colors.text,
-    letterSpacing: -0.4,
-  },
-  sheetBody: {
-    fontSize: 14,
-    ...font(500),
-    color: colors.text,
-    opacity: 0.62,
-    marginTop: 3,
-  },
+  sheetTitle: { fontSize: 20, ...font(700), color: colors.text, letterSpacing: -0.4 },
+  sheetBody: { fontSize: 14, ...font(500), color: colors.text, opacity: 0.62, marginTop: 3 },
   sheetClose: {
     width: 34,
     height: 34,
@@ -1597,12 +1321,7 @@ const styles = StyleSheet.create({
     paddingVertical: 14,
   },
   sheetStatLabel: { flex: 1, fontSize: 15, ...font(600), color: colors.text },
-  sheetStatValue: {
-    fontSize: 22,
-    ...font(700),
-    color: colors.text,
-    letterSpacing: -0.4,
-  },
+  sheetStatValue: { fontSize: 22, ...font(700), color: colors.text, letterSpacing: -0.4 },
   sheetRow: {
     flexDirection: 'row',
     alignItems: 'center',

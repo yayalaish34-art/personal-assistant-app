@@ -248,7 +248,7 @@ const live = <T extends { deletedAt: string | null }>(rows: T[]) =>
  * never saw a new set. Storing the version instead lets a changed sample reach
  * an install that is already running.
  */
-const SEED_VERSION = '3';
+const SEED_VERSION = '4';
 
 /** Work and life, mixed the way a real month is. */
 const TASK_POOL: [title: string, notes: string, hour: number][] = [
@@ -280,7 +280,12 @@ const TASK_POOL: [title: string, notes: string, hour: number][] = [
 ];
 
 /** A trolley mid-week: some of it already picked up. */
-const SHOPPING_POOL: [name: string, qty: string | null, note: string | null, cat: ShoppingCategory][] = [
+const SHOPPING_POOL: [
+  name: string,
+  qty: string | null,
+  note: string | null,
+  cat: ShoppingCategory,
+][] = [
   ['Milk', '2', null, 'dairy'],
   ['Bread', null, 'The seeded one', 'bakery'],
   ['Eggs', '12', null, 'dairy'],
@@ -340,7 +345,14 @@ const EXPENSE_POOL: [desc: string, amount: number, cat: ExpenseCategory, day: nu
 ];
 
 /** Money owed in both directions, some already settled. */
-const DEBT_POOL: [dir: 'owe' | 'owed', person: string, amount: number, desc: string, day: number, settled: boolean][] = [
+const DEBT_POOL: [
+  dir: 'owe' | 'owed',
+  person: string,
+  amount: number,
+  desc: string,
+  day: number,
+  settled: boolean,
+][] = [
   ['owed', 'Maya', 450, 'Concert tickets', 4, false],
   ['owe', 'Dad', 2000, 'Car insurance', 2, false],
   ['owed', 'Yoni', 120, 'Lunch', 11, false],
@@ -398,7 +410,7 @@ async function seedOnce(): Promise<void> {
   const tasks: Task[] = [];
   for (let day = 1; day <= daysInMonth; day++) {
     // Today carries a full plate; every other day one or two things.
-    const count = day === todayDate ? 4 : ((day % 3) === 0 ? 2 : 1);
+    const count = day === todayDate ? 7 : day % 3 === 0 ? 2 : 1;
     for (let k = 0; k < count; k++) {
       const [title, notes, hour] = TASK_POOL[(day * 2 + k) % TASK_POOL.length];
       tasks.push({
@@ -410,8 +422,13 @@ async function seedOnce(): Promise<void> {
         // What is behind us is mostly done, and part of today is too — a day
         // with nothing ticked off leaves the completion card and the
         // productivity line both reading zero, which says nothing at all.
+        //
+        // Today's ticks alternate down the first five rather than sitting on
+        // the front: a morning is done in the order things came up, not top
+        // to bottom, and it puts a done row next to an open one so both are
+        // on screen at once.
         isDone:
-          day < todayDate ? (day + k) % 5 !== 0 : day === todayDate ? k < 2 : false,
+          day < todayDate ? (day + k) % 5 !== 0 : day === todayDate ? k < 5 && k % 2 === 0 : false,
         createdAt: stamp,
         updatedAt: stamp,
         deletedAt: null,
@@ -441,7 +458,7 @@ async function seedOnce(): Promise<void> {
   for (let day = 1; day <= daysInMonth; day++) {
     const weekday = new Date(year, month, day).getDay();
     if (weekday === 6) continue; // Saturday stays clear
-    const count = day === todayDate ? 4 : ((day % 2) === 0 ? 2 : 1);
+    const count = day === todayDate ? 4 : day % 2 === 0 ? 2 : 1;
     for (let k = 0; k < count; k++) {
       const [title, note, hour, minute] = EVENT_POOL[(day * 3 + k) % EVENT_POOL.length];
       events.push({
@@ -502,18 +519,20 @@ async function seedOnce(): Promise<void> {
     })),
   ];
 
-  const debts: Debt[] = DEBT_POOL.map(([direction, person, amount, description, day, isSettled]) => ({
-    id: uuid(),
-    direction,
-    person,
-    amount,
-    description,
-    date: dayStr(year, month, Math.min(day, daysInMonth)),
-    isSettled,
-    createdAt: stamp,
-    updatedAt: stamp,
-    deletedAt: null,
-  }));
+  const debts: Debt[] = DEBT_POOL.map(
+    ([direction, person, amount, description, day, isSettled]) => ({
+      id: uuid(),
+      direction,
+      person,
+      amount,
+      description,
+      date: dayStr(year, month, Math.min(day, daysInMonth)),
+      isSettled,
+      createdAt: stamp,
+      updatedAt: stamp,
+      deletedAt: null,
+    }),
+  );
 
   const [haveEvents, haveTasks, haveShopping, haveMoney, haveDebts] = await Promise.all([
     readList<Event>(KEYS.events),
@@ -634,9 +653,7 @@ export const api = {
       location: e.location ?? null,
       startsAt: e.startsAt,
       // Default duration matches what the old backend applied.
-      endsAt:
-        e.endsAt ??
-        new Date(new Date(e.startsAt).getTime() + 60 * 60 * 1000).toISOString(),
+      endsAt: e.endsAt ?? new Date(new Date(e.startsAt).getTime() + 60 * 60 * 1000).toISOString(),
       reminderMinutesBefore: e.reminderMinutesBefore ?? null,
       createdAt: nowIso(),
       updatedAt: e.updatedAt,

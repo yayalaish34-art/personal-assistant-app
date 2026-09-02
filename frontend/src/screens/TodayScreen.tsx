@@ -898,6 +898,31 @@ export default function TodayScreen() {
           ))}
         </ScrollView>
 
+        {/* ── The day, in one line, on the dark ──
+            The band had the greeting and the week and then a stretch of empty
+            black before the card. This fills it with the two things that were
+            worth saying up here anyway: what the day amounts to, and the next
+            thing on it. Both are already on this screen further down — the
+            point of repeating them here is that the band is what you see
+            before scrolling, and it was saying nothing. */}
+        <Entrance key={`band-${selectedStr}`} delay={booted ? 90 : 250} from={14}>
+          <View style={styles.bandLine}>
+            <Text style={[styles.bandCount, start]} numberOfLines={1}>
+              {t('today.completedOf', { done: stats.done, total: stats.total })}
+            </Text>
+            <View style={styles.bandBar}>
+              <View style={[styles.bandBarFill, { width: `${stats.pct}%` }]} />
+            </View>
+            <Text style={[styles.bandNext, start]} numberOfLines={1}>
+              {meetings.current
+                ? `${t('home.now')} · ${meetings.current.title}`
+                : focus.head
+                  ? `${t('home.next')} · ${focus.head.title}`
+                  : t('today.noEvents')}
+            </Text>
+          </View>
+        </Entrance>
+
         {/* ── The sheet ──
             Everything that is not the greeting or the week lives on one white
             surface, lifted onto the band by its two rounded top corners. It
@@ -1093,15 +1118,17 @@ const styles = StyleSheet.create({
     marginHorizontal: -(spacing.md + 4),
     paddingHorizontal: spacing.md + 4,
     paddingTop: spacing.lg,
-    // Room under the rail, so the pills sit well inside the dark rather than
-    // balanced on the join, and the black reads as a band rather than a
-    // margin above the content. Deep enough that the dark is the top third of
-    // the screen and clearly the thing the greeting and the week sit *on*.
+    // Room under the day's line, so it sits well inside the dark rather than
+    // balanced on the join, and the black reads as a band rather than a margin
+    // above the content.
     //
-    // The dark follows this: the band is drawn to the card's measured top, so
-    // the gap this opens is filled with black rather than showing as a strip
-    // of page between the two.
-    marginTop: spacing.xl * 3,
+    // Smaller than it was, and the band is no shallower for it: this used to
+    // carry the whole depth on its own with nothing in it, and the line under
+    // the week now takes up most of what this was holding open. The dark
+    // follows the card either way — the band is drawn to its measured top — so
+    // this number sets how much empty black is left under the content, not how
+    // much black there is.
+    marginTop: spacing.lg,
     // No negative bottom margin here. Under flexGrow the card is sized to the
     // free space and the margin applied after, so a negative one shrinks its
     // box and lifts the bottom edge off the floor — which is exactly the gap
@@ -1110,7 +1137,20 @@ const styles = StyleSheet.create({
   },
 
   // ── Week strip ──
-  strip: { marginTop: spacing.sm, flexGrow: 0 },
+  // ── What sits on the dark, under the week ──
+  bandLine: { marginTop: spacing.md, gap: 8 },
+  bandCount: { fontSize: 15, ...font(600), color: BAND.ink, opacity: 0.9 },
+  /** The day's progress, as a hairline the width of the band. */
+  bandBar: {
+    height: 4,
+    borderRadius: 2,
+    backgroundColor: BAND.line,
+    overflow: 'hidden',
+  },
+  bandBarFill: { height: '100%', borderRadius: 2, backgroundColor: BAND.ink, opacity: 0.85 },
+  bandNext: { fontSize: 13.5, ...font(500), color: BAND.sub },
+
+  strip: { marginTop: spacing.lg, flexGrow: 0 },
   stripContent: { alignItems: 'center', gap: PILL_GAP, paddingVertical: 12 },
   pill: {
     width: PILL_W,

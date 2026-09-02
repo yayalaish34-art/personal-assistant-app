@@ -160,7 +160,7 @@ export function GreetingHeader({
       .join('') || 'U';
 
   return (
-    <View style={styles.greetingRow} onLayout={onLayout}>
+    <View style={[styles.greetingRow, onDark && styles.greetingRowOnDark]} onLayout={onLayout}>
       <View style={[styles.avatar, onDark && styles.avatarOnDark]}>
         <Text style={[styles.avatarInitials, onDark && styles.inkOnDark]}>{initials}</Text>
         {photoUri ? <Image source={{ uri: photoUri }} style={styles.avatarPhoto} /> : null}
@@ -302,6 +302,14 @@ const styles = StyleSheet.create({
 
 
   greetingRow: { flexDirection: 'row', alignItems: 'center', gap: 12 },
+  /**
+   * On a dark band the row drops away from the status bar.
+   *
+   * Pinned to the top it read as a title bar — the app's chrome, in black.
+   * With air above it, it is a greeting standing on a dark ground, which is
+   * what the band is for.
+   */
+  greetingRowOnDark: { marginTop: spacing.md + spacing.xs },
   avatar: {
     width: 46,
     height: 46,

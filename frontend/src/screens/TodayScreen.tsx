@@ -36,7 +36,7 @@ import {
 } from 'lucide-react-native';
 
 import { Screen, GreetingHeader } from '../components/ui';
-import { Entrance, useFloat } from '../components/motion';
+import { Entrance, useFloat, usePressScale } from '../components/motion';
 import { api } from '../lib/api';
 import { storage } from '../lib/storage';
 import { statusOf, to12h, toDateStr, eventToItem, taskToItem, type AgendaItem } from '../lib/tasks';
@@ -94,7 +94,18 @@ type Nav = NativeStackNavigationProp<RootStackParamList>;
 
 const PROFILE_PHOTO_URI = 'https://i.pravatar.cc/220?img=47';
 
+/** How far the band drifts up while the sheet climbs over it. */
+const BAND_PARALLAX = 28;
+
+/** How far the sheet's white runs on below its own content. */
+const SHEET_BACKING = 1200;
+
+/** The sheet's top radius. The backing starts below it, so the curve shows. */
+const BAND_RADIUS = 44;
+
 const AnimatedCircle = Animated.createAnimatedComponent(Circle);
+/** A Pressable that can be scaled by a driver, for tiles that press in. */
+const AnimatedPressable = Animated.createAnimatedComponent(Pressable);
 
 /** "Good morning" / "Good afternoon" / "Good evening", by the clock. */
 function greetingNow(): string {
@@ -621,31 +632,57 @@ export default function TodayScreen() {
   const [filter, setFilter] = useState<'left' | 'done'>('left');
   const [sheet, setSheet] = useState<'progress' | 'alerts' | null>(null);
   /**
-   * Where the white card's top edge is, so the dark behind it can stop in
-   * exactly the same place. Measured rather than computed: everything above
-   * the card feeds into it, and a constant goes stale the first time any of
-   * that changes size.
+   * How tall the dark's content is.
    *
-   * Measured against the window, not against the card's own parent. Adding the
-   * greeting's height to the card's offset inside the scroll misses everything
-   * between the two — the scroll's own padding, for one — and the dark then
-   * stopped 20px short of the card with the page's white showing through the
-   * gap as a bar. `measureInWindow` is the one number that cannot drift,
-   * because it is the same origin the band is positioned from.
+   * It sets two things at once, which is why it is measured rather than
+   * guessed: the scroll's top padding, so the sheet starts below the band, and
+   * the band's own depth, so the dark ends exactly where the sheet begins.
+   * Everything on the band feeds into it — a greeting that wraps to two lines,
+   * a longer "next" title — and a constant goes stale the first time any of
+   * that changes.
    */
-  const [cardTop, setCardTop] = useState<number | undefined>(undefined);
-  const cardRef = useRef<View>(null);
-  /** Re-measures the seam once layout has settled. */
-  const measureSeam = useCallback(() => {
-    cardRef.current?.measureInWindow((_x, y) => {
-      // Rounded: a fractional height leaves a hairline of page showing between
-      // the dark and the card on a fractional-DPR screen.
-      setCardTop((prev) => {
-        const next = Math.ceil(y);
-        return prev !== undefined && Math.abs(prev - next) < 1 ? prev : next;
-      });
-    });
-  }, []);
+  const [bandH, setBandH] = useState(0);
+  /**
+   * How far the sheet has travelled up over the band.
+   *
+   * Driven straight from the scroll offset and clamped to the band's depth: at
+   * the top the sheet sits under the band, and by the time you have scrolled
+   * the band's height it has covered it completely. Native-driven, so the
+   * curve keeps up with the finger.
+   */
+  const lift = useRef(new Animated.Value(0)).current;
+  const onScroll = useMemo(
+    () => Animated.event([{ nativeEvent: { contentOffset: { y: lift } } }], { useNativeDriver: true }),
+    [lift],
+  );
+  /**
+   * The sheet's own rise, on top of the scroll's.
+   *
+   * The scroll already moves the sheet one-for-one; this is the *extra* travel
+   * that carries it up over the fixed band, and it only has to make up the gap
+   * the band's own depth leaves under it. Interpolating the full band height
+   * here instead moved the sheet at double speed and shot it off the top.
+   *
+   * Zero, in other words: the padding places the sheet below the band and the
+   * scroll lifts it from there, which is exactly the effect asked for. What
+   * this interpolation is really for is the *parallax* — the band drifting up
+   * a little as the sheet climbs, so the two are not welded together.
+   *
+   * `extrapolate: 'clamp'` on both ends: past the band it stops (the sheet is
+   * already covering everything), and on an overscroll bounce at the top it
+   * stops falling, which would otherwise open a gap under the greeting.
+   */
+  const bandDrift = lift.interpolate({
+    inputRange: [0, Math.max(bandH, 1)],
+    outputRange: [0, -BAND_PARALLAX],
+    extrapolate: 'clamp',
+  });
+  /** The band's content fades as the sheet swallows it. */
+  const bandFade = lift.interpolate({
+    inputRange: [0, Math.max(bandH, 1) * 0.75],
+    outputRange: [1, 0.15],
+    extrapolate: 'clamp',
+  });
 
   const today = toDateStr(new Date());
   const [selectedStr, setSelectedStr] = useState(today);
@@ -854,28 +891,39 @@ export default function TodayScreen() {
    * inside the scroll. Undefined until both halves have reported, which
    * leaves Screen on its computed first-frame value for one pass.
    */
-  const bandBottom = cardTop;
+  /** The dark runs to the foot of its own content. */
+  const bandTop = bandH || undefined;
 
   const start = { textAlign: alignStart() } as const;
   const stripMirror = isRTL() ? [{ scaleX: -1 as number }] : undefined;
 
   const rowTile = (index: number) => AURA_CYCLE[index % AURA_CYCLE.length];
 
-  return (
-    <Screen clearTabBar={false} topBand bandBottom={bandBottom}>
-      <GreetingHeader
-        name={`${greetingNow()}, ${name || t('today.friend')}!`}
-        photoUri={PROFILE_PHOTO_URI}
-        onBellPress={() => openSheet('alerts')}
-        onDark
-        // The greeting sits above the card, so its height moves the seam.
-        onLayout={measureSeam}
-      />
+  // The two tiles under the band give under the finger rather than dimming.
+  const nowPress = usePressScale();
+  const countPress = usePressScale();
 
-      <ScrollView
-        showsVerticalScrollIndicator={false}
-        contentContainerStyle={styles.content}
+  return (
+    <Screen clearTabBar={false} topBand bandBottom={bandTop} bandCap={false}>
+      {/* ── The dark, and everything standing on it ──
+          Outside the scroll, so it does not move. The white sheet slides up
+          over this on its own; the band stays where it is and is progressively
+          covered, which is what makes the sheet read as a sheet rather than as
+          a page that happens to be two colours. */}
+      <Animated.View
+        style={[
+          styles.bandContent,
+          { opacity: bandFade, transform: [{ translateY: bandDrift }] },
+        ]}
+        onLayout={(e) => setBandH(e.nativeEvent.layout.height)}
       >
+        <GreetingHeader
+          name={`${greetingNow()}, ${name || t('today.friend')}!`}
+          photoUri={PROFILE_PHOTO_URI}
+          onBellPress={() => openSheet('alerts')}
+          onDark
+        />
+
         {/* ── The week, one pill a day, the chosen one in the holographic fill ── */}
         <ScrollView
           ref={stripRef}
@@ -898,13 +946,7 @@ export default function TodayScreen() {
           ))}
         </ScrollView>
 
-        {/* ── The day, in one line, on the dark ──
-            The band had the greeting and the week and then a stretch of empty
-            black before the card. This fills it with the two things that were
-            worth saying up here anyway: what the day amounts to, and the next
-            thing on it. Both are already on this screen further down — the
-            point of repeating them here is that the band is what you see
-            before scrolling, and it was saying nothing. */}
+        {/* ── The day, in one line, on the dark ── */}
         <Entrance key={`band-${selectedStr}`} delay={booted ? 90 : 250} from={14}>
           <View style={styles.bandLine}>
             <Text style={[styles.bandCount, start]} numberOfLines={1}>
@@ -922,13 +964,31 @@ export default function TodayScreen() {
             </Text>
           </View>
         </Entrance>
+      </Animated.View>
 
+      <ScrollView
+        showsVerticalScrollIndicator={false}
+        contentContainerStyle={[styles.content, { paddingTop: bandH }]}
+        onScroll={onScroll}
+        scrollEventThrottle={16}
+        // The sheet slides over the band, so the scroll view itself must not
+        // paint or clip above it.
+        style={styles.scroll}
+      >
         {/* ── The sheet ──
             Everything that is not the greeting or the week lives on one white
             surface, lifted onto the band by its two rounded top corners. It
             grows with the content rather than being a fixed height: the day's
-            list is inside it, and the list is as long as the day. */}
-        <View ref={cardRef} style={styles.pageSheet} onLayout={measureSeam}>
+            list is inside it, and the list is as long as the day.
+
+            It rises over the band on scroll: the band is outside this scroll
+            view and does not move, the content is padded down past it, and so
+            scrolling carries the sheet up over a stationary dark. No transform
+            on the sheet itself — the scroll is already the movement, and
+            adding one on top drove it up at twice the speed. */}
+        <View style={styles.pageSheet}>
+          {/* The white the sheet carries up over the band. */}
+          <View pointerEvents="none" style={styles.sheetBacking} />
           {/* ── Today's sky ── */}
           <Entrance delay={booted ? 30 : 300} from={18}>
             <WeatherCard weather={weather} onPress={goToCalendar} />
@@ -956,12 +1016,13 @@ export default function TodayScreen() {
             thing happening, and a square beside it for the count. */}
           <Entrance key={`top-${selectedStr}`} delay={booted ? 110 : 410} from={18}>
             <View style={styles.topRow}>
-              <Pressable
+              <AnimatedPressable
                 onPress={() => (meetings.current ? openItem(meetings.current) : goToCalendar())}
-                style={({ pressed }) => [
+                onPressIn={nowPress.onPressIn}
+                onPressOut={nowPress.onPressOut}
+                style={[
                   styles.nowWide,
-                  { backgroundColor: AURA.yellow.tint },
-                  pressed && styles.pressedDim,
+                  { backgroundColor: AURA.yellow.tint, transform: [{ scale: nowPress.scale }] },
                 ]}
                 accessibilityRole="button"
               >
@@ -978,16 +1039,17 @@ export default function TodayScreen() {
                     {meetings.next ? `  ·  ${t('home.next')} ${to12h(meetings.next.time)}` : ''}
                   </Text>
                 ) : null}
-              </Pressable>
+              </AnimatedPressable>
 
-              <Pressable
+              <AnimatedPressable
                 onPress={goToCalendar}
-                style={({ pressed }) => [
+                onPressIn={countPress.onPressIn}
+                onPressOut={countPress.onPressOut}
+                style={[
                   styles.countTile,
                   // Green, not blue: the weather card straight above is blue,
                   // and two pale blues stacked read as one block with a seam.
-                  { backgroundColor: AURA.green.tint },
-                  pressed && styles.pressedDim,
+                  { backgroundColor: AURA.green.tint, transform: [{ scale: countPress.scale }] },
                 ]}
                 accessibilityRole="button"
                 accessibilityLabel={t('home.tasksToday', { count: stats.tasks })}
@@ -997,7 +1059,7 @@ export default function TodayScreen() {
                 <Text style={[styles.countLabel, start]} numberOfLines={2}>
                   {t('home.tasksToday', { count: stats.tasks })}
                 </Text>
-              </Pressable>
+              </AnimatedPressable>
             </View>
           </Entrance>
 
@@ -1099,7 +1161,61 @@ const styles = StyleSheet.create({
   /** A press that reads as a press without moving anything under the finger. */
   pressedDim: { opacity: 0.72 },
 
-  content: { paddingTop: spacing.md, flexGrow: 1 },
+  content: { flexGrow: 1, paddingHorizontal: spacing.md + 4 },
+  /**
+   * Transparent, and not clipping.
+   *
+   * The sheet is translated up over the band, so a scroll view that painted
+   * its own background would hide the dark, and one that clipped would cut the
+   * sheet off at its own top edge as it rose.
+   */
+  scroll: {
+    backgroundColor: 'transparent',
+    // Out to the screen edges. The scroll clips to its own box, so while it
+    // sat inside the page's side padding the sheet could not paint the outer
+    // 20px — and the band went on showing there as a black stripe down each
+    // edge, the full height of the page, once the sheet had risen over it.
+    // The padding moves to the content below, so the layout is unchanged.
+    marginHorizontal: -(spacing.md + 4),
+  },
+  /**
+   * The dark's content, fixed above the scrolling sheet.
+   *
+   * Absolute, not in flow. In flow it took its own height out of the page
+   * *and* the scroll below it was padded by that same height, so the sheet
+   * started twice as far down as the band was deep and rested on 250px of
+   * empty black. Out of flow, the padding is the only thing placing the sheet.
+   */
+  bandContent: {
+    position: 'absolute',
+    top: 0,
+    insetInlineStart: 0,
+    insetInlineEnd: 0,
+    paddingHorizontal: spacing.md + 4,
+    // Behind the sheet, so the white passes over the greeting and the week
+    // rather than under them. It is only ever visible above the sheet's top
+    // edge, which is exactly the stretch of dark it belongs to.
+    zIndex: -1,
+  },
+  /**
+   * The sheet's own white, carried down past the end of its content.
+   *
+   * `pageSheet` grows with the day's list, and a short day leaves it shorter
+   * than the screen — so the page's own colour showed under the last row. This
+   * fills the rest, downwards only: upwards is the band's, and a backing that
+   * reached up there painted over the greeting and the week.
+   */
+  sheetBacking: {
+    position: 'absolute',
+    // Below the curve, not across it. Started at the sheet's own top edge this
+    // square-cornered fill painted straight over the two rounded corners and
+    // flattened the seam.
+    top: BAND_RADIUS,
+    insetInlineStart: 0,
+    insetInlineEnd: 0,
+    height: SHEET_BACKING,
+    backgroundColor: colors.surface,
+  },
 
   // ── Hero ──
 
@@ -1111,10 +1227,10 @@ const styles = StyleSheet.create({
     backgroundColor: colors.surface,
     // Only the top two. The bottom corners stay square and follow the
     // viewport, so the curve happens once, where the black meets the white.
-    borderTopStartRadius: 44,
-    borderTopEndRadius: 44,
-    // Out to the screen edges: Screen pads the page, so the card has to undo
-    // that padding to reach them, then put it back inside itself.
+    borderTopStartRadius: BAND_RADIUS,
+    borderTopEndRadius: BAND_RADIUS,
+    // Out to the screen edges: the scroll's content carries the page padding
+    // now, so the sheet undoes that and puts it back inside itself.
     marginHorizontal: -(spacing.md + 4),
     paddingHorizontal: spacing.md + 4,
     paddingTop: spacing.lg,

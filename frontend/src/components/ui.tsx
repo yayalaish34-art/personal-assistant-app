@@ -50,6 +50,7 @@ export function Screen({
   clearTabBar = true,
   topBand = false,
   bandBottom,
+  bandCap = true,
 }: {
   children: ReactNode;
   // Modals (no tab bar) pass false to skip the extra bottom clearance.
@@ -82,6 +83,14 @@ export function Screen({
    * a hard line across the screen.
    */
   bandBottom?: number;
+  /**
+   * Whether this screen wants the white curve painted at the seam.
+   *
+   * A screen whose sheet scrolls draws its own, travelling with the sheet —
+   * one fixed to the page would sit there as a white bar once the sheet had
+   * slid past it.
+   */
+  bandCap?: boolean;
 }) {
   const insets = useSafeAreaInsets();
   const seam = bandBottom ?? Math.max(insets.top, spacing.md) + BAND_DEPTH;
@@ -119,10 +128,12 @@ export function Screen({
               it. This view has the page for a parent and no such limit, so the
               curve is drawn once, in white, over dark that runs the full
               width. */}
-          <View
-            pointerEvents="none"
-            style={[styles.bandCap, { top: seam, height: BAND_CORNER_BLEED }]}
-          />
+          {bandCap ? (
+            <View
+              pointerEvents="none"
+              style={[styles.bandCap, { top: seam, height: BAND_CORNER_BLEED }]}
+            />
+          ) : null}
         </>
       ) : null}
       {children}
@@ -286,6 +297,11 @@ const styles = StyleSheet.create({
     insetInlineEnd: 0,
     backgroundColor: BAND.bg,
     // Square. The cap over it carries the curve.
+    //
+    // Furthest back of anything on the page: on a screen whose sheet scrolls
+    // over it, the sheet has to be able to cover this. Left in front it went
+    // on painting black across the list once the sheet had risen past it.
+    zIndex: -2,
   },
   /**
    * The white, and the only rounded thing at the seam. Full width, so the two

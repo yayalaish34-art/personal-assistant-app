@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import {
   View,
   Text,
@@ -10,18 +10,23 @@ import {
   Easing,
   Image,
   ActivityIndicator,
+  useWindowDimensions,
+  type StyleProp,
+  type TextStyle,
 } from 'react-native';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useNavigation } from '@react-navigation/native';
 import type { NativeStackNavigationProp } from '@react-navigation/native-stack';
 import * as Haptics from 'expo-haptics';
-import { X, Mic, Undo2, RotateCcw, Send } from 'lucide-react-native';
+import { LinearGradient } from 'expo-linear-gradient';
+import Svg, { Circle, Path } from 'react-native-svg';
+import { X, Mic, Undo2, RotateCcw, Send, Sparkles, CheckCheck } from 'lucide-react-native';
 
-import { Screen } from '../components/ui';
 import { api } from '../lib/api';
-import { useVoiceSession } from '../lib/useVoiceSession';
+import { useVoiceSession, type Line } from '../lib/useVoiceSession';
 import type { RootStackParamList } from '../navigation';
-import { colors, spacing, font, AURA } from '../theme';
-import { t, locale, alignStart } from '../lib/i18n';
+import { spacing, font, VOICE } from '../theme';
+import { t, locale, alignStart, isRTL } from '../lib/i18n';
 
 type Nav = NativeStackNavigationProp<RootStackParamList, 'Assistant'>;
 
@@ -59,15 +64,174 @@ function whenLabel(iso: string): string {
     : d.toLocaleDateString(locale(), { weekday: 'short', day: 'numeric', month: 'short' });
 }
 
+/** The clock under a bubble. */
+function stamp(at: number): string {
+  return new Intl.DateTimeFormat(locale(), { hour: '2-digit', minute: '2-digit' }).format(
+    new Date(at),
+  );
+}
+
+/**
+ * Her answer, with the times in it set in bold.
+ *
+ * She is asked things like "how long until the meeting", and the answer is one
+ * clock time buried in a sentence. Weighting it is the difference between
+ * reading the reply and glancing at it. Only `HH:MM` is matched — a bare number
+ * could be anything, and bolding "2" in "2 hours" would be noise.
+ */
+function Said({ text, style }: { text: string; style: StyleProp<TextStyle> }) {
+  const parts = useMemo(() => text.split(/(\d{1,2}:\d{2})/g), [text]);
+  if (parts.length === 1) return <Text style={style}>{text}</Text>;
+  return (
+    <Text style={style}>
+      {parts.map((part, i) =>
+        /^\d{1,2}:\d{2}$/.test(part) ? (
+          <Text key={i} style={styles.saidStrong}>
+            {part}
+          </Text>
+        ) : (
+          part
+        ),
+      )}
+    </Text>
+  );
+}
+
+// ── The sound of her listening ──────────────────────────────────────────────
+
+/** One line of the waveform: a sine, fattest at the middle, gone at the edges. */
+function wavePath(width: number, height: number, freq: number, amp: number, phase: number) {
+  const mid = height / 2;
+  const out: string[] = [];
+  for (let x = 0; x <= width; x += 5) {
+    const nx = (x - width / 2) / (width * 0.3);
+    // A Gaussian envelope, so the sound appears to come out from behind the
+    // orb rather than running edge to edge like a ruled line.
+    const envelope = Math.exp(-nx * nx);
+    const y = mid + Math.sin(x / freq + phase) * amp * envelope;
+    out.push(`${x === 0 ? 'M' : 'L'}${x.toFixed(1)} ${y.toFixed(1)}`);
+  }
+  return out.join(' ');
+}
+
+const WAVE_HEIGHT = 190;
+
+/** The layers, near ones first. Near follows the mic; far only breathes. */
+const NEAR_LAYERS = [
+  { freq: 26, amp: 34, phase: 0, opacity: 0.55, width: 1.6 },
+  { freq: 17, amp: 24, phase: 1.1, opacity: 0.38, width: 1.2 },
+  { freq: 35, amp: 46, phase: 2.2, opacity: 0.24, width: 1.1 },
+];
+const FAR_LAYERS = [
+  { freq: 12, amp: 15, phase: 0.6, opacity: 0.22, width: 1 },
+  { freq: 46, amp: 58, phase: 3.4, opacity: 0.13, width: 1 },
+];
+
+/**
+ * The band of sound behind the orb.
+ *
+ * Two stacked groups rather than one, each scaled vertically on its own: the
+ * near lines answer the microphone, the far ones only breathe. Moved as a
+ * single slab it reads as a picture being stretched; at two rates it reads as
+ * sound. Nothing here recomputes a path per frame — the amplitude is a native
+ * transform, so this stays free while she is listening.
+ */
+function Waveform({ near, far, width }: { near: Animated.AnimatedInterpolation<number>; far: Animated.AnimatedInterpolation<number>; width: number }) {
+  const paths = useMemo(
+    () => ({
+      near: NEAR_LAYERS.map((l) => ({ ...l, d: wavePath(width, WAVE_HEIGHT, l.freq, l.amp, l.phase) })),
+      far: FAR_LAYERS.map((l) => ({ ...l, d: wavePath(width, WAVE_HEIGHT, l.freq, l.amp, l.phase) })),
+    }),
+    [width],
+  );
+
+  const group = (
+    layers: typeof paths.near,
+    scale: Animated.AnimatedInterpolation<number>,
+    key: string,
+  ) => (
+    <Animated.View
+      key={key}
+      pointerEvents="none"
+      style={[styles.waveLayer, { transform: [{ scaleY: scale }] }]}
+    >
+      <Svg width={width} height={WAVE_HEIGHT}>
+        {layers.map((l) => (
+          <Path
+            key={l.d.length + l.freq}
+            d={l.d}
+            stroke={VOICE.wave}
+            strokeOpacity={l.opacity}
+            strokeWidth={l.width}
+            fill="none"
+          />
+        ))}
+      </Svg>
+    </Animated.View>
+  );
+
+  return (
+    <View pointerEvents="none" style={[styles.wave, { width, height: WAVE_HEIGHT }]}>
+      {group(paths.far, far, 'far')}
+      {group(paths.near, near, 'near')}
+    </View>
+  );
+}
+
+const ORBIT_BOX = 258;
+const ORBIT_R = 104;
+
+/** The dotted ring around the orb, and the motes riding it. */
+function Orbit({ spin }: { spin: Animated.AnimatedInterpolation<string> }) {
+  const motes = useMemo(
+    () =>
+      [0.1, 0.32, 0.55, 0.78, 0.93].map((turn) => {
+        const angle = turn * Math.PI * 2;
+        return {
+          cx: ORBIT_BOX / 2 + Math.cos(angle) * (ORBIT_R + 16),
+          cy: ORBIT_BOX / 2 + Math.sin(angle) * (ORBIT_R + 16),
+          r: 1.6 + (turn % 0.3) * 6,
+        };
+      }),
+    [],
+  );
+
+  return (
+    <Animated.View
+      pointerEvents="none"
+      style={[styles.orbit, { transform: [{ rotate: spin }] }]}
+    >
+      <Svg width={ORBIT_BOX} height={ORBIT_BOX}>
+        <Circle
+          cx={ORBIT_BOX / 2}
+          cy={ORBIT_BOX / 2}
+          r={ORBIT_R}
+          stroke={VOICE.orbit}
+          strokeWidth={1.5}
+          strokeDasharray="1.5 10"
+          strokeLinecap="round"
+          fill="none"
+        />
+        {motes.map((m, i) => (
+          <Circle key={i} cx={m.cx} cy={m.cy} r={m.r} fill={VOICE.orbit} />
+        ))}
+      </Svg>
+    </Animated.View>
+  );
+}
+
 /**
  * The assistant, out loud.
  *
- * She opens the conversation, listens, does what she is asked, and answers —
- * there is nothing to type here, by design. The one control is the orb: tap it
- * to say you are finished talking, or to cut in while she is speaking.
+ * She opens the conversation, listens, does what she is asked, and answers.
+ * The one control that matters is the orb: tap it to say you are finished
+ * talking, or to cut in while she is speaking. Typing is there for a noisy
+ * room, not as the way in.
  */
 export default function AssistantScreen() {
   const navigation = useNavigation<Nav>();
+  const insets = useSafeAreaInsets();
+  const { width } = useWindowDimensions();
   const [name, setName] = useState<string>('');
   const scrollRef = useRef<ScrollView>(null);
 
@@ -98,6 +262,7 @@ export default function AssistantScreen() {
   // ── The orb: a slow breath, plus the mic level while she listens ──
   const breath = useRef(new Animated.Value(0)).current;
   const pulse = useRef(new Animated.Value(0)).current;
+  const spin = useRef(new Animated.Value(0)).current;
 
   useEffect(() => {
     const loop = Animated.loop(
@@ -119,6 +284,21 @@ export default function AssistantScreen() {
     loop.start();
     return () => loop.stop();
   }, [breath]);
+
+  // The ring turns once every twenty seconds — slow enough that you notice it
+  // has moved rather than watching it move.
+  useEffect(() => {
+    const loop = Animated.loop(
+      Animated.timing(spin, {
+        toValue: 1,
+        duration: 20_000,
+        easing: Easing.linear,
+        useNativeDriver: true,
+      }),
+    );
+    loop.start();
+    return () => loop.stop();
+  }, [spin]);
 
   useEffect(() => {
     Animated.timing(pulse, {
@@ -164,18 +344,64 @@ export default function AssistantScreen() {
           ? t('voice.hint')
           : '';
 
-  const orbScale = Animated.add(
-    breath.interpolate({ inputRange: [0, 1], outputRange: [1, 1.06] }),
-    pulse.interpolate({ inputRange: [0, 1], outputRange: [0, 0.28] }),
+  const orbScale = Animated.add<number>(
+    breath.interpolate({ inputRange: [0, 1], outputRange: [1, 1.04] }),
+    pulse.interpolate({ inputRange: [0, 1], outputRange: [0, 0.16] }),
   );
+  const haloScale = Animated.add<number>(
+    breath.interpolate({ inputRange: [0, 1], outputRange: [0.98, 1.08] }),
+    pulse.interpolate({ inputRange: [0, 1], outputRange: [0, 0.22] }),
+  );
+  const nearWave = Animated.add<number>(
+    breath.interpolate({ inputRange: [0, 1], outputRange: [0.34, 0.46] }),
+    pulse.interpolate({ inputRange: [0, 1], outputRange: [0, 1.05] }),
+  );
+  const farWave = breath.interpolate({ inputRange: [0, 1], outputRange: [0.55, 0.9] });
+  const turn = spin.interpolate({ inputRange: [0, 1], outputRange: ['0deg', '360deg'] });
 
   const deleted = undoable.filter((c) => c.destructive);
 
+  // Who sits where is physical, not logical: outgoing on the right and hers on
+  // the left is the shape of every chat, and mirroring it in Hebrew makes the
+  // thread read as though the two of you had swapped sides.
+  const rtl = isRTL();
+  const mine = rtl ? ('flex-start' as const) : ('flex-end' as const);
+  const hers = rtl ? ('flex-end' as const) : ('flex-start' as const);
+  const herRow = rtl ? ('row-reverse' as const) : ('row' as const);
+  const start = { textAlign: alignStart() } as const;
+
+  /** The clock, and — on your own lines — the two ticks that say it landed. */
+  const meta = (line: Line) =>
+    line.at ? (
+      <View style={styles.metaRow}>
+        <Text style={styles.metaTime}>{stamp(line.at)}</Text>
+        {line.role === 'user' ? (
+          <CheckCheck color={VOICE.accent} size={14} strokeWidth={2.6} />
+        ) : null}
+      </View>
+    ) : null;
+
   return (
-    <Screen clearTabBar={false}>
+    <View
+      style={[
+        styles.root,
+        {
+          paddingTop: Math.max(insets.top, spacing.md) + spacing.xs,
+          paddingBottom: Math.max(insets.bottom, spacing.md),
+          direction: rtl ? 'rtl' : 'ltr',
+        },
+      ]}
+    >
+      <LinearGradient colors={VOICE.page} style={StyleSheet.absoluteFill} />
+
       <View style={styles.headerRow}>
-        <Pressable onPress={close} style={styles.iconBtn} accessibilityRole="button">
-          <X color={colors.text} size={22} />
+        <Pressable
+          onPress={close}
+          style={styles.iconBtn}
+          accessibilityRole="button"
+          accessibilityLabel={t('common.close')}
+        >
+          <X color={VOICE.ink} size={22} strokeWidth={2.2} />
         </Pressable>
         <Text style={styles.title}>{t('voice.title')}</Text>
         {/* The thread carries across visits, so there has to be a way to drop
@@ -190,7 +416,7 @@ export default function AssistantScreen() {
           accessibilityRole="button"
           accessibilityLabel={t('voice.newChat')}
         >
-          <RotateCcw color={colors.text} size={19} />
+          <RotateCcw color={VOICE.ink} size={19} strokeWidth={2.2} />
         </Pressable>
       </View>
 
@@ -205,7 +431,7 @@ export default function AssistantScreen() {
           // padding and the background that carry text would only box it in.
           if (line.imageUri) {
             return (
-              <View key={line.id} style={styles.imageBubble}>
+              <View key={line.id} style={[styles.imageBubble, { alignSelf: hers }]}>
                 <Image
                   source={{ uri: line.imageUri }}
                   style={styles.image}
@@ -219,9 +445,17 @@ export default function AssistantScreen() {
 
           if (line.drawing) {
             return (
-              <View key={line.id} style={[styles.herBubble, styles.drawingBubble]}>
-                <ActivityIndicator size="small" color={colors.textMuted} />
-                <Text style={styles.herText}>{t('voice.drawing')}</Text>
+              <View
+                key={line.id}
+                style={[styles.herRow, { alignSelf: hers, flexDirection: herRow }]}
+              >
+                <View style={styles.spark}>
+                  <Sparkles color={VOICE.accent} size={17} strokeWidth={2.2} />
+                </View>
+                <View style={[styles.herBubble, styles.drawingBubble]}>
+                  <ActivityIndicator size="small" color={VOICE.accent} />
+                  <Text style={styles.herText}>{t('voice.drawing')}</Text>
+                </View>
               </View>
             );
           }
@@ -229,60 +463,73 @@ export default function AssistantScreen() {
           const offer = line.offer;
           const showOffer = offer && offer.options.length > 0;
 
+          if (line.role === 'user') {
+            return (
+              <View key={line.id} style={[styles.meBubble, { alignSelf: mine }]}>
+                <Text style={[styles.meText, start]}>{line.text}</Text>
+                {meta(line)}
+              </View>
+            );
+          }
+
           return (
             <View
               key={line.id}
               style={[
-                line.role === 'user' ? styles.userBubble : styles.herBubble,
-                showOffer && styles.offerBubble,
+                styles.herRow,
+                { alignSelf: hers, flexDirection: herRow },
+                showOffer && styles.herRowWide,
               ]}
             >
-              {line.text ? (
-                <Text style={line.role === 'user' ? styles.userText : styles.herText}>
-                  {line.text}
-                </Text>
-              ) : null}
+              <View style={styles.spark}>
+                <Sparkles color={VOICE.accent} size={17} strokeWidth={2.2} />
+              </View>
+              <View style={[styles.herBubble, showOffer && styles.herBubbleWide]}>
+                {line.text ? <Said text={line.text} style={[styles.herText, start]} /> : null}
 
-              {/* The times sit inside her own bubble rather than in a card of
-                  their own: this is the end of what she said, not a form the
-                  app put in the way. */}
-              {showOffer ? (
-                <View style={[styles.offerStack, line.text ? styles.offerStackSpaced : null]}>
-                  {offer.options.map((iso) => {
-                    const taken = line.chosen === iso;
-                    const spent = Boolean(line.chosen) && !taken;
-                    return (
-                      <Pressable
-                        key={iso}
-                        onPress={() => chooseTime(line.id, iso)}
-                        disabled={Boolean(line.chosen)}
-                        style={({ pressed }) => [
-                          styles.offerRow,
-                          taken && styles.offerRowTaken,
-                          spent && styles.offerRowSpent,
-                          pressed && styles.offerRowPressed,
-                        ]}
-                        accessibilityRole="button"
-                        accessibilityState={{ selected: taken, disabled: Boolean(line.chosen) }}
-                        accessibilityLabel={`${offer.title} — ${clockRange(iso, offer.durationMinutes)}, ${whenLabel(iso)}`}
-                      >
-                        <Text
-                          style={[styles.offerTime, taken && styles.offerTimeTaken]}
-                          numberOfLines={1}
+                {/* The times sit inside her own bubble rather than in a card of
+                    their own: this is the end of what she said, not a form the
+                    app put in the way. */}
+                {showOffer ? (
+                  <View style={[styles.offerStack, line.text ? styles.offerStackSpaced : null]}>
+                    {offer.options.map((iso) => {
+                      const taken = line.chosen === iso;
+                      const spent = Boolean(line.chosen) && !taken;
+                      return (
+                        <Pressable
+                          key={iso}
+                          onPress={() => chooseTime(line.id, iso)}
+                          disabled={Boolean(line.chosen)}
+                          style={({ pressed }) => [
+                            styles.offerRow,
+                            taken && styles.offerRowTaken,
+                            spent && styles.offerRowSpent,
+                            pressed && styles.offerRowPressed,
+                          ]}
+                          accessibilityRole="button"
+                          accessibilityState={{ selected: taken, disabled: Boolean(line.chosen) }}
+                          accessibilityLabel={`${offer.title} — ${clockRange(iso, offer.durationMinutes)}, ${whenLabel(iso)}`}
                         >
-                          {clockRange(iso, offer.durationMinutes)}
-                        </Text>
-                        <Text
-                          style={[styles.offerWhen, taken && styles.offerWhenTaken]}
-                          numberOfLines={1}
-                        >
-                          {whenLabel(iso)}
-                        </Text>
-                      </Pressable>
-                    );
-                  })}
-                </View>
-              ) : null}
+                          <Text
+                            style={[styles.offerTime, taken && styles.offerTimeTaken]}
+                            numberOfLines={1}
+                          >
+                            {clockRange(iso, offer.durationMinutes)}
+                          </Text>
+                          <Text
+                            style={[styles.offerWhen, taken && styles.offerWhenTaken]}
+                            numberOfLines={1}
+                          >
+                            {whenLabel(iso)}
+                          </Text>
+                        </Pressable>
+                      );
+                    })}
+                  </View>
+                ) : null}
+
+                {meta(line)}
+              </View>
             </View>
           );
         })}
@@ -297,14 +544,35 @@ export default function AssistantScreen() {
           style={styles.undoBar}
           accessibilityRole="button"
         >
-          <Undo2 color={colors.text} size={16} />
+          <Undo2 color={VOICE.accent} size={16} strokeWidth={2.4} />
           <Text style={styles.undoText} numberOfLines={1}>
             {t('voice.undo')} · {deleted.map((c) => c.title).join(', ')}
           </Text>
         </Pressable>
       ) : null}
 
+      {/* ── The orb, in its own weather ── */}
       <View style={styles.stage}>
+        <Waveform near={nearWave} far={farWave} width={width} />
+        <Orbit spin={turn} />
+
+        {VOICE.halo.map((tint, i) => (
+          <Animated.View
+            key={tint}
+            pointerEvents="none"
+            style={[
+              styles.halo,
+              {
+                width: 230 - i * 34,
+                height: 230 - i * 34,
+                borderRadius: (230 - i * 34) / 2,
+                backgroundColor: tint,
+                transform: [{ scale: haloScale }],
+              },
+            ]}
+          />
+        ))}
+
         <Pressable
           onPress={() => {
             Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
@@ -316,203 +584,274 @@ export default function AssistantScreen() {
         >
           <Animated.View style={[styles.orbGlow, { transform: [{ scale: orbScale }] }]}>
             <View style={styles.orb}>
-              <Mic color={colors.primaryText} size={44} />
+              <Mic color={VOICE.accent} size={44} strokeWidth={2.1} />
             </View>
           </Animated.View>
         </Pressable>
-
-        <Text style={styles.caption}>{caption}</Text>
-        {hint ? <Text style={styles.hint}>{hint}</Text> : null}
-
-        {/* Talking is the point, but typing has to be there too — for a noisy
-            room, a long title, or a name she keeps mishearing. Same thread. */}
-        <View style={styles.composer}>
-          <TextInput
-            value={draft}
-            onChangeText={setDraft}
-            placeholder={t('assistant.placeholder')}
-            placeholderTextColor={colors.textMuted}
-            style={styles.composerInput}
-            returnKeyType="send"
-            onSubmitEditing={submitDraft}
-            editable={state !== 'unavailable' || error === 'microphone'}
-          />
-          <Pressable
-            onPress={submitDraft}
-            disabled={!draft.trim()}
-            style={[styles.sendBtn, !draft.trim() && styles.sendBtnIdle]}
-            accessibilityRole="button"
-            accessibilityLabel={t('assistant.send')}
-          >
-            <Send color={colors.primaryText} size={18} />
-          </Pressable>
-        </View>
-
-        {state === 'stopped' ? (
-          <Pressable
-            onPress={() => {
-              Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
-              // Restarts the loop in place. This used to remount the screen,
-              // which threw away the thread on screen and was the same motion
-              // the user was already making by hand — leaving and coming back.
-              restart();
-            }}
-            style={styles.restartBtn}
-          >
-            <Text style={styles.restartText}>{t('voice.restart')}</Text>
-          </Pressable>
-        ) : null}
       </View>
-    </Screen>
+
+      <Text style={styles.caption}>{caption}</Text>
+      {hint ? <Text style={styles.hint}>{hint}</Text> : null}
+
+      {/* Talking is the point, but typing has to be there too — for a noisy
+          room, a long title, or a name she keeps mishearing. Same thread. */}
+      <View style={styles.composer}>
+        <TextInput
+          value={draft}
+          onChangeText={setDraft}
+          placeholder={t('assistant.placeholder')}
+          placeholderTextColor={VOICE.meta}
+          style={[styles.composerInput, start]}
+          returnKeyType="send"
+          onSubmitEditing={submitDraft}
+          editable={state !== 'unavailable' || error === 'microphone'}
+        />
+        <Pressable
+          onPress={submitDraft}
+          disabled={!draft.trim()}
+          style={[styles.sendBtn, !draft.trim() && styles.sendBtnIdle]}
+          accessibilityRole="button"
+          accessibilityLabel={t('assistant.send')}
+        >
+          <Send
+            color={draft.trim() ? '#FFFFFF' : VOICE.accent}
+            size={18}
+            strokeWidth={2.2}
+            // The plane points along the line of writing, whichever way that runs.
+            style={rtl ? styles.sendGlyphRTL : undefined}
+          />
+        </Pressable>
+      </View>
+
+      {state === 'stopped' ? (
+        <Pressable
+          onPress={() => {
+            Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
+            // Restarts the loop in place. This used to remount the screen,
+            // which threw away the thread on screen and was the same motion
+            // the user was already making by hand — leaving and coming back.
+            restart();
+          }}
+          style={styles.restartBtn}
+        >
+          <Text style={styles.restartText}>{t('voice.restart')}</Text>
+        </Pressable>
+      ) : null}
+    </View>
   );
 }
 
+/** The page's own margin. The waveform is the one thing allowed past it. */
+const GUTTER = spacing.md + 4;
+
 const styles = StyleSheet.create({
+  root: { flex: 1, backgroundColor: VOICE.page[0] },
+
   headerRow: {
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
-    marginBottom: spacing.sm,
+    paddingHorizontal: GUTTER,
+    marginBottom: spacing.xs,
   },
   iconBtn: {
-    width: 44,
-    height: 44,
-    borderRadius: 22,
+    width: 48,
+    height: 48,
+    borderRadius: 24,
     alignItems: 'center',
     justifyContent: 'center',
-    backgroundColor: colors.surface,
+    backgroundColor: VOICE.chrome,
+    shadowColor: '#3A2A6B',
+    shadowOpacity: 0.1,
+    shadowRadius: 14,
+    shadowOffset: { width: 0, height: 6 },
+    elevation: 3,
   },
-  title: { fontSize: 18, ...font(600), color: colors.text },
+  title: { fontSize: 23, ...font(700), color: VOICE.ink, letterSpacing: -0.3 },
 
   transcript: { flex: 1 },
-  transcriptContent: { paddingVertical: spacing.md, gap: spacing.sm },
-  // Fixed rather than max width, so every offer lines up under a short
-  // sentence and the four rows share one edge.
-  offerBubble: { width: '88%' },
+  transcriptContent: { paddingHorizontal: GUTTER, paddingVertical: spacing.md, gap: 12 },
+
+  // ── What she said ──
+  herRow: { flexDirection: 'row', alignItems: 'flex-end', gap: 8, maxWidth: '92%' },
+  /** An offer needs the full column: four rows want one shared edge. */
+  herRowWide: { width: '92%' },
+  spark: {
+    width: 34,
+    height: 34,
+    borderRadius: 17,
+    backgroundColor: VOICE.chrome,
+    alignItems: 'center',
+    justifyContent: 'center',
+    shadowColor: '#3A2A6B',
+    shadowOpacity: 0.09,
+    shadowRadius: 10,
+    shadowOffset: { width: 0, height: 4 },
+    elevation: 2,
+  },
+  herBubble: {
+    flexShrink: 1,
+    backgroundColor: VOICE.her,
+    borderRadius: 24,
+    borderBottomLeftRadius: 8,
+    paddingHorizontal: 16,
+    paddingVertical: 12,
+  },
+  herBubbleWide: { flex: 1 },
+  herText: { fontSize: 16, ...font(500), color: VOICE.ink, lineHeight: 24 },
+  saidStrong: { ...font(700) },
+  drawingBubble: { flexDirection: 'row', alignItems: 'center', gap: 10 },
+
+  // ── What you said ──
+  meBubble: {
+    maxWidth: '86%',
+    backgroundColor: VOICE.me,
+    borderRadius: 24,
+    borderBottomRightRadius: 8,
+    paddingHorizontal: 16,
+    paddingVertical: 12,
+    shadowColor: '#3A2A6B',
+    shadowOpacity: 0.08,
+    shadowRadius: 16,
+    shadowOffset: { width: 0, height: 6 },
+    elevation: 2,
+  },
+  meText: { fontSize: 16, ...font(500), color: VOICE.ink, lineHeight: 24 },
+
+  metaRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    alignSelf: 'flex-end',
+    gap: 4,
+    marginTop: 4,
+  },
+  metaTime: { fontSize: 11, ...font(500), color: VOICE.meta, letterSpacing: 0.2 },
+
+  imageBubble: {
+    maxWidth: '88%',
+    borderRadius: 24,
+    overflow: 'hidden',
+    backgroundColor: VOICE.her,
+  },
+  // Square, because that is the shape asked for unless the user says otherwise,
+  // and a fixed aspect keeps the thread from jumping as pictures load.
+  image: { width: 240, aspectRatio: 1 },
+
+  // ── Times to choose from ──
   offerStack: { gap: 8, alignSelf: 'stretch' },
   offerStackSpaced: { marginTop: 10 },
   offerRow: {
     height: 52,
-    borderRadius: 14,
-    backgroundColor: AURA.blue.tint,
+    borderRadius: 16,
+    backgroundColor: VOICE.chrome,
     flexDirection: 'row',
     alignItems: 'center',
     paddingHorizontal: 14,
     gap: 10,
   },
   offerRowPressed: { opacity: 0.72 },
-  // Near-black is already this app's "selected"; a faded pastel reads as broken.
-  offerRowTaken: { backgroundColor: colors.primary },
+  offerRowTaken: { backgroundColor: VOICE.accent },
   offerRowSpent: { opacity: 0.4 },
   offerTime: {
     fontSize: 20,
     ...font(700),
-    color: colors.text,
+    color: VOICE.ink,
     letterSpacing: -0.3,
     flexShrink: 0,
   },
-  offerTimeTaken: { color: colors.primaryText },
-  offerWhen: { flex: 1, fontSize: 14, ...font(600), color: AURA.blue.ink, textAlign: 'right' },
-  offerWhenTaken: { color: 'rgba(255,255,255,0.75)' },
-
-  imageBubble: {
-    alignSelf: 'flex-start',
-    maxWidth: '88%',
-    borderRadius: 22,
-    borderStartStartRadius: 6,
-    overflow: 'hidden',
-    backgroundColor: colors.surfaceAlt,
-  },
-  // Square, because that is the shape asked for unless the user says otherwise,
-  // and a fixed aspect keeps the thread from jumping as pictures load.
-  image: { width: 240, aspectRatio: 1 },
-  drawingBubble: { flexDirection: 'row', alignItems: 'center', gap: 10 },
-
-  herBubble: {
-    alignSelf: 'flex-start',
-    maxWidth: '88%',
-    backgroundColor: colors.surface,
-    borderRadius: 22,
-    borderStartStartRadius: 6,
-    paddingHorizontal: 16,
-    paddingVertical: 12,
-  },
-  herText: { fontSize: 16, ...font(500), color: colors.text, lineHeight: 23 },
-  userBubble: {
-    alignSelf: 'flex-end',
-    maxWidth: '88%',
-    backgroundColor: AURA.green.tint,
-    borderRadius: 22,
-    borderEndEndRadius: 6,
-    paddingHorizontal: 16,
-    paddingVertical: 12,
-  },
-  userText: { fontSize: 16, ...font(400), color: colors.text, lineHeight: 23 },
+  offerTimeTaken: { color: '#FFFFFF' },
+  offerWhen: { flex: 1, fontSize: 14, ...font(600), color: VOICE.accent, textAlign: 'right' },
+  offerWhenTaken: { color: 'rgba(255,255,255,0.78)' },
 
   undoBar: {
     flexDirection: 'row',
     alignItems: 'center',
     gap: 8,
     alignSelf: 'center',
-    backgroundColor: colors.surface,
+    backgroundColor: VOICE.chrome,
     borderRadius: 100,
     paddingHorizontal: 16,
     paddingVertical: 10,
     marginBottom: spacing.sm,
+    shadowColor: '#3A2A6B',
+    shadowOpacity: 0.1,
+    shadowRadius: 14,
+    shadowOffset: { width: 0, height: 6 },
+    elevation: 3,
   },
-  undoText: { fontSize: 14, ...font(600), color: colors.text, flexShrink: 1 },
+  undoText: { fontSize: 14, ...font(600), color: VOICE.ink, flexShrink: 1 },
 
-  stage: { alignItems: 'center', paddingBottom: spacing.lg, gap: 6 },
+  // ── The orb ──
+  stage: { height: 258, alignItems: 'center', justifyContent: 'center' },
+  wave: { position: 'absolute', alignItems: 'center', justifyContent: 'center' },
+  waveLayer: { position: 'absolute' },
+  orbit: { position: 'absolute', width: ORBIT_BOX, height: ORBIT_BOX, alignItems: 'center', justifyContent: 'center' },
+  halo: { position: 'absolute' },
   orbGlow: {
-    shadowColor: '#14150F',
-    shadowOpacity: 0.25,
-    shadowRadius: 28,
-    shadowOffset: { width: 0, height: 10 },
-    elevation: 10,
-    borderRadius: 80,
+    // Her own light, in her own colour — the glow is the thing that says she
+    // is awake, so it is a violet cast rather than the grey a neutral shadow
+    // would put under the orb.
+    shadowColor: VOICE.accent,
+    shadowOpacity: 0.42,
+    shadowRadius: 30,
+    shadowOffset: { width: 0, height: 12 },
+    elevation: 12,
+    borderRadius: 66,
   },
   orb: {
-    width: 148,
-    height: 148,
-    borderRadius: 80,
-    backgroundColor: colors.primary,
+    width: 132,
+    height: 132,
+    borderRadius: 66,
+    backgroundColor: '#FFFFFF',
     alignItems: 'center',
     justifyContent: 'center',
   },
+
+  caption: { marginTop: spacing.sm, fontSize: 17, ...font(700), color: VOICE.ink, textAlign: 'center' },
+  hint: { fontSize: 14, ...font(500), color: VOICE.meta, textAlign: 'center', marginTop: 2 },
+
   composer: {
     flexDirection: 'row',
     alignItems: 'center',
     gap: 8,
-    alignSelf: 'stretch',
+    marginHorizontal: GUTTER,
     marginTop: spacing.md,
+    backgroundColor: VOICE.chrome,
+    borderRadius: 100,
+    padding: 6,
+    shadowColor: '#3A2A6B',
+    shadowOpacity: 0.09,
+    shadowRadius: 18,
+    shadowOffset: { width: 0, height: 8 },
+    elevation: 3,
   },
   composerInput: {
     flex: 1,
-    backgroundColor: colors.surface,
-    borderRadius: 100,
-    paddingHorizontal: 18,
-    paddingVertical: 14,
+    paddingHorizontal: 14,
+    paddingVertical: 12,
     fontSize: 15,
-    ...font(400),
-    color: colors.text,
+    ...font(500),
+    color: VOICE.ink,
   },
   sendBtn: {
-    width: 46,
-    height: 46,
-    borderRadius: 23,
-    backgroundColor: colors.primary,
+    width: 44,
+    height: 44,
+    borderRadius: 22,
+    backgroundColor: VOICE.accent,
     alignItems: 'center',
     justifyContent: 'center',
   },
-  sendBtnIdle: { opacity: 0.35 },
-  caption: { marginTop: spacing.md, fontSize: 17, ...font(600), color: colors.text },
-  hint: { fontSize: 14, ...font(400), color: colors.textMuted, textAlign: 'center' },
+  /** Nothing to send yet: the tint of the button rather than a greyed copy. */
+  sendBtnIdle: { backgroundColor: VOICE.her },
+  sendGlyphRTL: { transform: [{ scaleX: -1 }] },
+
   restartBtn: {
+    alignSelf: 'center',
     marginTop: spacing.sm,
-    backgroundColor: colors.surface,
+    backgroundColor: VOICE.chrome,
     borderRadius: 100,
     paddingHorizontal: 22,
     paddingVertical: 12,
   },
-  restartText: { fontSize: 15, ...font(600), color: colors.primary },
+  restartText: { fontSize: 15, ...font(700), color: VOICE.accent },
 });

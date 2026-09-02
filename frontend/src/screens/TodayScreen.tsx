@@ -245,7 +245,14 @@ function SegToggle({
             ],
           },
         ]}
-      />
+      >
+        <LinearGradient
+          colors={IRIDESCENT}
+          start={{ x: 0, y: 0 }}
+          end={{ x: 1, y: 1 }}
+          style={styles.toggleThumbFill}
+        />
+      </Animated.View>
       {(['left', 'done'] as const).map((k) => (
         <Pressable
           key={k}
@@ -919,7 +926,7 @@ export default function TodayScreen() {
               accessibilityRole="button"
               accessibilityLabel={t('home.tasksToday', { count: stats.tasks })}
             >
-              <Text style={styles.countEmoji}>📅</Text>
+              <CalendarDays color={AURA.blue.ink} size={22} strokeWidth={2} />
               <Text style={styles.countNum}>{stats.tasks}</Text>
               <Text style={[styles.countLabel, start]} numberOfLines={2}>
                 {t('home.tasksToday', { count: stats.tasks })}
@@ -1168,7 +1175,6 @@ const styles = StyleSheet.create({
     padding: 14,
     justifyContent: 'center',
   },
-  countEmoji: { fontSize: 22 },
   countNum: {
     fontSize: 30,
     ...font(700),
@@ -1217,7 +1223,7 @@ const styles = StyleSheet.create({
     width: THUMB_TRAVEL * 2 + 8,
     height: 40,
     borderRadius: 100,
-    backgroundColor: colors.primary,
+    backgroundColor: colors.surfaceAlt,
     flexDirection: 'row',
     padding: 4,
   },
@@ -1228,10 +1234,12 @@ const styles = StyleSheet.create({
     width: THUMB_TRAVEL,
     height: 32,
     borderRadius: 100,
-    backgroundColor: colors.surface,
+    overflow: 'hidden',
   },
+  toggleThumbFill: { flex: 1 },
   toggleHalf: { flex: 1, alignItems: 'center', justifyContent: 'center' },
-  toggleText: { fontSize: 13, ...font(600), color: 'rgba(255,255,255,0.75)' },
+  toggleText: { fontSize: 13, ...font(600), color: colors.textMuted },
+  /** Ink on the gradient, the same pairing the day pill and the tab disc use. */
   toggleTextActive: { color: colors.text },
 
   // ── Rows ──

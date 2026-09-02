@@ -117,6 +117,41 @@ export type AuraKey = keyof typeof AURA;
 /** Rows and chips cycle through the gradient's stops, in its own order. */
 export const AURA_CYCLE: AuraKey[] = ['green', 'blue', 'yellow'];
 
+// ── The assistant, out loud ───────────────────────────────────────────────
+// She gets a palette of her own — violet on lavender — and nothing else in the
+// app does. That is the point: the rest of the app is a surface you fill in by
+// hand, and she is the one place you talk to. Walking into a different colour
+// says which of the two you are in without a word of explanation.
+//
+// The inks are the readable half of it: `ink` and `accent` both clear 4.5:1 on
+// the page, and `meta` — the 11px timestamps, the smallest type on the screen
+// — was deepened from the mockup's grey until it did too (4.8:1). A timestamp
+// nobody can read is decoration pretending to be information.
+export const VOICE = {
+  /** The page, top to bottom: almost white, settling into lavender. */
+  page: ['#FAF9FE', '#EFE9FB'] as const,
+  /** Type on the page and inside bubbles. Near-black, with a violet cast. */
+  ink: '#1D1A33',
+  /** The mic, the ticks, the send glyph — everything that is *her*. */
+  accent: '#6D45E0',
+  /** The raised mic button's sphere, lit from the top-left. */
+  accentGradient: ['#A98BF5', '#7C5CF0', '#5B36C7'] as const,
+  /** What she says. */
+  her: '#EAE3FA',
+  /** What you said: white, floated off the page on a soft shadow. */
+  me: '#FFFFFF',
+  /** Timestamps and the delivered ticks' quieter half. */
+  meta: '#726A96',
+  /** The round chrome buttons in the header, and the composer's field. */
+  chrome: '#FFFFFF',
+  /** The breathing halo behind the orb, palest first. */
+  halo: ['rgba(124, 92, 240, 0.05)', 'rgba(124, 92, 240, 0.09)', 'rgba(124, 92, 240, 0.14)'] as const,
+  /** The sound she is listening to, drawn either side of the orb. */
+  wave: '#9E7CEE',
+  /** The dotted orbit and the motes riding it. */
+  orbit: 'rgba(109, 69, 224, 0.28)',
+} as const;
+
 export const spacing = {
   xs: 4,
   sm: 8,

@@ -134,6 +134,14 @@ export type Line = {
   offer?: TimeOffer;
   /** Which of them was taken. The line itself is the record of the choice. */
   chosen?: string;
+  /**
+   * When it was said, for the clock under the bubble.
+   *
+   * Absent on lines restored from a saved conversation: only the words are
+   * stored, so the alternative to no timestamp is a wrong one saying every
+   * line arrived the moment the screen opened.
+   */
+  at?: number;
 };
 
 export interface VoiceSession {
@@ -209,7 +217,7 @@ export function useVoiceSession(options: {
   }, []);
 
   const addLine = useCallback((role: Line['role'], text: string) => {
-    setLines((prev) => [...prev, { id: uuid(), role, text }]);
+    setLines((prev) => [...prev, { id: uuid(), role, text, at: Date.now() }]);
   }, []);
 
   // ── Speaking ──────────────────────────────────────────────────────────────
@@ -439,7 +447,10 @@ export function useVoiceSession(options: {
         const shape =
           typeof draw.arguments?.shape === 'string' ? draw.arguments.shape : undefined;
         const id = uuid();
-        setLines((prev) => [...prev, { id, role: 'assistant', text: '', drawing: true }]);
+        setLines((prev) => [
+          ...prev,
+          { id, role: 'assistant', text: '', drawing: true, at: Date.now() },
+        ]);
 
         void generateImage(prompt, shape)
           .then((imageUri) => {
@@ -472,7 +483,13 @@ export function useVoiceSession(options: {
         // are the same turn, so splitting them would read as two answers.
         setLines((prev) => [
           ...prev,
-          { id: uuid(), role: 'assistant', text: result.reply, ...(offer ? { offer } : {}) },
+          {
+            id: uuid(),
+            role: 'assistant',
+            text: result.reply,
+            at: Date.now(),
+            ...(offer ? { offer } : {}),
+          },
         ]);
         if (result.reply && result.canSpeak) await speak(result.reply);
       }

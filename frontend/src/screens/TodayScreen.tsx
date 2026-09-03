@@ -1199,9 +1199,9 @@ const styles = StyleSheet.create({
     insetInlineEnd: 0,
     paddingHorizontal: spacing.md + 4,
     // Behind the sheet, so the white passes over the greeting and the week
-    // rather than under them. It is only ever visible above the sheet's top
-    // edge, which is exactly the stretch of dark it belongs to.
-    zIndex: -1,
+    // rather than under them — but not behind zero, which on a device puts it
+    // behind the page's own white background and hides it outright. The scroll
+    // that follows it in source order already paints on top.
   },
   /**
    * The sheet's own white, carried down past the end of its content.

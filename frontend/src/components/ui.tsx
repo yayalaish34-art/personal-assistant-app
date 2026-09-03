@@ -298,10 +298,11 @@ const styles = StyleSheet.create({
     backgroundColor: BAND.bg,
     // Square. The cap over it carries the curve.
     //
-    // Furthest back of anything on the page: on a screen whose sheet scrolls
-    // over it, the sheet has to be able to cover this. Left in front it went
-    // on painting black across the list once the sheet had risen past it.
-    zIndex: -2,
+    // No negative zIndex here. On iOS and Android a child pushed behind zero
+    // goes behind its *parent's own background* too — and this parent is
+    // painted white — so the band disappeared completely on a device while
+    // rendering fine on web. It sits at the bottom of the normal stack
+    // instead, which is still under everything that comes after it.
   },
   /**
    * The white, and the only rounded thing at the seam. Full width, so the two

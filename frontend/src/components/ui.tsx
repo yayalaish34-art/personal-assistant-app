@@ -114,8 +114,15 @@ export function Screen({
     >
       {topBand ? (
         <>
-          {/* The dark, carried past the seam so the card's rounded corners
-              have something to cut into. */}
+          {/* The dark, carried past the seam so the sheet's rounded corners
+              have ground to cut into — a corner needs something behind it or
+              it curves into nothing and the join reads as a rule.
+              The overhang is invisible everywhere the sheet covers, and the
+              sheet is opaque and spans the full width from the seam down. What
+              made this show as a black lip before was not the bleed: it was a
+              seam computed 20px short of where the sheet actually starts. It
+              is measured now, so the sheet's own edge is exactly where the
+              dark thinks it is. */}
           <View
             pointerEvents="none"
             style={[styles.band, { height: seam + BAND_CORNER_BLEED }]}

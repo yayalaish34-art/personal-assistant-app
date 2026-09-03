@@ -103,6 +103,14 @@ const SHEET_BACKING = 1200;
 /** The sheet's top radius. The backing starts below it, so the curve shows. */
 const BAND_RADIUS = 44;
 
+/**
+ * Clear air between the band's last line and the sheet's top edge.
+ *
+ * Shared: the sheet's own top margin, and part of what the dark is drawn to.
+ * Two numbers here means a gap of page or a lip of black at the seam.
+ */
+const SHEET_GAP = spacing.lg;
+
 const AnimatedCircle = Animated.createAnimatedComponent(Circle);
 /** A Pressable that can be scaled by a driver, for tiles that press in. */
 const AnimatedPressable = Animated.createAnimatedComponent(Pressable);
@@ -891,8 +899,30 @@ export default function TodayScreen() {
    * inside the scroll. Undefined until both halves have reported, which
    * leaves Screen on its computed first-frame value for one pass.
    */
-  /** The dark runs to the foot of its own content. */
-  const bandTop = bandH || undefined;
+  /**
+   * Where the dark ends: the sheet's own top edge, measured.
+   *
+   * Not computed. The sheet's position is the band's height, plus the sheet's
+   * top margin, plus the page's own paddingTop — which lives in Screen and is
+   * a safe-area inset, so it differs per device. Adding those up by hand was
+   * wrong twice in a row, each time by exactly one term: too short left a strip
+   * of page between the black and the white, too long left a black lip sticking
+   * out past the sheet's rounded corners. `measureInWindow` shares its origin
+   * with the band, so the two edges cannot disagree.
+   */
+  const [sheetTop, setSheetTop] = useState<number | undefined>(undefined);
+  const sheetRef = useRef<View>(null);
+  const measureSeam = useCallback(() => {
+    sheetRef.current?.measureInWindow((_x, y) => {
+      setSheetTop((prev) => {
+        // Rounded up: a fractional height leaves a hairline of page showing
+        // between the dark and the sheet on a fractional-DPR screen.
+        const next = Math.ceil(y);
+        return prev !== undefined && Math.abs(prev - next) < 1 ? prev : next;
+      });
+    });
+  }, []);
+  const bandTop = sheetTop;
 
   const start = { textAlign: alignStart() } as const;
   const stripMirror = isRTL() ? [{ scaleX: -1 as number }] : undefined;
@@ -915,7 +945,11 @@ export default function TodayScreen() {
           styles.bandContent,
           { opacity: bandFade, transform: [{ translateY: bandDrift }] },
         ]}
-        onLayout={(e) => setBandH(e.nativeEvent.layout.height)}
+        onLayout={(e) => {
+          setBandH(e.nativeEvent.layout.height);
+          // The band's height moves the sheet, so the seam is re-read with it.
+          measureSeam();
+        }}
       >
         <GreetingHeader
           name={`${greetingNow()}, ${name || t('today.friend')}!`}
@@ -992,7 +1026,7 @@ export default function TodayScreen() {
             scrolling carries the sheet up over a stationary dark. No transform
             on the sheet itself — the scroll is already the movement, and
             adding one on top drove it up at twice the speed. */}
-        <View style={styles.pageSheet}>
+        <View ref={sheetRef} style={styles.pageSheet} onLayout={measureSeam}>
           {/* The white the sheet carries up over the band. */}
           <View pointerEvents="none" style={styles.sheetBacking} />
           {/* ── Today's sky ── */}
@@ -1250,7 +1284,7 @@ const styles = StyleSheet.create({
     // follows the card either way — the band is drawn to its measured top — so
     // this number sets how much empty black is left under the content, not how
     // much black there is.
-    marginTop: spacing.lg,
+    marginTop: SHEET_GAP,
     // No negative bottom margin here. Under flexGrow the card is sized to the
     // free space and the margin applied after, so a negative one shrinks its
     // box and lifts the bottom edge off the floor — which is exactly the gap

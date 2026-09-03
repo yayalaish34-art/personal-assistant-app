@@ -966,7 +966,13 @@ export default function TodayScreen() {
         </Entrance>
       </Animated.View>
 
-      <ScrollView
+      {/* Animated.ScrollView, not a plain one: `Animated.event` with the
+          native driver hands the view an animated node rather than a function,
+          and only Animated's own scroll view knows what to do with it. A plain
+          ScrollView calls it — "onScroll is not a function (it is Object)" —
+          which on web fails silently and on a device throws on every frame of
+          every scroll. */}
+      <Animated.ScrollView
         showsVerticalScrollIndicator={false}
         contentContainerStyle={[styles.content, { paddingTop: bandH }]}
         onScroll={onScroll}
@@ -1106,7 +1112,7 @@ export default function TodayScreen() {
             </View>
           </Entrance>
         </View>
-      </ScrollView>
+      </Animated.ScrollView>
 
       {/* ── What the number on the ring is made of ── */}
       <Sheet

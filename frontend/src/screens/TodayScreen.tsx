@@ -97,6 +97,99 @@ const PROFILE_PHOTO_URI = 'https://i.pravatar.cc/220?img=47';
 /** How far the band drifts up while the sheet climbs over it. */
 const BAND_PARALLAX = 28;
 
+/**
+ * The day's progress, on the dark.
+ *
+ * Three things happen at once, and they are three because the bar is the only
+ * moving thing on the band and has to carry the whole weight of it:
+ *
+ * The fill grows to its value on a spring rather than appearing at it, so the
+ * number above it reads as having been counted rather than looked up.
+ *
+ * It is the app's own green-blue-yellow sweep, which is what marks the chosen
+ * thing everywhere else — the selected day right above it, the mic in the bar
+ * below. A flat white fill said "progress"; this says "your progress".
+ *
+ * And a highlight travels along it, once every few seconds. That is the part
+ * that makes it feel alive on a screen where nothing else moves; it rides the
+ * native driver and loops forever, so it costs nothing per frame.
+ */
+function BandProgress({ pct }: { pct: number }) {
+  const grow = useRef(new Animated.Value(0)).current;
+  const sweep = useRef(new Animated.Value(0)).current;
+  const [width, setWidth] = useState(0);
+
+  useEffect(() => {
+    Animated.spring(grow, {
+      toValue: pct,
+      friction: 9,
+      tension: 40,
+      delay: 260,
+      // Width cannot ride the native driver, and this runs once per change.
+      useNativeDriver: false,
+    }).start();
+  }, [pct, grow]);
+
+  useEffect(() => {
+    // A pause between passes, so it reads as a pulse rather than a barber pole.
+    const loop = Animated.loop(
+      Animated.sequence([
+        Animated.delay(1400),
+        Animated.timing(sweep, {
+          toValue: 1,
+          duration: 1300,
+          easing: Easing.inOut(Easing.quad),
+          useNativeDriver: true,
+        }),
+        Animated.timing(sweep, { toValue: 0, duration: 0, useNativeDriver: true }),
+      ]),
+    );
+    loop.start();
+    return () => loop.stop();
+  }, [sweep]);
+
+  return (
+    <View style={styles.bandBar} onLayout={(e) => setWidth(e.nativeEvent.layout.width)}>
+      <Animated.View
+        style={[
+          styles.bandBarFill,
+          { width: grow.interpolate({ inputRange: [0, 100], outputRange: ['0%', '100%'] }) },
+        ]}
+      >
+        <LinearGradient
+          colors={IRIDESCENT}
+          start={{ x: 0, y: 0 }}
+          end={{ x: 1, y: 0 }}
+          style={styles.bandBarSweep}
+        />
+        {/* The highlight, travelling the full width of the track rather than
+            of the fill — so a day that is barely started still gets one. */}
+        {width > 0 ? (
+          <Animated.View
+            pointerEvents="none"
+            style={[
+              styles.bandBarShine,
+              {
+                transform: [
+                  {
+                    translateX: sweep.interpolate({
+                      inputRange: [0, 1],
+                      outputRange: [-BAR_SHINE, width],
+                    }),
+                  },
+                ],
+              },
+            ]}
+          />
+        ) : null}
+      </Animated.View>
+    </View>
+  );
+}
+
+/** How wide the travelling highlight on the progress bar is. */
+const BAR_SHINE = 64;
+
 /** How far the sheet's white runs on below its own content. */
 const SHEET_BACKING = 1200;
 
@@ -986,9 +1079,7 @@ export default function TodayScreen() {
             <Text style={[styles.bandCount, start]} numberOfLines={1}>
               {t('today.completedOf', { done: stats.done, total: stats.total })}
             </Text>
-            <View style={styles.bandBar}>
-              <View style={[styles.bandBarFill, { width: `${stats.pct}%` }]} />
-            </View>
+            <BandProgress pct={stats.pct} />
             <Text style={[styles.bandNext, start]} numberOfLines={1}>
               {meetings.current
                 ? `${t('home.now')} · ${meetings.current.title}`
@@ -1294,16 +1385,26 @@ const styles = StyleSheet.create({
 
   // ── Week strip ──
   // ── What sits on the dark, under the week ──
-  bandLine: { marginTop: spacing.md, gap: 8 },
+  bandLine: { marginTop: spacing.lg, gap: 10 },
   bandCount: { fontSize: 15, ...font(600), color: BAND.ink, opacity: 0.9 },
-  /** The day's progress, as a hairline the width of the band. */
+  /** The day's progress. Thicker than the hairline it replaced: it is the one
+      thing on the band that moves, and 4px could not hold a gradient. */
   bandBar: {
-    height: 4,
-    borderRadius: 2,
+    height: 8,
+    borderRadius: 4,
     backgroundColor: BAND.line,
     overflow: 'hidden',
   },
-  bandBarFill: { height: '100%', borderRadius: 2, backgroundColor: BAND.ink, opacity: 0.85 },
+  bandBarFill: { height: '100%', borderRadius: 4, overflow: 'hidden' },
+  bandBarSweep: { ...StyleSheet.absoluteFillObject },
+  /** A soft white band that travels the bar. */
+  bandBarShine: {
+    position: 'absolute',
+    top: 0,
+    bottom: 0,
+    width: BAR_SHINE,
+    backgroundColor: 'rgba(255, 255, 255, 0.45)',
+  },
   bandNext: { fontSize: 13.5, ...font(500), color: BAND.sub },
 
   strip: { marginTop: spacing.lg, flexGrow: 0 },

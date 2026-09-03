@@ -333,7 +333,7 @@ const styles = StyleSheet.create({
    * With air above it, it is a greeting standing on a dark ground, which is
    * what the band is for.
    */
-  greetingRowOnDark: { marginTop: spacing.md + spacing.xs },
+  greetingRowOnDark: { marginTop: spacing.xl + spacing.sm },
   avatar: {
     width: 46,
     height: 46,

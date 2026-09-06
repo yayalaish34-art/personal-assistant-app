@@ -14,7 +14,7 @@ import { useFocusEffect, useNavigation } from '@react-navigation/native';
 import type { NativeStackNavigationProp } from '@react-navigation/native-stack';
 import * as Haptics from 'expo-haptics';
 import { LinearGradient } from 'expo-linear-gradient';
-import Svg, { Circle, Defs, LinearGradient as SvgGradient, Stop } from 'react-native-svg';
+import Svg, { Circle, Defs, LinearGradient as SvgGradient, Path, Stop } from 'react-native-svg';
 import {
   X,
   CalendarDays,
@@ -187,14 +187,61 @@ function BandProgress({ pct }: { pct: number }) {
   );
 }
 
+/**
+ * The join between the dark and the sheet, drawn rather than cornered.
+ *
+ * A `borderTopRadius` on the sheet bends the wrong way. It rounds the white
+ * *inwards*, so the sheet reads as a card with its corners clipped off and the
+ * black shows through them — convex, bulging up in the middle. What the design
+ * asks for is the opposite: the white's edge dips in the middle and flares
+ * back up into the black at both sides, the way a sheet of paper lifts at its
+ * corners. That is a concave curve, and no border radius produces one.
+ *
+ * So it is a path. Two quadratic arcs from the outer top corners down to a
+ * flat middle, filled white, sitting on top of the dark. Its own height is the
+ * flare's depth; everything below it is the sheet proper.
+ */
+function SeamCurve({ width, color }: { width: number; color: string }) {
+  // Traced along the white's own top edge, left to right: up the outer edge to
+  // the corner tip, curve down and inward to the flat middle, across, then the
+  // mirror image back up to the right tip. Closing along the bottom fills
+  // everything under that edge.
+  //
+  // The previous attempt closed each arc back to y=0 on its own, which made two
+  // separate wedges at the corners with the black showing between them instead
+  // of one continuous edge.
+  const d = [
+    `M 0 0`,
+    `Q ${SEAM_REACH * 0.55} 0 ${SEAM_REACH} ${SEAM_FLARE}`,
+    `L ${width - SEAM_REACH} ${SEAM_FLARE}`,
+    `Q ${width - SEAM_REACH * 0.55} 0 ${width} 0`,
+    `L ${width} ${SEAM_FLARE}`,
+    `L 0 ${SEAM_FLARE}`,
+    'Z',
+  ].join(' ');
+
+  return (
+    <Svg
+      pointerEvents="none"
+      width={width}
+      height={SEAM_FLARE}
+      style={styles.seam}
+    >
+      <Path d={d} fill={color} />
+    </Svg>
+  );
+}
+
+/** How deep the sheet's edge dips below its corners. */
+const SEAM_FLARE = 30;
+/** How far in from each edge the flare reaches before the edge goes flat. */
+const SEAM_REACH = 46;
+
 /** How wide the travelling highlight on the progress bar is. */
 const BAR_SHINE = 64;
 
 /** How far the sheet's white runs on below its own content. */
 const SHEET_BACKING = 1200;
-
-/** The sheet's top radius. The backing starts below it, so the curve shows. */
-const BAND_RADIUS = 44;
 
 /**
  * Clear air between the band's last line and the sheet's top edge.
@@ -1118,7 +1165,12 @@ export default function TodayScreen() {
             on the sheet itself — the scroll is already the movement, and
             adding one on top drove it up at twice the speed. */}
         <View ref={sheetRef} style={styles.pageSheet} onLayout={measureSeam}>
-          {/* The white the sheet carries up over the band. */}
+          {/* The drawn join, pinned to the sheet's top edge and reaching the
+              full screen width — the sheet's own padding is undone for it. */}
+          <View pointerEvents="none" style={styles.seamWrap}>
+            <SeamCurve width={width} color={colors.surface} />
+          </View>
+          {/* The white the sheet carries down past the end of its content. */}
           <View pointerEvents="none" style={styles.sheetBacking} />
           {/* ── Today's sky ── */}
           <Entrance delay={booted ? 30 : 300} from={18}>
@@ -1336,12 +1388,25 @@ const styles = StyleSheet.create({
    * fills the rest, downwards only: upwards is the band's, and a backing that
    * reached up there painted over the greeting and the week.
    */
+  /**
+   * Holds the drawn seam at the sheet's top edge.
+   *
+   * Lifted by its own height so the curve sits *above* the sheet's first pixel
+   * — the flare has to reach up into the dark, not eat into the white.
+   */
+  /** The path fills its wrapper exactly. */
+  seam: { position: 'absolute', top: 0, left: 0 },
+  seamWrap: {
+    position: 'absolute',
+    top: -SEAM_FLARE,
+    insetInlineStart: -(spacing.md + 4),
+    insetInlineEnd: -(spacing.md + 4),
+    height: SEAM_FLARE,
+  },
   sheetBacking: {
     position: 'absolute',
-    // Below the curve, not across it. Started at the sheet's own top edge this
-    // square-cornered fill painted straight over the two rounded corners and
-    // flattened the seam.
-    top: BAND_RADIUS,
+    // Below the seam, not across it.
+    top: 0,
     insetInlineStart: 0,
     insetInlineEnd: 0,
     height: SHEET_BACKING,
@@ -1356,10 +1421,10 @@ const styles = StyleSheet.create({
   pageSheet: {
     flexGrow: 1,
     backgroundColor: colors.surface,
-    // Only the top two. The bottom corners stay square and follow the
-    // viewport, so the curve happens once, where the black meets the white.
-    borderTopStartRadius: BAND_RADIUS,
-    borderTopEndRadius: BAND_RADIUS,
+    // Square on top. SeamCurve draws the join, and it bends the way a border
+    // radius cannot — outward into the dark rather than inward off the white.
+    // Left set, the radius clipped the sheet's own corners and the black
+    // showed through them, under the flare.
     // Out to the screen edges: the scroll's content carries the page padding
     // now, so the sheet undoes that and puts it back inside itself.
     marginHorizontal: -(spacing.md + 4),

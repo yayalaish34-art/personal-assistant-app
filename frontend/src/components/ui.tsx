@@ -114,19 +114,11 @@ export function Screen({
     >
       {topBand ? (
         <>
-          {/* The dark, carried past the seam so the sheet's rounded corners
-              have ground to cut into — a corner needs something behind it or
-              it curves into nothing and the join reads as a rule.
-              The overhang is invisible everywhere the sheet covers, and the
-              sheet is opaque and spans the full width from the seam down. What
-              made this show as a black lip before was not the bleed: it was a
-              seam computed 20px short of where the sheet actually starts. It
-              is measured now, so the sheet's own edge is exactly where the
-              dark thinks it is. */}
-          <View
-            pointerEvents="none"
-            style={[styles.band, { height: seam + BAND_CORNER_BLEED }]}
-          />
+          {/* The dark, ending exactly on the seam.
+              No bleed past it any more: the join is a drawn path now (see
+              SeamCurve on Home), and it paints its own white up into the dark.
+              Dark carried below the seam would sit on top of that flare. */}
+          <View pointerEvents="none" style={[styles.band, { height: seam }]} />
           {/* And the card's own white, laid back over the overhang with the
               same radius — out here on the page, where nothing clips it.
               The card itself cannot do this job: it lives inside a ScrollView

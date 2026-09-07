@@ -135,6 +135,36 @@ export const BAND = {
   line: 'rgba(255, 255, 255, 0.14)',
 } as const;
 
+// ── Home, after dark ──────────────────────────────────────────────────────
+// Home is the one screen that runs dark. It began as a dark band across the
+// top with the day on white below; the whole page is dark now, and the band
+// is simply where the page has nothing on it yet.
+//
+// These are a separate set rather than a repaint of `colors`, because every
+// other screen still reads that one. Repainting it would drag Calendar,
+// Shopping, Finance and Settings into the dark uninvited.
+//
+// The numbers, on the card ground: `ink` 14.4:1, `sub` 6.5:1, and the three
+// gradient stops between 9.7:1 and 12.8:1, so the palette's own colours stay
+// readable as type here without being re-picked. `card` sits 1.27:1 off the
+// page, which is the usual dark-theme surface step — a card is read by its
+// edge and its shadow at this end of the scale, not by brightness, and
+// anything louder starts to look like a lit panel.
+export const NIGHT = {
+  /** The page. Warm near-black, matching the band it grew out of. */
+  bg: '#0B0C0A',
+  /** Cards, rows, the weather panel. */
+  card: '#232520',
+  /** Chips, inactive halves of a toggle, the quiet fill inside a card. */
+  cardAlt: '#2E302A',
+  /** Type. */
+  ink: '#F7F7F4',
+  /** Second lines, timestamps, weekday letters. */
+  sub: '#A8A9A2',
+  /** Hairlines: the only thing separating two surfaces this close together. */
+  line: 'rgba(255, 255, 255, 0.10)',
+} as const;
+
 /** Rows and chips cycle through the gradient's stops, in its own order. */
 export const AURA_CYCLE: AuraKey[] = ['green', 'blue', 'yellow'];
 

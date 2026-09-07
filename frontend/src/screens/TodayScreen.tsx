@@ -50,6 +50,7 @@ import {
   AURA_CYCLE,
   IRIDESCENT,
   BAND,
+  NIGHT,
   TAB_BAR_CLEARANCE,
   type AuraKey,
 } from '../theme';
@@ -187,61 +188,8 @@ function BandProgress({ pct }: { pct: number }) {
   );
 }
 
-/**
- * The join between the dark and the sheet, drawn rather than cornered.
- *
- * A `borderTopRadius` on the sheet bends the wrong way. It rounds the white
- * *inwards*, so the sheet reads as a card with its corners clipped off and the
- * black shows through them — convex, bulging up in the middle. What the design
- * asks for is the opposite: the white's edge dips in the middle and flares
- * back up into the black at both sides, the way a sheet of paper lifts at its
- * corners. That is a concave curve, and no border radius produces one.
- *
- * So it is a path. Two quadratic arcs from the outer top corners down to a
- * flat middle, filled white, sitting on top of the dark. Its own height is the
- * flare's depth; everything below it is the sheet proper.
- */
-function SeamCurve({ width, color }: { width: number; color: string }) {
-  // Traced along the white's own top edge, left to right: up the outer edge to
-  // the corner tip, curve down and inward to the flat middle, across, then the
-  // mirror image back up to the right tip. Closing along the bottom fills
-  // everything under that edge.
-  //
-  // The previous attempt closed each arc back to y=0 on its own, which made two
-  // separate wedges at the corners with the black showing between them instead
-  // of one continuous edge.
-  const d = [
-    `M 0 0`,
-    `Q ${SEAM_REACH * 0.55} 0 ${SEAM_REACH} ${SEAM_FLARE}`,
-    `L ${width - SEAM_REACH} ${SEAM_FLARE}`,
-    `Q ${width - SEAM_REACH * 0.55} 0 ${width} 0`,
-    `L ${width} ${SEAM_FLARE}`,
-    `L 0 ${SEAM_FLARE}`,
-    'Z',
-  ].join(' ');
-
-  return (
-    <Svg
-      pointerEvents="none"
-      width={width}
-      height={SEAM_FLARE}
-      style={styles.seam}
-    >
-      <Path d={d} fill={color} />
-    </Svg>
-  );
-}
-
-/** How deep the sheet's edge dips below its corners. */
-const SEAM_FLARE = 30;
-/** How far in from each edge the flare reaches before the edge goes flat. */
-const SEAM_REACH = 46;
-
 /** How wide the travelling highlight on the progress bar is. */
 const BAR_SHINE = 64;
-
-/** How far the sheet's white runs on below its own content. */
-const SHEET_BACKING = 1200;
 
 /**
  * Clear air between the band's last line and the sheet's top edge.
@@ -800,7 +748,8 @@ export default function TodayScreen() {
    */
   const lift = useRef(new Animated.Value(0)).current;
   const onScroll = useMemo(
-    () => Animated.event([{ nativeEvent: { contentOffset: { y: lift } } }], { useNativeDriver: true }),
+    () =>
+      Animated.event([{ nativeEvent: { contentOffset: { y: lift } } }], { useNativeDriver: true }),
     [lift],
   );
   /**
@@ -1034,36 +983,6 @@ export default function TodayScreen() {
     ).navigate('Tabs', { screen: 'Calendar' });
   };
 
-  /**
-   * The seam, on the page: the greeting's height, then the card's offset
-   * inside the scroll. Undefined until both halves have reported, which
-   * leaves Screen on its computed first-frame value for one pass.
-   */
-  /**
-   * Where the dark ends: the sheet's own top edge, measured.
-   *
-   * Not computed. The sheet's position is the band's height, plus the sheet's
-   * top margin, plus the page's own paddingTop — which lives in Screen and is
-   * a safe-area inset, so it differs per device. Adding those up by hand was
-   * wrong twice in a row, each time by exactly one term: too short left a strip
-   * of page between the black and the white, too long left a black lip sticking
-   * out past the sheet's rounded corners. `measureInWindow` shares its origin
-   * with the band, so the two edges cannot disagree.
-   */
-  const [sheetTop, setSheetTop] = useState<number | undefined>(undefined);
-  const sheetRef = useRef<View>(null);
-  const measureSeam = useCallback(() => {
-    sheetRef.current?.measureInWindow((_x, y) => {
-      setSheetTop((prev) => {
-        // Rounded up: a fractional height leaves a hairline of page showing
-        // between the dark and the sheet on a fractional-DPR screen.
-        const next = Math.ceil(y);
-        return prev !== undefined && Math.abs(prev - next) < 1 ? prev : next;
-      });
-    });
-  }, []);
-  const bandTop = sheetTop;
-
   const start = { textAlign: alignStart() } as const;
   const stripMirror = isRTL() ? [{ scaleX: -1 as number }] : undefined;
 
@@ -1074,22 +993,15 @@ export default function TodayScreen() {
   const countPress = usePressScale();
 
   return (
-    <Screen clearTabBar={false} topBand bandBottom={bandTop} bandCap={false}>
-      {/* ── The dark, and everything standing on it ──
-          Outside the scroll, so it does not move. The white sheet slides up
-          over this on its own; the band stays where it is and is progressively
-          covered, which is what makes the sheet read as a sheet rather than as
-          a page that happens to be two colours. */}
+    <Screen clearTabBar={false} dark>
+      {/* ── The head: greeting, the week, the day's line ──
+          Outside the scroll, so it stays put while the day's list moves under
+          it. It no longer covers anything — the page is dark all the way down
+          — but keeping it fixed is still what makes the list read as the part
+          you are scrolling. */}
       <Animated.View
-        style={[
-          styles.bandContent,
-          { opacity: bandFade, transform: [{ translateY: bandDrift }] },
-        ]}
-        onLayout={(e) => {
-          setBandH(e.nativeEvent.layout.height);
-          // The band's height moves the sheet, so the seam is re-read with it.
-          measureSeam();
-        }}
+        style={[styles.bandContent, { opacity: bandFade, transform: [{ translateY: bandDrift }] }]}
+        onLayout={(e) => setBandH(e.nativeEvent.layout.height)}
       >
         <GreetingHeader
           name={`${greetingNow()}, ${name || t('today.friend')}!`}
@@ -1164,14 +1076,7 @@ export default function TodayScreen() {
             scrolling carries the sheet up over a stationary dark. No transform
             on the sheet itself — the scroll is already the movement, and
             adding one on top drove it up at twice the speed. */}
-        <View ref={sheetRef} style={styles.pageSheet} onLayout={measureSeam}>
-          {/* The drawn join, pinned to the sheet's top edge and reaching the
-              full screen width — the sheet's own padding is undone for it. */}
-          <View pointerEvents="none" style={styles.seamWrap}>
-            <SeamCurve width={width} color={colors.surface} />
-          </View>
-          {/* The white the sheet carries down past the end of its content. */}
-          <View pointerEvents="none" style={styles.sheetBacking} />
+        <View style={styles.pageSheet}>
           {/* ── Today's sky ── */}
           <Entrance delay={booted ? 30 : 300} from={18}>
             <WeatherCard weather={weather} onPress={goToCalendar} />
@@ -1394,39 +1299,18 @@ const styles = StyleSheet.create({
    * Lifted by its own height so the curve sits *above* the sheet's first pixel
    * — the flare has to reach up into the dark, not eat into the white.
    */
-  /** The path fills its wrapper exactly. */
-  seam: { position: 'absolute', top: 0, left: 0 },
-  seamWrap: {
-    position: 'absolute',
-    top: -SEAM_FLARE,
-    insetInlineStart: -(spacing.md + 4),
-    insetInlineEnd: -(spacing.md + 4),
-    height: SEAM_FLARE,
-  },
-  sheetBacking: {
-    position: 'absolute',
-    // Below the seam, not across it.
-    top: 0,
-    insetInlineStart: 0,
-    insetInlineEnd: 0,
-    height: SHEET_BACKING,
-    backgroundColor: colors.surface,
-  },
-
   // ── Hero ──
 
   /** The only colour in the block — a hairline rule, not a filled chip. */
 
-  // ── The white sheet the day sits on ──
+  // ── The column the day is laid out in ──
   pageSheet: {
     flexGrow: 1,
-    backgroundColor: colors.surface,
-    // Square on top. SeamCurve draws the join, and it bends the way a border
-    // radius cannot — outward into the dark rather than inward off the white.
-    // Left set, the radius clipped the sheet's own corners and the black
-    // showed through them, under the flare.
-    // Out to the screen edges: the scroll's content carries the page padding
-    // now, so the sheet undoes that and puts it back inside itself.
+    // Not a sheet any more: the page is dark the whole way down, so there is
+    // no white to lay on it and no join to draw.
+    backgroundColor: 'transparent',
+    // Out to the screen edges: the scroll's content carries the page padding,
+    // so this undoes it and puts it back inside itself.
     marginHorizontal: -(spacing.md + 4),
     paddingHorizontal: spacing.md + 4,
     paddingTop: spacing.lg,
@@ -1490,12 +1374,20 @@ const styles = StyleSheet.create({
   },
   pillSelectedEdge: { borderColor: 'transparent' },
   pillGradient: {
-    position: 'absolute', top: 0, left: 0, right: 0, bottom: 0,
+    position: 'absolute',
+    top: 0,
+    left: 0,
+    right: 0,
+    bottom: 0,
     borderRadius: 25,
     overflow: 'hidden',
   },
   pillBloom: {
-    position: 'absolute', top: 0, left: 0, right: 0, bottom: 0,
+    position: 'absolute',
+    top: 0,
+    left: 0,
+    right: 0,
+    bottom: 0,
     borderRadius: 25,
     borderWidth: 2,
     borderColor: IRIDESCENT[1],
@@ -1566,6 +1458,7 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
   },
+  /** On the green tile, so near-black — not the page's light ink. */
   doneTitle: { fontSize: 18, ...font(700), color: colors.text, letterSpacing: -0.3 },
   doneBody: { fontSize: 13.5, ...font(500), color: colors.text, opacity: 0.7, marginTop: 2 },
 
@@ -1638,14 +1531,14 @@ const styles = StyleSheet.create({
     gap: 12,
     marginBottom: spacing.md,
   },
-  panelTitle: { fontSize: 22, ...font(700), color: colors.text, letterSpacing: -0.5 },
-  panelSub: { fontSize: 13, ...font(500), color: colors.textMuted, marginTop: 2 },
+  panelTitle: { fontSize: 22, ...font(700), color: NIGHT.ink, letterSpacing: -0.5 },
+  panelSub: { fontSize: 13, ...font(500), color: NIGHT.sub, marginTop: 2 },
 
   toggle: {
     width: THUMB_TRAVEL * 2 + 8,
     height: 40,
     borderRadius: 100,
-    backgroundColor: colors.surfaceAlt,
+    backgroundColor: NIGHT.cardAlt,
     flexDirection: 'row',
     padding: 4,
   },
@@ -1660,7 +1553,7 @@ const styles = StyleSheet.create({
   },
   toggleThumbFill: { flex: 1 },
   toggleHalf: { flex: 1, alignItems: 'center', justifyContent: 'center' },
-  toggleText: { fontSize: 13, ...font(600), color: colors.textMuted },
+  toggleText: { fontSize: 13, ...font(600), color: NIGHT.sub },
   /** Ink on the gradient, the same pairing the day pill and the tab disc use. */
   toggleTextActive: { color: colors.text },
 
@@ -1702,7 +1595,9 @@ const styles = StyleSheet.create({
   progressTrack: {
     height: 8,
     borderRadius: 4,
-    backgroundColor: colors.surfaceAlt,
+    // The unfilled half, on the dark page. Near-white here would read as a
+    // full bar with a gradient on one end rather than an empty one.
+    backgroundColor: NIGHT.cardAlt,
     overflow: 'hidden',
     marginBottom: spacing.md,
   },
@@ -1710,11 +1605,11 @@ const styles = StyleSheet.create({
   progressFill: { flex: 1, borderRadius: 4 },
 
   empty: { alignItems: 'center', paddingVertical: spacing.xl, gap: 6 },
-  emptyTitle: { fontSize: 17, ...font(700), color: colors.text },
+  emptyTitle: { fontSize: 17, ...font(700), color: NIGHT.ink },
   emptyBody: {
     fontSize: 14,
     ...font(500),
-    color: colors.textMuted,
+    color: NIGHT.sub,
     textAlign: 'center',
     paddingHorizontal: spacing.lg,
   },

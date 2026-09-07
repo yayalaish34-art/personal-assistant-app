@@ -18,92 +18,39 @@ import { Bell } from 'lucide-react-native';
 
 import { Entrance } from './motion';
 import { isRTL } from '../lib/i18n';
-import { colors, radius, spacing, font, BAND, TAB_BAR_CLEARANCE } from '../theme';
-
-/**
- * Where the dark ends on the very first frame, before the card has measured
- * itself and said where its top edge really is.
- *
- * The computed seam on a normal phone: 4 + 16 of padding, the 46 greeting
- * row, the rail's 8 + 12 + 74 + 12, and the card's own 8 margin. One frame
- * later the real number replaces it.
- */
-const BAND_DEPTH = 180;
-
-/**
- * How far the dark carries on below the card's top edge.
- *
- * The white card is the thing with the rounded corners, and a rounded corner
- * needs ground behind it or it curves into nothing. This is that ground: the
- * dark runs on past the seam, and the card's arc cuts into it. Deeper than
- * the card's radius, so the arc is complete before the overhang ends.
- */
-const BAND_CORNER_BLEED = 56;
-
-/** The radius the white turns through where it meets the dark. */
-const BAND_RADIUS = 44;
-
-
+import { colors, radius, spacing, font, BAND, NIGHT, TAB_BAR_CLEARANCE } from '../theme';
 
 export function Screen({
   children,
   clearTabBar = true,
-  topBand = false,
-  bandBottom,
-  bandCap = true,
+  dark = false,
 }: {
   children: ReactNode;
   // Modals (no tab bar) pass false to skip the extra bottom clearance.
   clearTabBar?: boolean;
   /**
-   * Lays a dark ground under the top of the page, status bar included.
-   *
-   * The child lays a white card over it, and the dark has to still be there
-   * *behind* that card's two rounded top corners — that is what turns the
-   * join into a curve rather than a line.
-   *
-   * It is a layer with a fixed depth rather than the page's own background.
-   * Painting the whole page dark makes every pixel the card fails to cover
-   * show black: past its bottom edge, and either side of it if a margin is a
-   * pixel out. Bounded, the dark can only ever appear where it is wanted, and
-   * everything the card misses falls back to paper.
+   * Paints the page dark, status bar included.
    *
    * It has to be set here rather than by the screen's own content, because
    * the safe-area inset lives on this view: anything a child draws starts
    * below the notch and leaves a pale band above it.
-   */
-  topBand?: boolean;
-  /**
-   * Where the white card's top edge sits, in dp from the top of this view.
    *
-   * The dark is drawn to exactly this height, so the two cannot drift apart.
-   * A constant was wrong the moment anything above the card changed size: it
-   * carried 80px of overshoot that showed either side of the card — which is
-   * inside the page's padding, while the dark layer spans the full width — as
-   * a hard line across the screen.
+   * Only Home passes it. The dark palette (NIGHT) is a separate set from
+   * `colors` for the same reason — every other screen still reads the light
+   * one, and repainting that would drag them all into the dark uninvited.
    */
-  bandBottom?: number;
-  /**
-   * Whether this screen wants the white curve painted at the seam.
-   *
-   * A screen whose sheet scrolls draws its own, travelling with the sheet —
-   * one fixed to the page would sit there as a white bar once the sheet had
-   * slid past it.
-   */
-  bandCap?: boolean;
+  dark?: boolean;
 }) {
   const insets = useSafeAreaInsets();
-  const seam = bandBottom ?? Math.max(insets.top, spacing.md) + BAND_DEPTH;
 
   return (
     <View
       style={[
         styles.screen,
-        topBand && styles.screenBanded,
+        dark && styles.screenDark,
         {
           paddingTop: Math.max(insets.top, spacing.md) + spacing.xs,
-          // None when a card is going to cover the bottom itself.
-          paddingBottom: topBand ? 0 : clearTabBar ? TAB_BAR_CLEARANCE : spacing.lg,
+          paddingBottom: clearTabBar ? TAB_BAR_CLEARANCE : spacing.lg,
           // Declared explicitly rather than left to inherit: on web
           // react-native-web's I18nManager is a no-op, so this is what makes
           // rows, text alignment, and logical margins mirror. Native reads
@@ -112,29 +59,6 @@ export function Screen({
         },
       ]}
     >
-      {topBand ? (
-        <>
-          {/* The dark, ending exactly on the seam.
-              No bleed past it any more: the join is a drawn path now (see
-              SeamCurve on Home), and it paints its own white up into the dark.
-              Dark carried below the seam would sit on top of that flare. */}
-          <View pointerEvents="none" style={[styles.band, { height: seam }]} />
-          {/* And the card's own white, laid back over the overhang with the
-              same radius — out here on the page, where nothing clips it.
-              The card itself cannot do this job: it lives inside a ScrollView
-              that clips to the padded box, so its negative side margin never
-              actually reaches the screen edges and the overhang showed past
-              it. This view has the page for a parent and no such limit, so the
-              curve is drawn once, in white, over dark that runs the full
-              width. */}
-          {bandCap ? (
-            <View
-              pointerEvents="none"
-              style={[styles.bandCap, { top: seam, height: BAND_CORNER_BLEED }]}
-            />
-          ) : null}
-        </>
-      ) : null}
       {children}
     </View>
   );
@@ -284,7 +208,8 @@ const styles = StyleSheet.create({
    * off-white. Anything the card leaves uncovered then reads as more card
    * rather than as a faint cream seam beside it.
    */
-  screenBanded: { backgroundColor: colors.surface },
+  /** Home's ground. See NIGHT in the theme for why it is its own palette. */
+  screenDark: { backgroundColor: NIGHT.bg },
   /**
    * Behind everything, and out past the page's own side padding so it reaches
    * the screen edges the way the card over it does.
@@ -303,19 +228,6 @@ const styles = StyleSheet.create({
     // rendering fine on web. It sits at the bottom of the normal stack
     // instead, which is still under everything that comes after it.
   },
-  /**
-   * The white, and the only rounded thing at the seam. Full width, so the two
-   * corner cut-outs are the only dark left below the join.
-   */
-  bandCap: {
-    position: 'absolute',
-    insetInlineStart: 0,
-    insetInlineEnd: 0,
-    backgroundColor: colors.surface,
-    borderTopStartRadius: BAND_RADIUS,
-    borderTopEndRadius: BAND_RADIUS,
-  },
-
 
   greetingRow: { flexDirection: 'row', alignItems: 'center', gap: 12 },
   /**
@@ -337,7 +249,11 @@ const styles = StyleSheet.create({
   },
   avatarInitials: { ...font(700), fontSize: 16, color: colors.text },
   avatarPhoto: {
-    position: 'absolute', top: 0, left: 0, right: 0, bottom: 0,
+    position: 'absolute',
+    top: 0,
+    left: 0,
+    right: 0,
+    bottom: 0,
     width: '100%',
     height: '100%',
   },

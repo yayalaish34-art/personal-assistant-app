@@ -1461,7 +1461,7 @@ const styles = StyleSheet.create({
     overflow: 'hidden',
   },
   bandBarFill: { height: '100%', borderRadius: 4, overflow: 'hidden' },
-  bandBarSweep: { ...StyleSheet.absoluteFillObject },
+  bandBarSweep: { position: 'absolute', top: 0, left: 0, right: 0, bottom: 0 },
   /** A soft white band that travels the bar. */
   bandBarShine: {
     position: 'absolute',
@@ -1490,12 +1490,12 @@ const styles = StyleSheet.create({
   },
   pillSelectedEdge: { borderColor: 'transparent' },
   pillGradient: {
-    ...StyleSheet.absoluteFillObject,
+    position: 'absolute', top: 0, left: 0, right: 0, bottom: 0,
     borderRadius: 25,
     overflow: 'hidden',
   },
   pillBloom: {
-    ...StyleSheet.absoluteFillObject,
+    position: 'absolute', top: 0, left: 0, right: 0, bottom: 0,
     borderRadius: 25,
     borderWidth: 2,
     borderColor: IRIDESCENT[1],

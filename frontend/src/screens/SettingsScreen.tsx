@@ -706,7 +706,7 @@ const styles = StyleSheet.create({
     overflow: 'hidden',
   },
   avatarText: { ...font(700), fontSize: 21, color: colors.text },
-  avatarPhoto: { ...StyleSheet.absoluteFillObject, width: '100%', height: '100%' },
+  avatarPhoto: { position: 'absolute', top: 0, left: 0, right: 0, bottom: 0, width: '100%', height: '100%' },
   heroName: { ...font(700), fontSize: 20, color: colors.text, letterSpacing: -0.3 },
   heroSub: { ...font(500), fontSize: 13, color: colors.text, opacity: 0.7, marginTop: 1 },
   statusPill: {

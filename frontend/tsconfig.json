@@ -2,9 +2,10 @@
   "extends": "expo/tsconfig.base",
   "compilerOptions": {
     "strict": true,
-    "baseUrl": ".",
+    // No baseUrl: TypeScript 6 deprecates it, and "paths" already resolves
+    // relative to this file, which is what the alias below needs.
     "paths": {
-      "@/*": ["src/*"]
+      "@/*": ["./src/*"]
     }
   },
   "include": ["**/*.ts", "**/*.tsx"]

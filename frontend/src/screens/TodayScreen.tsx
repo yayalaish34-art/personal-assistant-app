@@ -36,7 +36,7 @@ import {
 } from 'lucide-react-native';
 
 import { Screen, GreetingHeader } from '../components/ui';
-import { Entrance, useFloat, usePressScale } from '../components/motion';
+import { Entrance, useFloat } from '../components/motion';
 import { api } from '../lib/api';
 import { storage } from '../lib/storage';
 import { statusOf, to12h, toDateStr, eventToItem, taskToItem, type AgendaItem } from '../lib/tasks';
@@ -200,8 +200,6 @@ const BAR_SHINE = 64;
 const SHEET_GAP = spacing.lg;
 
 const AnimatedCircle = Animated.createAnimatedComponent(Circle);
-/** A Pressable that can be scaled by a driver, for tiles that press in. */
-const AnimatedPressable = Animated.createAnimatedComponent(Pressable);
 
 /** "Good morning" / "Good afternoon" / "Good evening", by the clock. */
 function greetingNow(): string {
@@ -311,143 +309,10 @@ function DayPill({
 
 const THUMB_TRAVEL = 72;
 
-function SegToggle({
-  value,
-  onChange,
-}: {
-  value: 'left' | 'done';
-  onChange: (v: 'left' | 'done') => void;
-}) {
-  const anim = useRef(new Animated.Value(value === 'left' ? 0 : 1)).current;
-  useEffect(() => {
-    Animated.spring(anim, {
-      toValue: value === 'left' ? 0 : 1,
-      friction: 9,
-      tension: 90,
-      useNativeDriver: true,
-    }).start();
-  }, [value, anim]);
-
-  // translateX is physical; in RTL the second option sits to the left, so the
-  // thumb travels the other way.
-  const dir = isRTL() ? -1 : 1;
-
-  return (
-    <View style={styles.toggle}>
-      <Animated.View
-        style={[
-          styles.toggleThumb,
-          {
-            transform: [
-              {
-                translateX: anim.interpolate({
-                  inputRange: [0, 1],
-                  outputRange: [0, THUMB_TRAVEL * dir],
-                }),
-              },
-            ],
-          },
-        ]}
-      >
-        <LinearGradient
-          colors={IRIDESCENT}
-          start={{ x: 0, y: 0 }}
-          end={{ x: 1, y: 1 }}
-          style={styles.toggleThumbFill}
-        />
-      </Animated.View>
-      {(['left', 'done'] as const).map((k) => (
-        <Pressable
-          key={k}
-          onPress={() => {
-            Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
-            onChange(k);
-          }}
-          style={styles.toggleHalf}
-          accessibilityRole="button"
-          accessibilityState={{ selected: value === k }}
-        >
-          <Text style={[styles.toggleText, value === k && styles.toggleTextActive]}>
-            {t(k === 'left' ? 'today.filter.left' : 'today.filter.done')}
-          </Text>
-        </Pressable>
-      ))}
-    </View>
-  );
-}
-
 // ── Task rows ───────────────────────────────────────────────────────────────
 
-type RowStatus = { key: 'done' | 'inprogress' | 'overdue' | 'scheduled'; dot: string; pct: number };
 
-/** What the small ring and the status line say about one row. */
-function rowStatus(item: AgendaItem, now: Date): RowStatus {
-  const s = statusOf(item, now);
-  // Sky for settled, lilac for live, grey for not-yet, red for late. Peach is
-  // deliberately absent: beside `colors.danger` it is the same mark to a
-  // deuteranope (see AURA), and "scheduled" must never read as "overdue".
-  if (s === 'done') return { key: 'done', dot: AURA.green.ink, pct: 100 };
-  if (s === 'inprogress') return { key: 'inprogress', dot: AURA.blue.ink, pct: 55 };
-  if (item.date) {
-    const due = new Date(`${item.date}T${(item.time || '23:59').padStart(5, '0')}:00`);
-    if (!Number.isNaN(due.getTime()) && due < now) {
-      return { key: 'overdue', dot: colors.danger, pct: 0 };
-    }
-  }
-  return { key: 'scheduled', dot: colors.textMuted, pct: 0 };
-}
 
-/** A row's progress, drawn small: fills on mount, colour from its status. */
-function RowRing({ pct, color, delay }: { pct: number; color: string; delay: number }) {
-  const anim = useRef(new Animated.Value(0)).current;
-  useEffect(() => {
-    Animated.timing(anim, {
-      toValue: pct,
-      duration: 700,
-      delay,
-      easing: Easing.out(Easing.cubic),
-      useNativeDriver: false,
-    }).start();
-  }, [pct, delay, anim]);
-
-  // Sized to sit inside the 46px disc behind it with air to spare.
-  const size = 40;
-  const stroke = 4.5;
-  const r = (size - stroke) / 2;
-  const c = 2 * Math.PI * r;
-
-  return (
-    <View style={styles.rowRing}>
-      <Svg width={size} height={size} style={StyleSheet.absoluteFill}>
-        <Circle
-          cx={size / 2}
-          cy={size / 2}
-          r={r}
-          stroke="rgba(20, 21, 15, 0.08)"
-          strokeWidth={stroke}
-          fill="none"
-        />
-        {pct > 0 ? (
-          <AnimatedCircle
-            cx={size / 2}
-            cy={size / 2}
-            r={r}
-            stroke={color}
-            strokeWidth={stroke}
-            strokeLinecap="round"
-            fill="none"
-            strokeDasharray={`${c} ${c}`}
-            strokeDashoffset={anim.interpolate({ inputRange: [0, 100], outputRange: [c, 0] })}
-            transform={`rotate(-90 ${size / 2} ${size / 2})`}
-          />
-        ) : null}
-      </Svg>
-      <Text style={[styles.rowRingText, { color: pct > 0 ? colors.text : colors.textMuted }]}>
-        {pct}%
-      </Text>
-    </View>
-  );
-}
 
 // ── Explaining sheets (ring → the numbers, bell → what's still ahead) ───────
 
@@ -522,25 +387,18 @@ function SheetStat({
  * makes it useful: where the reading is for, what the sky is doing, and
  * whether the day is going to get colder.
  */
-function WeatherCard({ weather, onPress }: { weather: Weather | null; onPress: () => void }) {
+function WeatherHero({ weather, onPress }: { weather: Weather | null; onPress: () => void }) {
   const start = { textAlign: alignStart() } as const;
   const isDay = weather?.isDay ?? isDaylightNow();
   const Icon = weather ? skyIcon(weather.sky, isDay) : isDay ? Sun : Moon;
-  // Blue either way: a sky is blue, and the sun-or-moon glyph already says
-  // which half of the day it is without the ground colour repeating it.
-  const skin = AURA.blue;
 
-  // A gentle drift on the glyph, so the card is alive without being busy.
+  // A gentle drift on the glyph, so the page is alive without being busy.
   const float = useFloat(4, 3200, 200);
 
   return (
     <Pressable
       onPress={onPress}
-      style={({ pressed }) => [
-        styles.weatherCard,
-        { backgroundColor: skin.tint },
-        pressed && styles.pressedDim,
-      ]}
+      style={({ pressed }) => [styles.weatherHero, pressed && styles.pressedDim]}
       accessibilityRole="button"
     >
       <View style={{ flex: 1 }}>
@@ -548,168 +406,93 @@ function WeatherCard({ weather, onPress }: { weather: Weather | null; onPress: (
           {weather?.place ?? t('today.tile.today')}
         </Text>
         <Text style={[styles.weatherTemp, start]}>{weather ? `${weather.temperature}°` : '—'}</Text>
-        <Text style={[styles.weatherDesc, { color: skin.ink }, start]} numberOfLines={1}>
+        <Text style={[styles.weatherDesc, start]} numberOfLines={1}>
           {weather ? t(`sky.${weather.sky}`) : ''}
         </Text>
         {weather ? (
           <Text style={[styles.weatherRange, start]} numberOfLines={1}>
             {t('weather.range', { high: weather.high, low: weather.low })}
-            {weather.feelsLike !== weather.temperature
-              ? `   ${t('weather.feelsLike', { deg: weather.feelsLike })}`
-              : ''}
           </Text>
         ) : null}
       </View>
+      {/* Full colour, on the dark: the sun is the one warm thing up here, and
+          the reference leans on it to keep the page from reading as a slab. */}
       <Animated.View style={{ transform: [{ translateY: float }] }}>
-        <Icon color={skin.ink} size={52} strokeWidth={1.5} />
+        <Icon color={AURA.blue.tint} size={76} strokeWidth={1.6} />
       </Animated.View>
     </Pressable>
   );
 }
 
+/**
+ * Hills and trees along the foot of the dark.
+ *
+ * The reference puts a landscape down there, and it is doing real work: the
+ * weather block above it is four lines of type on an empty page, and without
+ * something to stand on it floats. Drawn rather than shipped as an image so it
+ * takes the page's own colours and costs nothing to load.
+ *
+ * Two ridges, the far one lighter, with a scatter of conifers on the near one
+ * — enough to read as a horizon at a glance and not so much that it competes
+ * with the temperature.
+ */
+function Horizon({ width }: { width: number }) {
+  const h = HORIZON_H;
+  // A ridge as one long quadratic run, sampled so both ridges share a shape
+  // language without being the same curve.
+  const ridge = (base: number, amp: number, phase: number) => {
+    const pts: string[] = [`M 0 ${h}`, `L 0 ${base}`];
+    const step = width / 6;
+    for (let i = 0; i <= 6; i++) {
+      const x = i * step;
+      const y = base - Math.sin(i * 0.9 + phase) * amp;
+      pts.push(`${i === 0 ? 'L' : 'L'} ${x.toFixed(1)} ${y.toFixed(1)}`);
+    }
+    pts.push(`L ${width} ${h}`, 'Z');
+    return pts.join(' ');
+  };
+
+  const trees = useMemo(() => {
+    const out: { x: number; y: number; s: number }[] = [];
+    // Deterministic rather than random: a horizon that reshuffles on every
+    // render reads as a glitch.
+    const seeds = [0.08, 0.14, 0.19, 0.42, 0.47, 0.63, 0.71, 0.78, 0.9];
+    for (const t of seeds) {
+      out.push({ x: t * width, y: h * 0.52 + Math.sin(t * 9) * 6, s: 0.7 + (t % 0.3) * 2 });
+    }
+    return out;
+  }, [width, h]);
+
+  return (
+    <Svg pointerEvents="none" width={width} height={h} style={styles.horizon}>
+      <Path d={ridge(h * 0.46, h * 0.16, 0.6)} fill={NIGHT.card} opacity={0.55} />
+      <Path d={ridge(h * 0.62, h * 0.13, 2.4)} fill={NIGHT.card} />
+      {trees.map((t, i) => (
+        <Path
+          key={i}
+          d={`M ${t.x} ${t.y} l ${5 * t.s} ${16 * t.s} l ${-10 * t.s} 0 Z`}
+          fill={NIGHT.cardAlt}
+        />
+      ))}
+    </Svg>
+  );
+}
+
+/** How tall the drawn horizon is. */
+const HORIZON_H = 130;
+
+/**
+ * White carried below the footer's own two lines, for the nav bar to float on.
+ *
+ * The bar is 64 tall and sits about 22 off the bottom, and its raised mic
+ * reaches higher still; this covers all of it with room to spare, so the card
+ * and the bar read as one surface rather than two.
+ */
+const FOOT_UNDER_BAR = 112;
+
 // ── Now / next ───────────────────────────────────────────────────────────────
 
-/**
- * How much of the day is behind you, as a bar that fills on arrival.
- *
- * Width rather than scaleX: React Native has no transform origin, so a scaled
- * bar grows from its middle outward, which reads as a pulse rather than as
- * progress. Width cannot ride the native driver, but this runs once.
- */
-function PanelProgress({ pct }: { pct: number }) {
-  const anim = useRef(new Animated.Value(0)).current;
-  useEffect(() => {
-    Animated.timing(anim, {
-      toValue: pct,
-      duration: 900,
-      delay: 200,
-      easing: Easing.out(Easing.cubic),
-      useNativeDriver: false,
-    }).start();
-  }, [pct, anim]);
 
-  return (
-    <View style={styles.progressTrack}>
-      <Animated.View
-        style={[
-          styles.progressFillWrap,
-          {
-            width: anim.interpolate({
-              inputRange: [0, 100],
-              outputRange: ['0%', '100%'],
-            }),
-          },
-        ]}
-      >
-        <LinearGradient
-          colors={IRIDESCENT}
-          start={{ x: 0, y: 0 }}
-          end={{ x: 1, y: 0 }}
-          style={styles.progressFill}
-        />
-      </Animated.View>
-    </View>
-  );
-}
-
-/**
- * One line of the day, as a card rather than a table row.
- *
- * The spring is the point: a list that answers the finger feels like something
- * you are handling, and the old rows only dimmed. It rides the native driver,
- * so a long day scrolls at the same speed it did.
- */
-function TaskRow({
-  item,
-  tile,
-  status,
-  index,
-  onOpen,
-  onToggle,
-  onSnooze,
-}: {
-  item: AgendaItem;
-  tile: AuraKey;
-  status: RowStatus;
-  index: number;
-  onOpen: () => void;
-  onToggle: () => void;
-  onSnooze: () => void;
-}) {
-  const start = { textAlign: alignStart() } as const;
-  const press = useRef(new Animated.Value(0)).current;
-
-  const spring = (to: number) =>
-    Animated.spring(press, {
-      toValue: to,
-      friction: 7,
-      tension: 140,
-      useNativeDriver: true,
-    }).start();
-
-  return (
-    <Animated.View
-      style={{
-        transform: [{ scale: press.interpolate({ inputRange: [0, 1], outputRange: [1, 0.97] }) }],
-      }}
-    >
-      <Pressable
-        onPress={onOpen}
-        onPressIn={() => spring(1)}
-        onPressOut={() => spring(0)}
-        style={[styles.row, { backgroundColor: AURA[tile].tint }]}
-        accessibilityRole="button"
-      >
-        <Pressable
-          onPress={item.kind === 'task' ? onToggle : undefined}
-          hitSlop={6}
-          style={styles.rowRingWrap}
-          accessibilityRole={item.kind === 'task' ? 'checkbox' : 'none'}
-          accessibilityState={item.kind === 'task' ? { checked: Boolean(item.isDone) } : undefined}
-        >
-          <RowRing pct={status.pct} color={status.dot} delay={140 + index * 60} />
-        </Pressable>
-
-        <View style={{ flex: 1 }}>
-          <Text
-            style={[styles.rowTitle, start, status.key === 'done' && styles.rowTitleDone]}
-            numberOfLines={1}
-          >
-            {item.title}
-          </Text>
-          <View style={styles.rowMeta}>
-            <View style={[styles.statusDot, { backgroundColor: status.dot }]} />
-            <Text
-              style={[styles.rowMetaText, status.key === 'overdue' && { color: colors.danger }]}
-            >
-              {t(`today.status.${status.key}`)}
-            </Text>
-            {item.time ? <Text style={styles.rowMetaText}> · {to12h(item.time)}</Text> : null}
-          </View>
-        </View>
-
-        {/* On a task this pushes it to tomorrow; on an event it stays a mark
-            saying which of the two kinds this row is. White either way, so it
-            reads as a control sitting on the tint rather than part of it. */}
-        {item.kind === 'task' ? (
-          <Pressable
-            onPress={onSnooze}
-            hitSlop={6}
-            style={({ pressed }) => [styles.rowIcon, pressed && styles.pressedDim]}
-            accessibilityRole="button"
-            accessibilityLabel={t('home.snooze')}
-          >
-            <CalendarArrowDown color={AURA[tile].ink} size={18} strokeWidth={2} />
-          </Pressable>
-        ) : (
-          <View style={styles.rowIcon}>
-            <CalendarDays color={AURA[tile].ink} size={18} strokeWidth={2} />
-          </View>
-        )}
-      </Pressable>
-    </Animated.View>
-  );
-}
 
 // ── The screen ──────────────────────────────────────────────────────────────
 
@@ -725,62 +508,7 @@ export default function TodayScreen() {
   const [name, setName] = useState('');
   const [items, setItems] = useState<AgendaItem[]>([]);
   const [weather, setWeather] = useState<Weather | null>(null);
-  const [filter, setFilter] = useState<'left' | 'done'>('left');
   const [sheet, setSheet] = useState<'progress' | 'alerts' | null>(null);
-  /**
-   * How tall the dark's content is.
-   *
-   * It sets two things at once, which is why it is measured rather than
-   * guessed: the scroll's top padding, so the sheet starts below the band, and
-   * the band's own depth, so the dark ends exactly where the sheet begins.
-   * Everything on the band feeds into it — a greeting that wraps to two lines,
-   * a longer "next" title — and a constant goes stale the first time any of
-   * that changes.
-   */
-  const [bandH, setBandH] = useState(0);
-  /**
-   * How far the sheet has travelled up over the band.
-   *
-   * Driven straight from the scroll offset and clamped to the band's depth: at
-   * the top the sheet sits under the band, and by the time you have scrolled
-   * the band's height it has covered it completely. Native-driven, so the
-   * curve keeps up with the finger.
-   */
-  const lift = useRef(new Animated.Value(0)).current;
-  const onScroll = useMemo(
-    () =>
-      Animated.event([{ nativeEvent: { contentOffset: { y: lift } } }], { useNativeDriver: true }),
-    [lift],
-  );
-  /**
-   * The sheet's own rise, on top of the scroll's.
-   *
-   * The scroll already moves the sheet one-for-one; this is the *extra* travel
-   * that carries it up over the fixed band, and it only has to make up the gap
-   * the band's own depth leaves under it. Interpolating the full band height
-   * here instead moved the sheet at double speed and shot it off the top.
-   *
-   * Zero, in other words: the padding places the sheet below the band and the
-   * scroll lifts it from there, which is exactly the effect asked for. What
-   * this interpolation is really for is the *parallax* — the band drifting up
-   * a little as the sheet climbs, so the two are not welded together.
-   *
-   * `extrapolate: 'clamp'` on both ends: past the band it stops (the sheet is
-   * already covering everything), and on an overscroll bounce at the top it
-   * stops falling, which would otherwise open a gap under the greeting.
-   */
-  const bandDrift = lift.interpolate({
-    inputRange: [0, Math.max(bandH, 1)],
-    outputRange: [0, -BAND_PARALLAX],
-    extrapolate: 'clamp',
-  });
-  /** The band's content fades as the sheet swallows it. */
-  const bandFade = lift.interpolate({
-    inputRange: [0, Math.max(bandH, 1) * 0.75],
-    outputRange: [1, 0.15],
-    extrapolate: 'clamp',
-  });
-
   const today = toDateStr(new Date());
   const [selectedStr, setSelectedStr] = useState(today);
 
@@ -865,13 +593,6 @@ export default function TodayScreen() {
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [items]);
-
-  const visible = useMemo(() => {
-    return items
-      .filter((i) => (statusOf(i, now) === 'done') === (filter === 'done'))
-      .sort((a, b) => (a.time || '99:99').localeCompare(b.time || '99:99'));
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [items, filter]);
 
   /**
    * What to put in front of someone: the thing in hand, then the next two.
@@ -986,23 +707,10 @@ export default function TodayScreen() {
   const start = { textAlign: alignStart() } as const;
   const stripMirror = isRTL() ? [{ scaleX: -1 as number }] : undefined;
 
-  const rowTile = (index: number) => AURA_CYCLE[index % AURA_CYCLE.length];
-
-  // The two tiles under the band give under the finger rather than dimming.
-  const nowPress = usePressScale();
-  const countPress = usePressScale();
-
   return (
     <Screen clearTabBar={false} dark>
-      {/* ── The head: greeting, the week, the day's line ──
-          Outside the scroll, so it stays put while the day's list moves under
-          it. It no longer covers anything — the page is dark all the way down
-          — but keeping it fixed is still what makes the list read as the part
-          you are scrolling. */}
-      <Animated.View
-        style={[styles.bandContent, { opacity: bandFade, transform: [{ translateY: bandDrift }] }]}
-        onLayout={(e) => setBandH(e.nativeEvent.layout.height)}
-      >
+      {/* ── The head: greeting, the week, the day's line ── */}
+      <View style={styles.bandContent}>
         <GreetingHeader
           name={`${greetingNow()}, ${name || t('today.friend')}!`}
           photoUri={PROFILE_PHOTO_URI}
@@ -1048,153 +756,54 @@ export default function TodayScreen() {
             </Text>
           </View>
         </Entrance>
-      </Animated.View>
+      </View>
 
-      {/* Animated.ScrollView, not a plain one: `Animated.event` with the
-          native driver hands the view an animated node rather than a function,
-          and only Animated's own scroll view knows what to do with it. A plain
-          ScrollView calls it — "onScroll is not a function (it is Object)" —
-          which on web fails silently and on a device throws on every frame of
-          every scroll. */}
-      <Animated.ScrollView
-        showsVerticalScrollIndicator={false}
-        contentContainerStyle={[styles.content, { paddingTop: bandH }]}
-        onScroll={onScroll}
-        scrollEventThrottle={16}
-        // The sheet slides over the band, so the scroll view itself must not
-        // paint or clip above it.
-        style={styles.scroll}
-      >
-        {/* ── The sheet ──
-            Everything that is not the greeting or the week lives on one white
-            surface, lifted onto the band by its two rounded top corners. It
-            grows with the content rather than being a fixed height: the day's
-            list is inside it, and the list is as long as the day.
+      {/* ── The sky, and the ground it stands on ──
+          No scroll. The reference is one screen: the greeting, the week, the
+          weather, a horizon, and a white card across the foot. Everything that
+          used to be below the fold — the now tile, the count tile, the day's
+          list — is on Calendar, which shows the same tasks and events. */}
+      <View style={styles.stage}>
+        <Entrance delay={booted ? 30 : 300} from={18}>
+          <WeatherHero weather={weather} onPress={goToCalendar} />
+        </Entrance>
+        <Horizon width={width} />
+      </View>
 
-            It rises over the band on scroll: the band is outside this scroll
-            view and does not move, the content is padded down past it, and so
-            scrolling carries the sheet up over a stationary dark. No transform
-            on the sheet itself — the scroll is already the movement, and
-            adding one on top drove it up at twice the speed. */}
-        <View style={styles.pageSheet}>
-          {/* ── Today's sky ── */}
-          <Entrance delay={booted ? 30 : 300} from={18}>
-            <WeatherCard weather={weather} onPress={goToCalendar} />
-          </Entrance>
+      {/* ── The white card across the foot ──
+          Two halves, split by a hairline: what is happening now, and how much
+          the day holds. The nav bar floats over its lower half, which is what
+          makes the two read as one white footer in the reference. */}
+      <Entrance key={`foot-${selectedStr}`} delay={booted ? 90 : 420} from={20}>
+        <View style={styles.foot}>
+          <Pressable
+            onPress={() => (meetings.current ? openItem(meetings.current) : goToCalendar())}
+            style={({ pressed }) => [styles.footNow, pressed && styles.pressedDim]}
+            accessibilityRole="button"
+          >
+            <Text style={[styles.footKicker, start]} numberOfLines={1}>
+              {t('home.now')}
+            </Text>
+            <Text style={[styles.footTitle, start]} numberOfLines={2}>
+              {meetings.current ? meetings.current.title : t('home.nothingNow')}
+            </Text>
+          </Pressable>
 
-          {/* ── Nothing left to do ──
-            Only shown when the day is clear. What used to sit here otherwise
-            was a third copy of a task that is already in the list below. */}
-          <Entrance key={`focus-${selectedStr}`} delay={booted ? 70 : 360} from={20}>
-            {focus.head ? null : (
-              <View style={styles.doneCard}>
-                <View style={styles.doneBadge}>
-                  <CircleCheckBig color={AURA.green.ink} size={22} strokeWidth={2.2} />
-                </View>
-                <View style={{ flex: 1 }}>
-                  <Text style={[styles.doneTitle, start]}>{t('home.allDone')}</Text>
-                  <Text style={[styles.doneBody, start]}>{t('home.allDoneBody')}</Text>
-                </View>
-              </View>
-            )}
-          </Entrance>
+          <View style={styles.footRule} />
 
-          {/* ── What is on now, and how much the day holds ──
-            One band where there were two: a rectangle two squares wide for the
-            thing happening, and a square beside it for the count. */}
-          <Entrance key={`top-${selectedStr}`} delay={booted ? 110 : 410} from={18}>
-            <View style={styles.topRow}>
-              <AnimatedPressable
-                onPress={() => (meetings.current ? openItem(meetings.current) : goToCalendar())}
-                onPressIn={nowPress.onPressIn}
-                onPressOut={nowPress.onPressOut}
-                style={[
-                  styles.nowWide,
-                  { backgroundColor: AURA.yellow.tint, transform: [{ scale: nowPress.scale }] },
-                ]}
-                accessibilityRole="button"
-              >
-                <View style={styles.nowTop}>
-                  <Text style={styles.nowKicker}>{t('home.now')}</Text>
-                  <CalendarClock color={AURA.yellow.ink} size={18} strokeWidth={2} />
-                </View>
-                <Text style={[styles.nowTitle, start]} numberOfLines={2}>
-                  {meetings.current ? meetings.current.title : t('home.nothingNow')}
-                </Text>
-                {meetings.current ? (
-                  <Text style={[styles.nowMeta, start]} numberOfLines={1}>
-                    {to12h(meetings.current.time)}
-                    {meetings.next ? `  ·  ${t('home.next')} ${to12h(meetings.next.time)}` : ''}
-                  </Text>
-                ) : null}
-              </AnimatedPressable>
-
-              <AnimatedPressable
-                onPress={goToCalendar}
-                onPressIn={countPress.onPressIn}
-                onPressOut={countPress.onPressOut}
-                style={[
-                  styles.countTile,
-                  // Green, not blue: the weather card straight above is blue,
-                  // and two pale blues stacked read as one block with a seam.
-                  { backgroundColor: AURA.green.tint, transform: [{ scale: countPress.scale }] },
-                ]}
-                accessibilityRole="button"
-                accessibilityLabel={t('home.tasksToday', { count: stats.tasks })}
-              >
-                <CalendarDays color={AURA.green.ink} size={22} strokeWidth={2} />
-                <Text style={styles.countNum}>{stats.tasks}</Text>
-                <Text style={[styles.countLabel, start]} numberOfLines={2}>
-                  {t('home.tasksToday', { count: stats.tasks })}
-                </Text>
-              </AnimatedPressable>
-            </View>
-          </Entrance>
-
-          {/* ── The day itself, on its own sheet ── */}
-          <Entrance delay={520} from={40} style={styles.panelWrap}>
-            <View style={styles.panel}>
-              <View style={styles.panelHead}>
-                <View style={{ flex: 1 }}>
-                  <Text style={[styles.panelTitle, start]}>{t('today.yourTasks')}</Text>
-                  <Text style={[styles.panelSub, start]}>
-                    {t('today.completedOf', { done: stats.done, total: stats.total })}
-                  </Text>
-                </View>
-                <SegToggle value={filter} onChange={setFilter} />
-              </View>
-
-              <PanelProgress pct={stats.pct} />
-
-              {visible.length === 0 ? (
-                <View style={styles.empty}>
-                  <Text style={styles.emptyTitle}>{t('today.empty.title')}</Text>
-                  <Text style={styles.emptyBody}>{t('today.empty.body')}</Text>
-                </View>
-              ) : (
-                visible.map((item, index) => (
-                  <Entrance
-                    // Rows re-stagger when the day or the filter changes: the
-                    // key remounts them, and mounting is what animates.
-                    key={`${selectedStr}-${filter}-${item.kind}-${item.id}`}
-                    delay={80 + index * 60}
-                  >
-                    <TaskRow
-                      item={item}
-                      tile={rowTile(index)}
-                      status={rowStatus(item, now)}
-                      index={index}
-                      onOpen={() => openItem(item)}
-                      onToggle={() => toggleDone(item)}
-                      onSnooze={() => snooze(item)}
-                    />
-                  </Entrance>
-                ))
-              )}
-            </View>
-          </Entrance>
+          <Pressable
+            onPress={goToCalendar}
+            style={({ pressed }) => [styles.footCount, pressed && styles.pressedDim]}
+            accessibilityRole="button"
+            accessibilityLabel={t('home.tasksToday', { count: stats.tasks })}
+          >
+            <Text style={[styles.footNum, start]}>{stats.tasks}</Text>
+            <Text style={[styles.footLabel, start]} numberOfLines={2}>
+              {t('home.tasksToday', { count: stats.tasks })}
+            </Text>
+          </Pressable>
         </View>
-      </Animated.ScrollView>
+      </Entrance>
 
       {/* ── What the number on the ring is made of ── */}
       <Sheet
@@ -1274,17 +883,14 @@ const styles = StyleSheet.create({
    * started twice as far down as the band was deep and rested on 250px of
    * empty black. Out of flow, the padding is the only thing placing the sheet.
    */
-  bandContent: {
-    position: 'absolute',
-    top: 0,
-    insetInlineStart: 0,
-    insetInlineEnd: 0,
-    paddingHorizontal: spacing.md + 4,
-    // Behind the sheet, so the white passes over the greeting and the week
-    // rather than under them — but not behind zero, which on a device puts it
-    // behind the page's own white background and hides it outright. The scroll
-    // that follows it in source order already paints on top.
-  },
+  /**
+   * The greeting, the week and the day's line.
+   *
+   * In normal flow. It was absolute while a scrolling sheet slid up over it —
+   * out of flow so the sheet could be padded past it and then cover it. There
+   * is no scroll now, so out of flow it simply stacked on top of the weather.
+   */
+  bandContent: {},
   /**
    * The sheet's own white, carried down past the end of its content.
    *
@@ -1406,35 +1012,73 @@ const styles = StyleSheet.create({
   },
 
   // ── Weather ──
-  weatherCard: {
+  /**
+   * The day's sky, with the horizon under it.
+   *
+   * `flex: 1` so the two of them take whatever is left between the week strip
+   * and the white foot — the screen has no scroll, so this is what absorbs the
+   * difference between a small phone and a large one.
+   */
+  stage: { flex: 1, justifyContent: 'flex-start' },
+  /** Straight onto the dark: no ground, no radius, no padding of its own. */
+  weatherHero: {
     flexDirection: 'row',
-    alignItems: 'center',
+    alignItems: 'flex-start',
     gap: 14,
-    borderRadius: radius.lg,
-    padding: spacing.md + 2,
-    marginTop: spacing.md,
+    marginTop: spacing.lg,
   },
-  weatherPlace: {
-    fontSize: 13,
-    ...font(600),
-    color: colors.text,
-    opacity: 0.7,
-  },
+  weatherPlace: { fontSize: 19, ...font(700), color: NIGHT.ink },
   weatherTemp: {
-    fontSize: 40,
+    // The one number on the page that carries at arm's length.
+    fontSize: 68,
     ...font(700),
-    color: colors.text,
-    letterSpacing: -1.2,
+    color: NIGHT.ink,
+    letterSpacing: -2.5,
     marginTop: 2,
   },
-  weatherDesc: { fontSize: 14.5, ...font(700), marginTop: 1 },
-  weatherRange: {
-    fontSize: 12.5,
-    ...font(500),
-    color: colors.text,
-    opacity: 0.6,
-    marginTop: 5,
+  weatherDesc: { fontSize: 18, ...font(600), color: NIGHT.ink, marginTop: 2 },
+  weatherRange: { fontSize: 15, ...font(500), color: NIGHT.sub, marginTop: 6 },
+  /** Pinned to the foot of the dark, under everything else on it. */
+  horizon: {
+    position: 'absolute',
+    bottom: 0,
+    insetInlineStart: -(spacing.md + 4),
   },
+
+  // ── The white card across the foot ──
+  foot: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: colors.surface,
+    // Only the top two. The card runs off the bottom of the screen, under the
+    // floating nav bar, which is what makes the two read as one white footer.
+    borderTopStartRadius: 28,
+    borderTopEndRadius: 28,
+    // Out to the screen edges, undoing the page's own side padding.
+    marginHorizontal: -(spacing.md + 4),
+    paddingHorizontal: spacing.md + 4,
+    paddingTop: spacing.md + 2,
+    // Its own two lines, then room for the nav bar to float over the rest.
+    // The page is `clearTabBar={false}`, so nothing else reserves that space
+    // and the card has to carry it — as padding, not a negative margin, which
+    // pulled the whole card off the bottom of the screen.
+    paddingBottom: FOOT_UNDER_BAR,
+  },
+  footNow: { flex: 1.4, paddingVertical: 2 },
+  footKicker: { fontSize: 12, ...font(500), color: colors.textMuted },
+  footTitle: {
+    fontSize: 16,
+    ...font(700),
+    color: colors.text,
+    letterSpacing: -0.3,
+    lineHeight: 21,
+    marginTop: 3,
+  },
+  /** The hairline between the two halves. */
+  footRule: { width: 1, alignSelf: 'stretch', backgroundColor: colors.border, marginHorizontal: 14 },
+  footCount: { flex: 1, paddingVertical: 2 },
+  footNum: { fontSize: 26, ...font(700), color: colors.text, letterSpacing: -0.8 },
+  footLabel: { fontSize: 12.5, ...font(500), color: colors.textMuted, marginTop: 1 },
 
   /**
    * Nothing left to do. Green, because this is the one place on the screen

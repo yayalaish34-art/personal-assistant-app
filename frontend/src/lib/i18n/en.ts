@@ -133,6 +133,9 @@ export const en = {
   'home.snooze': 'Tomorrow',
   'home.open': 'Open',
   'home.allDone': 'Everything is done',
+  // The headline across the top of Home, and the line under it.
+  'home.tagline': 'Plan less. Do more.',
+  'home.taglineSub': 'Your assistant keeps your day on track.',
   'home.allDoneBody': 'Nothing left on today’s list.',
   // The four squares: one per part of the app, opened from home.
   'home.sections': 'Your four',

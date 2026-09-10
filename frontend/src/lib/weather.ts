@@ -18,7 +18,13 @@ const GEOCODE_URL = 'https://geocoding-api.open-meteo.com/v1/search';
 // Versioned: the cached shape gained a place name and a high/low, and an old
 // entry would deserialise into a reading with those fields missing.
 const PLACE_KEY = '@pa/weatherPlace2';
-const READING_KEY = '@pa/weatherReading2';
+// Bumped with the shape: a reading cached before the week existed would
+// deserialise with `days` missing and the strip would render empty for half an
+// hour after an update.
+const READING_KEY = '@pa/weatherReading3';
+
+/** How much of the week ahead the strip shows. */
+const FORECAST_DAYS = 7;
 
 /** Weather is worth re-asking for about twice an hour. */
 const READING_TTL_MS = 30 * 60 * 1000;
@@ -41,6 +47,17 @@ export interface Weather {
   low: number;
   /** Where this reading is for — the city, as the geocoder named it. */
   place: string | null;
+  /** The week ahead, today first. Empty if the provider gave nothing usable. */
+  days: DayForecast[];
+}
+
+/** One day of the strip under the greeting. */
+export interface DayForecast {
+  /** `YYYY-MM-DD`, as the provider dated it in the place's own timezone. */
+  date: string;
+  high: number;
+  low: number;
+  sky: Sky;
 }
 
 type Place = { at: number; latitude: number; longitude: number; name: string | null };
@@ -140,7 +157,8 @@ export async function getWeather(): Promise<Weather | null> {
     const res = await fetch(
       `${FORECAST_URL}?latitude=${place.latitude}&longitude=${place.longitude}` +
         `&current=temperature_2m,apparent_temperature,weather_code,is_day` +
-        `&daily=temperature_2m_max,temperature_2m_min&forecast_days=1&timezone=auto`,
+        `&daily=temperature_2m_max,temperature_2m_min,weather_code` +
+        `&forecast_days=${FORECAST_DAYS}&timezone=auto`,
     );
     if (!res.ok) return null;
     const body = (await res.json()) as {
@@ -150,7 +168,12 @@ export async function getWeather(): Promise<Weather | null> {
         weather_code?: number;
         is_day?: number;
       };
-      daily?: { temperature_2m_max?: number[]; temperature_2m_min?: number[] };
+      daily?: {
+        time?: string[];
+        temperature_2m_max?: number[];
+        temperature_2m_min?: number[];
+        weather_code?: number[];
+      };
     };
     const current = body.current;
     if (typeof current?.temperature_2m !== 'number') return null;
@@ -162,6 +185,17 @@ export async function getWeather(): Promise<Weather | null> {
     const high = body.daily?.temperature_2m_max?.[0];
     const low = body.daily?.temperature_2m_min?.[0];
 
+    // The week, as far as the provider filled it in. Any day missing a
+    // temperature is dropped rather than guessed at — a strip with a gap is
+    // honest, a strip with a made-up number is not.
+    const d = body.daily;
+    const days: DayForecast[] = (d?.time ?? []).flatMap((date, i) => {
+      const hi = d?.temperature_2m_max?.[i];
+      const lo = d?.temperature_2m_min?.[i];
+      if (typeof hi !== 'number' || typeof lo !== 'number') return [];
+      return [{ date, high: Math.round(hi), low: Math.round(lo), sky: skyOf(d?.weather_code?.[i] ?? 3) }];
+    });
+
     const value: Weather = {
       temperature: now,
       feelsLike: Math.round(current.apparent_temperature ?? current.temperature_2m),
@@ -170,6 +204,7 @@ export async function getWeather(): Promise<Weather | null> {
       high: typeof high === 'number' ? Math.round(high) : now,
       low: typeof low === 'number' ? Math.round(low) : now,
       place: place.name,
+      days,
     };
     await AsyncStorage.setItem(
       READING_KEY,

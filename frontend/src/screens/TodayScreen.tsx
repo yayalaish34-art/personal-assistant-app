@@ -14,7 +14,15 @@ import { useFocusEffect, useNavigation } from '@react-navigation/native';
 import type { NativeStackNavigationProp } from '@react-navigation/native-stack';
 import * as Haptics from 'expo-haptics';
 import { LinearGradient } from 'expo-linear-gradient';
-import Svg, { Circle, Defs, LinearGradient as SvgGradient, Path, Stop } from 'react-native-svg';
+import MaskedView from '@react-native-masked-view/masked-view';
+import Svg, {
+  Circle,
+  Defs,
+  LinearGradient as SvgGradient,
+  Path,
+  Stop,
+  Text as SvgText,
+} from 'react-native-svg';
 import {
   X,
   CalendarDays,
@@ -45,6 +53,7 @@ import {
   colors,
   spacing,
   font,
+  fonts,
   radius,
   AURA,
   AURA_CYCLE,
@@ -55,7 +64,13 @@ import {
   type AuraKey,
 } from '../theme';
 import { t, locale, alignStart, isRTL } from '../lib/i18n';
-import { getWeather, isDaylightNow, type Sky, type Weather } from '../lib/weather';
+import {
+  getWeather,
+  isDaylightNow,
+  type DayForecast,
+  type Sky,
+  type Weather,
+} from '../lib/weather';
 
 /**
  * The glyph for a sky. Clear and near-clear get the sun or the moon, so the
@@ -332,7 +347,7 @@ function Sheet({
   return (
     <Modal visible={open} transparent animationType="slide" onRequestClose={onClose}>
       <Pressable style={styles.backdrop} onPress={onClose} accessibilityRole="button" />
-      <View style={styles.sheet}>
+      <View style={styles.whiteSheet}>
         <View style={styles.sheetGrip} />
         <View style={styles.sheetHead}>
           <View style={{ flex: 1 }}>
@@ -387,6 +402,317 @@ function SheetStat({
  * makes it useful: where the reading is for, what the sky is doing, and
  * whether the day is going to get colder.
  */
+type RowStatus = { key: 'done' | 'inprogress' | 'overdue' | 'scheduled'; dot: string; pct: number };
+
+/** What the small ring and the status line say about one row. */
+function rowStatus(item: AgendaItem, now: Date): RowStatus {
+  const s = statusOf(item, now);
+  // Sky for settled, lilac for live, grey for not-yet, red for late. Peach is
+  // deliberately absent: beside `colors.danger` it is the same mark to a
+  // deuteranope (see AURA), and "scheduled" must never read as "overdue".
+  if (s === 'done') return { key: 'done', dot: AURA.green.ink, pct: 100 };
+  if (s === 'inprogress') return { key: 'inprogress', dot: AURA.blue.ink, pct: 55 };
+  if (item.date) {
+    const due = new Date(`${item.date}T${(item.time || '23:59').padStart(5, '0')}:00`);
+    if (!Number.isNaN(due.getTime()) && due < now) {
+      return { key: 'overdue', dot: colors.danger, pct: 0 };
+    }
+  }
+  return { key: 'scheduled', dot: colors.textMuted, pct: 0 };
+}
+
+/** A row's progress, drawn small: fills on mount, colour from its status. */
+function RowRing({ pct, color, delay }: { pct: number; color: string; delay: number }) {
+  const anim = useRef(new Animated.Value(0)).current;
+  useEffect(() => {
+    Animated.timing(anim, {
+      toValue: pct,
+      duration: 700,
+      delay,
+      easing: Easing.out(Easing.cubic),
+      useNativeDriver: false,
+    }).start();
+  }, [pct, delay, anim]);
+
+  // Sized to sit inside the 46px disc behind it with air to spare.
+  const size = 40;
+  const stroke = 4.5;
+  const r = (size - stroke) / 2;
+  const c = 2 * Math.PI * r;
+
+  return (
+    <View style={styles.rowRing}>
+      <Svg width={size} height={size} style={StyleSheet.absoluteFill}>
+        <Circle
+          cx={size / 2}
+          cy={size / 2}
+          r={r}
+          stroke="rgba(20, 21, 15, 0.08)"
+          strokeWidth={stroke}
+          fill="none"
+        />
+        {pct > 0 ? (
+          <AnimatedCircle
+            cx={size / 2}
+            cy={size / 2}
+            r={r}
+            stroke={color}
+            strokeWidth={stroke}
+            strokeLinecap="round"
+            fill="none"
+            strokeDasharray={`${c} ${c}`}
+            strokeDashoffset={anim.interpolate({ inputRange: [0, 100], outputRange: [c, 0] })}
+            transform={`rotate(-90 ${size / 2} ${size / 2})`}
+          />
+        ) : null}
+      </Svg>
+      <Text style={[styles.rowRingText, { color: pct > 0 ? colors.text : colors.textMuted }]}>
+        {pct}%
+      </Text>
+    </View>
+  );
+}
+
+/**
+ * One line of the day, as a card rather than a table row.
+ *
+ * The spring is the point: a list that answers the finger feels like something
+ * you are handling, and the old rows only dimmed. It rides the native driver,
+ * so a long day scrolls at the same speed it did.
+ */
+function TaskRow({
+  item,
+  tile,
+  status,
+  index,
+  onOpen,
+  onToggle,
+  onSnooze,
+}: {
+  item: AgendaItem;
+  tile: AuraKey;
+  status: RowStatus;
+  index: number;
+  onOpen: () => void;
+  onToggle: () => void;
+  onSnooze: () => void;
+}) {
+  const start = { textAlign: alignStart() } as const;
+  const press = useRef(new Animated.Value(0)).current;
+
+  const spring = (to: number) =>
+    Animated.spring(press, {
+      toValue: to,
+      friction: 7,
+      tension: 140,
+      useNativeDriver: true,
+    }).start();
+
+  return (
+    <Animated.View
+      style={{
+        transform: [{ scale: press.interpolate({ inputRange: [0, 1], outputRange: [1, 0.97] }) }],
+      }}
+    >
+      <Pressable
+        onPress={onOpen}
+        onPressIn={() => spring(1)}
+        onPressOut={() => spring(0)}
+        style={[styles.row, { backgroundColor: AURA[tile].tint }]}
+        accessibilityRole="button"
+      >
+        <Pressable
+          onPress={item.kind === 'task' ? onToggle : undefined}
+          hitSlop={6}
+          style={styles.rowRingWrap}
+          accessibilityRole={item.kind === 'task' ? 'checkbox' : 'none'}
+          accessibilityState={item.kind === 'task' ? { checked: Boolean(item.isDone) } : undefined}
+        >
+          <RowRing pct={status.pct} color={status.dot} delay={140 + index * 60} />
+        </Pressable>
+
+        <View style={{ flex: 1 }}>
+          <Text
+            style={[styles.rowTitle, start, status.key === 'done' && styles.rowTitleDone]}
+            numberOfLines={1}
+          >
+            {item.title}
+          </Text>
+          <View style={styles.rowMeta}>
+            <View style={[styles.statusDot, { backgroundColor: status.dot }]} />
+            <Text
+              style={[styles.rowMetaText, status.key === 'overdue' && { color: colors.danger }]}
+            >
+              {t(`today.status.${status.key}`)}
+            </Text>
+            {item.time ? <Text style={styles.rowMetaText}> · {to12h(item.time)}</Text> : null}
+          </View>
+        </View>
+
+        {/* On a task this pushes it to tomorrow; on an event it stays a mark
+            saying which of the two kinds this row is. White either way, so it
+            reads as a control sitting on the tint rather than part of it. */}
+        {item.kind === 'task' ? (
+          <Pressable
+            onPress={onSnooze}
+            hitSlop={6}
+            style={({ pressed }) => [styles.rowIcon, pressed && styles.pressedDim]}
+            accessibilityRole="button"
+            accessibilityLabel={t('home.snooze')}
+          >
+            <CalendarArrowDown color={AURA[tile].ink} size={18} strokeWidth={2} />
+          </Pressable>
+        ) : (
+          <View style={styles.rowIcon}>
+            <CalendarDays color={AURA[tile].ink} size={18} strokeWidth={2} />
+          </View>
+        )}
+      </Pressable>
+    </Animated.View>
+  );
+}
+
+/**
+ * One day's weather, under its pill.
+ *
+ * Lives inside the pill rail rather than in a row of its own: the rail is a
+ * horizontal ScrollView showing a window around today, and a separate row laid
+ * out independently drifted out of step the moment it was scrolled — Thursday's
+ * temperature under Sunday's pill.
+ *
+ * The little bar is the day's high as a share of the week's range, which is
+ * what turns seven numbers into a shape you can read at a glance: it says
+ * "Thursday is the cold one" without being read.
+ */
+function ForecastColumn({
+  day,
+  range,
+}: {
+  day: DayForecast | undefined;
+  range: { bottom: number; span: number };
+}) {
+  // The rail is mirrored as a whole for RTL, so every column flips back — the
+  // same counter-flip DayPill does, and for the same reason: without it "30°"
+  // renders as "°30".
+  return (
+    <View style={[styles.forecastDay, isRTL() ? styles.forecastFlip : null]}>
+      <Text style={styles.forecastTemp} numberOfLines={1}>
+        {day ? `${day.high}°` : ' '}
+      </Text>
+      <View style={styles.forecastBarTrack}>
+        {day ? (
+          <LinearGradient
+            colors={IRIDESCENT}
+            start={{ x: 0, y: 0 }}
+            end={{ x: 1, y: 0 }}
+            style={[
+              styles.forecastBar,
+              { width: `${30 + ((day.high - range.bottom) / range.span) * 70}%` },
+            ]}
+          />
+        ) : null}
+      </View>
+    </View>
+  );
+}
+
+/**
+ * A hairline of the sweep with a glint travelling along it.
+ *
+ * Under the headline, where the reference has a lit rule. It is the same
+ * vocabulary as the progress bar — the app's own gradient, plus a highlight
+ * that crosses it every few seconds — so the two read as one idea rather than
+ * two decorations. Native-driven and looping, so it costs nothing per frame.
+ */
+function GlowRule({ width }: { width: number }) {
+  const sweep = useRef(new Animated.Value(0)).current;
+
+  useEffect(() => {
+    const loop = Animated.loop(
+      Animated.sequence([
+        Animated.delay(900),
+        Animated.timing(sweep, {
+          toValue: 1,
+          duration: 1700,
+          easing: Easing.inOut(Easing.quad),
+          useNativeDriver: true,
+        }),
+        Animated.timing(sweep, { toValue: 0, duration: 0, useNativeDriver: true }),
+      ]),
+    );
+    loop.start();
+    return () => loop.stop();
+  }, [sweep]);
+
+  return (
+    <View style={styles.glowRule}>
+      {/* The rule itself, brightest in the middle so it reads as lit rather
+          than drawn edge to edge. */}
+      <LinearGradient
+        colors={['transparent', IRIDESCENT[0], IRIDESCENT[1], IRIDESCENT[2], 'transparent']}
+        start={{ x: 0, y: 0 }}
+        end={{ x: 1, y: 0 }}
+        style={StyleSheet.absoluteFill}
+      />
+      <Animated.View
+        pointerEvents="none"
+        style={[
+          styles.glowGlint,
+          {
+            transform: [
+              {
+                translateX: sweep.interpolate({
+                  inputRange: [0, 1],
+                  outputRange: [-GLINT_W, Math.max(width, 1)],
+                }),
+              },
+            ],
+          },
+        ]}
+      />
+    </View>
+  );
+}
+
+/** How wide the glint that crosses the rule is. */
+const GLINT_W = 90;
+
+/** The gradient both the glyph and the temperature are painted with. */
+const SKY_SWEEP = 'skySweep';
+
+/**
+ * The temperature, filled with the sweep rather than set in white.
+ *
+ * React Native cannot put a gradient inside a `Text`, and the usual answer — a
+ * masked view — is a dependency this project does not carry. So the number is
+ * laid out twice: once in the ordinary way to claim the space, and once more
+ * on top, clipped to a gradient.
+ *
+ * SVG text was the obvious route and does not survive contact with
+ * react-native-web: an `<svg>` gets no intrinsic height in a flex column, and
+ * a gradient in the default bounding-box units resolves against a text box
+ * that measures empty. The number sat in the DOM at full width, invisible,
+ * through two rounds of fixing. This way the layout is plain React Native and
+ * only the paint is a gradient.
+ */
+function SweepTemp({ label }: { label: string }) {
+  return (
+    <MaskedView
+      style={styles.weatherTempWrap}
+      // The mask is the number itself: the gradient below shows only where
+      // these glyphs are. Its colour is irrelevant — only its alpha is read —
+      // but it must be opaque, and a transparent one masks nothing at all.
+      maskElement={<Text style={styles.weatherTemp}>{label}</Text>}
+    >
+      <LinearGradient colors={IRIDESCENT} start={{ x: 0, y: 0 }} end={{ x: 1, y: 1 }}>
+        {/* Transparent, and there only to give the gradient the mask's exact
+            size — a gradient with no child has no dimensions to fill. */}
+        <Text style={[styles.weatherTemp, styles.weatherTempGhost]}>{label}</Text>
+      </LinearGradient>
+    </MaskedView>
+  );
+}
+
 function WeatherHero({ weather, onPress }: { weather: Weather | null; onPress: () => void }) {
   const start = { textAlign: alignStart() } as const;
   const isDay = weather?.isDay ?? isDaylightNow();
@@ -405,7 +731,7 @@ function WeatherHero({ weather, onPress }: { weather: Weather | null; onPress: (
         <Text style={[styles.weatherPlace, start]} numberOfLines={1}>
           {weather?.place ?? t('today.tile.today')}
         </Text>
-        <Text style={[styles.weatherTemp, start]}>{weather ? `${weather.temperature}°` : '—'}</Text>
+        <SweepTemp label={weather ? `${weather.temperature}°` : '—'} />
         <Text style={[styles.weatherDesc, start]} numberOfLines={1}>
           {weather ? t(`sky.${weather.sky}`) : ''}
         </Text>
@@ -415,14 +741,38 @@ function WeatherHero({ weather, onPress }: { weather: Weather | null; onPress: (
           </Text>
         ) : null}
       </View>
-      {/* Full colour, on the dark: the sun is the one warm thing up here, and
-          the reference leans on it to keep the page from reading as a slab. */}
+      {/* Stroked with the same sweep as the temperature, so the sun and the
+          number read as one object rather than a white glyph beside a coloured
+          one. lucide takes `color`, and a url(#…) reference is a legal stroke
+          — which is what lets the icon carry a gradient without redrawing it. */}
       <Animated.View style={{ transform: [{ translateY: float }] }}>
-        <Icon color={AURA.blue.tint} size={76} strokeWidth={1.6} />
+        <Svg width={ICON_BOX} height={ICON_BOX} viewBox="0 0 24 24">
+          <Defs>
+            <SvgGradient
+              id={`${SKY_SWEEP}Icon`}
+              gradientUnits="userSpaceOnUse"
+              x1="0"
+              y1="0"
+              x2="24"
+              y2="24"
+            >
+              {IRIDESCENT.map((c, i) => (
+                <Stop key={c} offset={`${(i / (IRIDESCENT.length - 1)) * 100}%`} stopColor={c} />
+              ))}
+            </SvgGradient>
+          </Defs>
+          <Icon color={`url(#${SKY_SWEEP}Icon)`} size={24} strokeWidth={1.6} />
+        </Svg>
       </Animated.View>
     </Pressable>
   );
 }
+
+/** How big the sun or moon is drawn. */
+const ICON_BOX = 76;
+
+/** The drawn temperature's canvas height, shared with the row that holds it. */
+const TEMP_H = 86;
 
 /**
  * Hills and trees along the foot of the dark.
@@ -482,6 +832,14 @@ function Horizon({ width }: { width: number }) {
 const HORIZON_H = 130;
 
 /**
+ * How much of the white sheet shows on the first screen.
+ *
+ * The reference opens with the two-up card sitting across the foot, so the sky
+ * is sized to leave exactly this much room under it.
+ */
+const FOOT_PEEK = 150;
+
+/**
  * White carried below the footer's own two lines, for the nav bar to float on.
  *
  * The bar is 64 tall and sits about 22 off the bottom, and its raised mic
@@ -504,11 +862,20 @@ const STRIP_LENGTH = 10;
 
 export default function TodayScreen() {
   const navigation = useNavigation<Nav>();
-  const { width } = useWindowDimensions();
+  const { width, height: screenH } = useWindowDimensions();
   const [name, setName] = useState('');
   const [items, setItems] = useState<AgendaItem[]>([]);
   const [weather, setWeather] = useState<Weather | null>(null);
   const [sheet, setSheet] = useState<'progress' | 'alerts' | null>(null);
+  /**
+   * How tall the fixed dark head is.
+   *
+   * Sets the scroll's top padding, so the sky starts below the head rather
+   * than under it. Measured because everything on the head feeds into it — a
+   * greeting that wraps, a longer "next" title.
+   */
+  const [headH, setHeadH] = useState(0);
+
   const today = toDateStr(new Date());
   const [selectedStr, setSelectedStr] = useState(today);
 
@@ -519,6 +886,23 @@ export default function TodayScreen() {
     const timer = setTimeout(() => setBooted(true), 900);
     return () => clearTimeout(timer);
   }, []);
+
+  /**
+   * The week's forecast, by date, plus the range its bars are drawn against.
+   *
+   * The range is the week's own spread rather than an absolute scale, so the
+   * bars still say something in a week where every day is 30°.
+   */
+  const forecastByDate = useMemo(
+    () => new Map((weather?.days ?? []).map((d) => [d.date, d])),
+    [weather],
+  );
+  const forecastRange = useMemo(() => {
+    const highs = (weather?.days ?? []).map((d) => d.high);
+    if (highs.length === 0) return { bottom: 0, span: 1 };
+    const bottom = Math.min(...highs);
+    return { bottom, span: Math.max(Math.max(...highs) - bottom, 1) };
+  }, [weather]);
 
   const week = useMemo(() => {
     const base = new Date();
@@ -709,14 +1093,40 @@ export default function TodayScreen() {
 
   return (
     <Screen clearTabBar={false} dark>
-      {/* ── The head: greeting, the week, the day's line ── */}
-      <View style={styles.bandContent}>
+      {/* ── The head: greeting, the week, the day's line ──
+          Out of flow, and written before the scroll, so the scroll paints over
+          it: that is what lets the white sheet climb the dark rather than stop
+          at its edge. */}
+      <View
+        style={styles.bandContent}
+        onLayout={(e) => setHeadH(e.nativeEvent.layout.height)}
+      >
         <GreetingHeader
           name={`${greetingNow()}, ${name || t('today.friend')}!`}
           photoUri={PROFILE_PHOTO_URI}
           onBellPress={() => openSheet('alerts')}
           onDark
         />
+
+        {/* ── Where you are, and what it is doing there ──
+            The reference puts this at the end of the day row. It is the one
+            place on the head that names the city, so the forecast strip below
+            does not have to. */}
+        <Pressable
+          onPress={goToCalendar}
+          style={({ pressed }) => [styles.placeChip, pressed && styles.pressedDim]}
+          accessibilityRole="button"
+        >
+          {(() => {
+            const isDay = weather?.isDay ?? isDaylightNow();
+            const Glyph = weather ? skyIcon(weather.sky, isDay) : isDay ? Sun : Moon;
+            return <Glyph color={IRIDESCENT[1]} size={15} strokeWidth={2.2} />;
+          })()}
+          <Text style={styles.placeChipText} numberOfLines={1}>
+            {weather?.place ?? t('today.tile.today')}
+            {weather ? ` · ${weather.temperature}°` : ''}
+          </Text>
+        </Pressable>
 
         {/* ── The week, one pill a day, the chosen one in the holographic fill ── */}
         <ScrollView
@@ -730,18 +1140,36 @@ export default function TodayScreen() {
           contentContainerStyle={styles.stripContent}
         >
           {week.map((d, i) => (
-            <DayPill
-              key={toDateStr(d)}
-              date={d}
-              index={i}
-              selected={toDateStr(d) === selectedStr}
-              onPress={() => pickDay(d, i)}
-            />
+            <View key={toDateStr(d)} style={styles.railColumn}>
+              <DayPill
+                date={d}
+                index={i}
+                selected={toDateStr(d) === selectedStr}
+                onPress={() => pickDay(d, i)}
+              />
+              {/* The day's weather, in the same column and the same rail — so
+                  it travels with its pill instead of drifting out of step when
+                  the rail is scrolled. */}
+              <ForecastColumn day={forecastByDate.get(toDateStr(d))} range={forecastRange} />
+            </View>
           ))}
         </ScrollView>
 
+        {/* ── The headline, and the lit rule under it ── */}
+        <Entrance delay={booted ? 120 : 320} from={16}>
+          <View style={styles.tagline}>
+            <Text style={styles.taglineText} numberOfLines={2}>
+              {t('home.tagline')}
+            </Text>
+            <GlowRule width={width - (spacing.md + 4) * 2} />
+            <Text style={styles.taglineSub} numberOfLines={2}>
+              {t('home.taglineSub')}
+            </Text>
+          </View>
+        </Entrance>
+
         {/* ── The day, in one line, on the dark ── */}
-        <Entrance key={`band-${selectedStr}`} delay={booted ? 90 : 250} from={14}>
+        <Entrance key={`band-${selectedStr}`} delay={booted ? 160 : 380} from={14}>
           <View style={styles.bandLine}>
             <Text style={[styles.bandCount, start]} numberOfLines={1}>
               {t('today.completedOf', { done: stats.done, total: stats.total })}
@@ -758,52 +1186,90 @@ export default function TodayScreen() {
         </Entrance>
       </View>
 
-      {/* ── The sky, and the ground it stands on ──
-          No scroll. The reference is one screen: the greeting, the week, the
-          weather, a horizon, and a white card across the foot. Everything that
-          used to be below the fold — the now tile, the count tile, the day's
-          list — is on Calendar, which shows the same tasks and events. */}
-      <View style={styles.stage}>
-        <Entrance delay={booted ? 30 : 300} from={18}>
-          <WeatherHero weather={weather} onPress={goToCalendar} />
-        </Entrance>
-        <Horizon width={width} />
-      </View>
-
-      {/* ── The white card across the foot ──
-          Two halves, split by a hairline: what is happening now, and how much
-          the day holds. The nav bar floats over its lower half, which is what
-          makes the two read as one white footer in the reference. */}
-      <Entrance key={`foot-${selectedStr}`} delay={booted ? 90 : 420} from={20}>
-        <View style={styles.foot}>
-          <Pressable
-            onPress={() => (meetings.current ? openItem(meetings.current) : goToCalendar())}
-            style={({ pressed }) => [styles.footNow, pressed && styles.pressedDim]}
-            accessibilityRole="button"
-          >
-            <Text style={[styles.footKicker, start]} numberOfLines={1}>
-              {t('home.now')}
-            </Text>
-            <Text style={[styles.footTitle, start]} numberOfLines={2}>
-              {meetings.current ? meetings.current.title : t('home.nothingNow')}
-            </Text>
-          </Pressable>
-
-          <View style={styles.footRule} />
-
-          <Pressable
-            onPress={goToCalendar}
-            style={({ pressed }) => [styles.footCount, pressed && styles.pressedDim]}
-            accessibilityRole="button"
-            accessibilityLabel={t('home.tasksToday', { count: stats.tasks })}
-          >
-            <Text style={[styles.footNum, start]}>{stats.tasks}</Text>
-            <Text style={[styles.footLabel, start]} numberOfLines={2}>
-              {t('home.tasksToday', { count: stats.tasks })}
-            </Text>
-          </Pressable>
+      {/* ── Everything under the head, in one scroll ──
+          The head above is out of flow, so this passes over it: the sky fills
+          the first screen, and the white sheet under it climbs the dark as you
+          scroll rather than stopping at the join. */}
+      <ScrollView
+        showsVerticalScrollIndicator={false}
+        style={styles.scroll}
+        contentContainerStyle={[styles.scrollContent, { paddingTop: headH }]}
+      >
+        {/* ── The sky, and the ground it stands on ──
+            Sized to what is left of the first screen, so the white sheet's top
+            edge lands at the bottom of it and the page opens on the reference
+            exactly. */}
+        <View style={[styles.stage, { height: Math.max(screenH - headH - FOOT_PEEK, 220) }]}>
+          <Entrance delay={booted ? 30 : 300} from={18}>
+            <WeatherHero weather={weather} onPress={goToCalendar} />
+          </Entrance>
+          <Horizon width={width} />
         </View>
-      </Entrance>
+
+        {/* ── The white sheet ──
+            Its head is the two-up card from the reference — what is on now,
+            and how many tasks — and the day's list runs on below it. */}
+        <View style={styles.sheet}>
+          <Entrance key={`foot-${selectedStr}`} delay={booted ? 90 : 420} from={20}>
+            <View style={styles.foot}>
+              <Pressable
+                onPress={() => (meetings.current ? openItem(meetings.current) : goToCalendar())}
+                style={({ pressed }) => [styles.footNow, pressed && styles.pressedDim]}
+                accessibilityRole="button"
+              >
+                <Text style={[styles.footKicker, start]} numberOfLines={1}>
+                  {t('home.now')}
+                </Text>
+                <Text style={[styles.footTitle, start]} numberOfLines={2}>
+                  {meetings.current ? meetings.current.title : t('home.nothingNow')}
+                </Text>
+              </Pressable>
+
+              <View style={styles.footRule} />
+
+              <Pressable
+                onPress={goToCalendar}
+                style={({ pressed }) => [styles.footCount, pressed && styles.pressedDim]}
+                accessibilityRole="button"
+                accessibilityLabel={t('home.tasksToday', { count: stats.tasks })}
+              >
+                <Text style={[styles.footNum, start]}>{stats.tasks}</Text>
+                <Text style={[styles.footLabel, start]} numberOfLines={2}>
+                  {t('home.tasksToday', { count: stats.tasks })}
+                </Text>
+              </Pressable>
+            </View>
+          </Entrance>
+
+          {/* ── The day itself ── */}
+          <Text style={[styles.listTitle, start]}>{t('today.yourTasks')}</Text>
+          {items.length === 0 ? (
+            <View style={styles.empty}>
+              <Text style={styles.emptyTitle}>{t('today.empty.title')}</Text>
+              <Text style={styles.emptyBody}>{t('today.empty.body')}</Text>
+            </View>
+          ) : (
+            items.map((item, index) => (
+              <Entrance
+                // Rows re-stagger when the day changes: the key remounts them,
+                // and mounting is what animates.
+                key={`${selectedStr}-${item.kind}-${item.id}`}
+                delay={60 + index * 50}
+              >
+                <TaskRow
+                  item={item}
+                  tile={AURA_CYCLE[index % AURA_CYCLE.length]}
+                  status={rowStatus(item, now)}
+                  index={index}
+                  onOpen={() => openItem(item)}
+                  onToggle={() => toggleDone(item)}
+                  onSnooze={() => snooze(item)}
+                />
+              </Entrance>
+            ))
+          )}
+        </View>
+      </ScrollView>
 
       {/* ── What the number on the ring is made of ── */}
       <Sheet
@@ -866,6 +1332,72 @@ const styles = StyleSheet.create({
    * its own background would hide the dark, and one that clipped would cut the
    * sheet off at its own top edge as it rose.
    */
+  /** City and current temperature, at the end of the day row. */
+  placeChip: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    alignSelf: 'flex-end',
+    marginTop: spacing.sm,
+    backgroundColor: NIGHT.card,
+    borderRadius: 100,
+    paddingHorizontal: 12,
+    paddingVertical: 6,
+  },
+  placeChipText: { fontSize: 12.5, ...font(600), color: NIGHT.ink },
+
+  // ── The week's weather, in the pill rail ──
+  /** A pill and its forecast, as one column of the rail. */
+  railColumn: { width: PILL_W, alignItems: 'center' },
+  forecastDay: { alignSelf: 'stretch', alignItems: 'center', gap: 4, marginTop: 8 },
+  forecastFlip: { transform: [{ scaleX: -1 }] },
+  forecastTemp: { fontSize: 13, ...font(600), color: NIGHT.sub },
+  /** The day's high as a share of the week's range. */
+  forecastBarTrack: { height: 3, alignSelf: 'stretch', alignItems: 'center' },
+  forecastBar: { height: 3, borderRadius: 2 },
+
+  // ── The headline ──
+  tagline: { marginTop: spacing.lg, alignItems: 'center' },
+  taglineText: {
+    fontSize: 27,
+    ...font(700),
+    color: NIGHT.ink,
+    letterSpacing: -0.8,
+    textAlign: 'center',
+  },
+  taglineSub: {
+    fontSize: 13.5,
+    ...font(500),
+    color: NIGHT.sub,
+    textAlign: 'center',
+    marginTop: 10,
+  },
+  /** The lit rule: a hairline of the sweep, with a glint crossing it. */
+  glowRule: {
+    height: 2,
+    alignSelf: 'stretch',
+    marginTop: 12,
+    borderRadius: 1,
+    overflow: 'hidden',
+  },
+  glowGlint: {
+    position: 'absolute',
+    top: -1,
+    bottom: -1,
+    width: GLINT_W,
+    backgroundColor: 'rgba(255, 255, 255, 0.85)',
+  },
+
+  scrollContent: { paddingHorizontal: spacing.md + 4 },
+  /** The list's own heading, on the white. */
+  listTitle: {
+    fontSize: 18,
+    ...font(700),
+    color: colors.text,
+    letterSpacing: -0.3,
+    marginTop: spacing.md,
+    marginBottom: spacing.sm + 2,
+  },
   scroll: {
     backgroundColor: 'transparent',
     // Out to the screen edges. The scroll clips to its own box, so while it
@@ -886,11 +1418,19 @@ const styles = StyleSheet.create({
   /**
    * The greeting, the week and the day's line.
    *
-   * In normal flow. It was absolute while a scrolling sheet slid up over it —
-   * out of flow so the sheet could be padded past it and then cover it. There
-   * is no scroll now, so out of flow it simply stacked on top of the weather.
+   * Out of flow, so the scroll below can pass *over* it — that is what lets the
+   * white sheet climb the dark instead of stopping at its edge. It went back
+   * into flow while the page had no scroll; with one, in flow means it takes
+   * its height twice, once here and once as the scroll's top padding, and the
+   * sky ends up a head lower than it should be.
    */
-  bandContent: {},
+  bandContent: {
+    position: 'absolute',
+    top: 0,
+    insetInlineStart: 0,
+    insetInlineEnd: 0,
+    paddingHorizontal: spacing.md + 4,
+  },
   /**
    * The sheet's own white, carried down past the end of its content.
    *
@@ -1019,7 +1559,14 @@ const styles = StyleSheet.create({
    * and the white foot — the screen has no scroll, so this is what absorbs the
    * difference between a small phone and a large one.
    */
-  stage: { flex: 1, justifyContent: 'flex-start' },
+  /**
+   * The sky and its horizon.
+   *
+   * Height is set per render from what is left of the first screen — no
+   * `flex: 1`, which inside a scroll's content stretches the box and pinned
+   * the weather to the bottom of it.
+   */
+  stage: { justifyContent: 'flex-start' },
   /** Straight onto the dark: no ground, no radius, no padding of its own. */
   weatherHero: {
     flexDirection: 'row',
@@ -1028,14 +1575,18 @@ const styles = StyleSheet.create({
     marginTop: spacing.lg,
   },
   weatherPlace: { fontSize: 19, ...font(700), color: NIGHT.ink },
+  /** Sized by the ghost inside it; the gradient copy is laid over the top. */
+  weatherTempWrap: { alignSelf: 'flex-start', marginTop: 2 },
   weatherTemp: {
     // The one number on the page that carries at arm's length.
     fontSize: 68,
     ...font(700),
     color: NIGHT.ink,
     letterSpacing: -2.5,
-    marginTop: 2,
+    lineHeight: TEMP_H,
   },
+  /** Sizes the gradient without painting over it. */
+  weatherTempGhost: { opacity: 0 },
   weatherDesc: { fontSize: 18, ...font(600), color: NIGHT.ink, marginTop: 2 },
   weatherRange: { fontSize: 15, ...font(500), color: NIGHT.sub, marginTop: 6 },
   /** Pinned to the foot of the dark, under everything else on it. */
@@ -1046,23 +1597,29 @@ const styles = StyleSheet.create({
   },
 
   // ── The white card across the foot ──
+  /**
+   * The white, from the two-up card down past the end of the list.
+   *
+   * It carries the rounded top and the ground; the foot row inside it is just
+   * type. Written after the head and inside the scroll, so it paints over the
+   * dark and climbs it as the page moves.
+   */
+  whiteSheet: {
+    backgroundColor: colors.surface,
+    borderTopStartRadius: 28,
+    borderTopEndRadius: 28,
+    marginHorizontal: -(spacing.md + 4),
+    paddingHorizontal: spacing.md + 4,
+    // Room for the floating nav bar at the end of the list.
+    paddingBottom: FOOT_UNDER_BAR,
+    // A long day still has to reach the bottom of the screen on a short one.
+    minHeight: 320,
+  },
   foot: {
     flexDirection: 'row',
     alignItems: 'center',
-    backgroundColor: colors.surface,
-    // Only the top two. The card runs off the bottom of the screen, under the
-    // floating nav bar, which is what makes the two read as one white footer.
-    borderTopStartRadius: 28,
-    borderTopEndRadius: 28,
-    // Out to the screen edges, undoing the page's own side padding.
-    marginHorizontal: -(spacing.md + 4),
-    paddingHorizontal: spacing.md + 4,
     paddingTop: spacing.md + 2,
-    // Its own two lines, then room for the nav bar to float over the rest.
-    // The page is `clearTabBar={false}`, so nothing else reserves that space
-    // and the card has to carry it — as padding, not a negative margin, which
-    // pulled the whole card off the bottom of the screen.
-    paddingBottom: FOOT_UNDER_BAR,
+    paddingBottom: spacing.md,
   },
   footNow: { flex: 1.4, paddingVertical: 2 },
   footKicker: { fontSize: 12, ...font(500), color: colors.textMuted },
@@ -1248,12 +1805,13 @@ const styles = StyleSheet.create({
   progressFillWrap: { height: '100%' },
   progressFill: { flex: 1, borderRadius: 4 },
 
+  // On the white sheet now, not the dark page: near-black ink, not NIGHT's.
   empty: { alignItems: 'center', paddingVertical: spacing.xl, gap: 6 },
-  emptyTitle: { fontSize: 17, ...font(700), color: NIGHT.ink },
+  emptyTitle: { fontSize: 17, ...font(700), color: colors.text },
   emptyBody: {
     fontSize: 14,
     ...font(500),
-    color: NIGHT.sub,
+    color: colors.textMuted,
     textAlign: 'center',
     paddingHorizontal: spacing.lg,
   },

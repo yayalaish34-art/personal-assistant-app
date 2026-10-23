@@ -21,10 +21,13 @@ const PLACE_KEY = '@pa/weatherPlace2';
 // Bumped with the shape: a reading cached before the week existed would
 // deserialise with `days` missing and the strip would render empty for half an
 // hour after an update.
-const READING_KEY = '@pa/weatherReading3';
+const READING_KEY = '@pa/weatherReading4';
 
 /** How much of the week ahead the strip shows. */
 const FORECAST_DAYS = 7;
+
+/** How many hours ahead the hourly strip shows (24 h from now). */
+const FORECAST_HOURS = 24;
 
 /** Weather is worth re-asking for about twice an hour. */
 const READING_TTL_MS = 30 * 60 * 1000;
@@ -49,6 +52,8 @@ export interface Weather {
   place: string | null;
   /** The week ahead, today first. Empty if the provider gave nothing usable. */
   days: DayForecast[];
+  /** The next 24 hours, starting from the current hour. */
+  hours: HourForecast[];
 }
 
 /** One day of the strip under the greeting. */
@@ -58,6 +63,15 @@ export interface DayForecast {
   high: number;
   low: number;
   sky: Sky;
+}
+
+/** One hour in the hourly forecast strip. */
+export interface HourForecast {
+  /** ISO datetime string from the provider, e.g. `2026-09-29T14:00`. */
+  time: string;
+  temperature: number;
+  sky: Sky;
+  isDay: boolean;
 }
 
 type Place = { at: number; latitude: number; longitude: number; name: string | null };
@@ -157,6 +171,7 @@ export async function getWeather(): Promise<Weather | null> {
     const res = await fetch(
       `${FORECAST_URL}?latitude=${place.latitude}&longitude=${place.longitude}` +
         `&current=temperature_2m,apparent_temperature,weather_code,is_day` +
+        `&hourly=temperature_2m,weather_code,is_day` +
         `&daily=temperature_2m_max,temperature_2m_min,weather_code` +
         `&forecast_days=${FORECAST_DAYS}&timezone=auto`,
     );
@@ -167,6 +182,12 @@ export async function getWeather(): Promise<Weather | null> {
         apparent_temperature?: number;
         weather_code?: number;
         is_day?: number;
+      };
+      hourly?: {
+        time?: string[];
+        temperature_2m?: number[];
+        weather_code?: number[];
+        is_day?: number[];
       };
       daily?: {
         time?: string[];
@@ -196,6 +217,30 @@ export async function getWeather(): Promise<Weather | null> {
       return [{ date, high: Math.round(hi), low: Math.round(lo), sky: skyOf(d?.weather_code?.[i] ?? 3) }];
     });
 
+    const h = body.hourly;
+    const nowHour = new Date().getHours();
+    const todayDate = new Date().toISOString().slice(0, 10);
+    const hours: HourForecast[] = [];
+    if (h?.time) {
+      const startIdx = h.time.findIndex((t) => {
+        const tDate = t.slice(0, 10);
+        const tHour = parseInt(t.slice(11, 13), 10);
+        return tDate === todayDate && tHour >= nowHour;
+      });
+      if (startIdx >= 0) {
+        for (let i = startIdx; i < Math.min(startIdx + FORECAST_HOURS, h.time.length); i++) {
+          const temp = h.temperature_2m?.[i];
+          if (typeof temp !== 'number') continue;
+          hours.push({
+            time: h.time[i],
+            temperature: Math.round(temp),
+            sky: skyOf(h.weather_code?.[i] ?? 3),
+            isDay: h.is_day?.[i] === 1,
+          });
+        }
+      }
+    }
+
     const value: Weather = {
       temperature: now,
       feelsLike: Math.round(current.apparent_temperature ?? current.temperature_2m),
@@ -205,6 +250,7 @@ export async function getWeather(): Promise<Weather | null> {
       low: typeof low === 'number' ? Math.round(low) : now,
       place: place.name,
       days,
+      hours,
     };
     await AsyncStorage.setItem(
       READING_KEY,

@@ -1,10 +1,13 @@
-import { ScrollView, View, Text, Pressable, StyleSheet } from 'react-native';
+import { Fragment } from 'react';
+import { ScrollView, View, Text, StyleSheet } from 'react-native';
+import { Entrance, PopIn, Pressable } from './motion';
 import * as Haptics from 'expo-haptics';
+import { LinearGradient } from 'expo-linear-gradient';
 import { Mars, Venus, BedDouble } from 'lucide-react-native';
 
 import { EVENT_TYPES, type EventType, type Gender } from '../lib/storage';
 import { COUNTRIES, CURRENCIES, currencyOf, currencySymbol } from '../lib/currency';
-import { colors, spacing, font, radius, type AuraKey, AURA } from '../theme';
+import { colors, spacing, font, type AuraKey, AURA, NIGHT, themed } from '../theme';
 import { t, isRTL, alignStart, locale } from '../lib/i18n';
 
 /**
@@ -16,10 +19,14 @@ import { t, isRTL, alignStart, locale } from '../lib/i18n';
  * in one place and not the other reads as a bug in whichever screen the user
  * saw second.
  *
- * Each takes the surface it sits on, because the two backgrounds differ:
- * onboarding paints straight onto the page, where a white chip reads as
- * raised, while Settings puts them inside a white card, where the same chip
- * would be invisible.
+ * Each takes the ground its idle controls sit on. Glass by default — white at
+ * a whisper, with a hairline edge — because glass is the one ground that works
+ * in both places: straight on the page in onboarding, and inside a glass card
+ * in Settings, where it stacks a step brighter than the card around it. An
+ * opaque ground from the old light pages would sit on either as a grey slab.
+ *
+ * The chosen option, wherever it is, is lit in the app's blue — the fill of the
+ * chosen day on Home — so "which one did I pick" has one answer app-wide.
  */
 
 /** Offered gaps between meetings, in minutes. */
@@ -35,8 +42,33 @@ function tap(): void {
   Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
 }
 
-/** One pill. Selected ones invert to near-black. */
-function Chip({
+/**
+ * The chosen option's fill: the blue, lit from the top.
+ *
+ * Its own layer behind the label because a gradient cannot be a background.
+ * Rounded itself rather than clipped by the control: clipping on iOS takes the
+ * control's glow with it.
+ *
+ * It springs in as it mounts, and it is only ever mounted on the chosen
+ * option, so choosing is what makes the light pop — on whichever chip, hour or
+ * card was just picked, and on nothing else. `from` is the scale it starts at:
+ * a big card starts nearer its size, or its bounce past the edge is a lurch.
+ */
+function LitFill({ radius, from }: { radius: number; from?: number }) {
+  return (
+    <PopIn style={StyleSheet.absoluteFill} from={from}>
+      <LinearGradient
+        colors={NIGHT.blue}
+        start={{ x: 0, y: 0 }}
+        end={{ x: 0, y: 1 }}
+        style={[StyleSheet.absoluteFill, { borderRadius: radius }]}
+      />
+    </PopIn>
+  );
+}
+
+/** One pill: glass while idle, lit blue once chosen. */
+export function Chip({
   label,
   active,
   onPress,
@@ -55,25 +87,33 @@ function Chip({
       }}
       accessibilityRole="button"
       accessibilityState={{ selected: active }}
-      style={[styles.chip, { backgroundColor: active ? colors.primary : surface }]}
+      style={[styles.chip, active ? styles.lit : [styles.idle, { backgroundColor: surface }]]}
     >
+      {active ? <LitFill radius={PILL} /> : null}
       <Text style={[styles.chipText, active && styles.chipTextActive]}>{label}</Text>
     </Pressable>
   );
 }
 
 /**
- * A horizontal rail of hours, 00 through 23.
+ * A horizontal rail of hours, 00 through 23: a glass rail split by hairlines,
+ * the chosen hour lit, like the rail of days on Home.
+ *
+ * The hairlines either side of the chosen hour go clear rather than away, so
+ * the cells don't shift under the finger as the choice moves.
  *
  * The rail is a row of its own and a horizontal ScrollView does not inherit
  * the mirrored direction, so in Hebrew and Arabic it is flipped by hand — and
- * each chip flipped back, or the digits inside would read in reverse.
+ * each cell flipped back, or the digits inside would read in reverse.
+ *
+ * `tile` used to tint the chosen hour — green for work, blue for sleep. The
+ * chosen thing is blue everywhere now, so it no longer paints anything; it
+ * stays in the props because both screens still pass it.
  */
 export function HourPicker({
   value,
   onChange,
-  tile,
-  surface = colors.surface,
+  surface = NIGHT.card,
 }: {
   value: number;
   onChange: (hour: number) => void;
@@ -82,35 +122,44 @@ export function HourPicker({
 }) {
   const mirror = isRTL() ? [{ scaleX: -1 as number }] : undefined;
   return (
-    <ScrollView
-      horizontal
-      showsHorizontalScrollIndicator={false}
-      style={{ transform: mirror }}
-      contentContainerStyle={styles.hourRail}
-    >
-      {HOURS.map((hour) => {
-        const active = hour === value;
-        return (
-          <Pressable
-            key={hour}
-            onPress={() => {
-              tap();
-              onChange(hour);
-            }}
-            accessibilityRole="button"
-            accessibilityState={{ selected: active }}
-            style={[
-              styles.hourChip,
-              { backgroundColor: active ? AURA[tile].tint : surface, transform: mirror },
-            ]}
-          >
-            <Text style={[styles.hourText, active && styles.hourTextActive]}>
-              {hourLabel(hour)}
-            </Text>
-          </Pressable>
-        );
-      })}
-    </ScrollView>
+    // The glass and the rounded clip are on a view around the scroll, not on
+    // the scroll itself: on the web `overflow` on a ScrollView overrides the
+    // axis it scrolls along, and the rail would stop scrolling.
+    <View style={[styles.hourRail, { backgroundColor: surface }]}>
+      <ScrollView
+        horizontal
+        showsHorizontalScrollIndicator={false}
+        style={{ direction: 'ltr', transform: mirror }}
+      >
+        {HOURS.map((hour, i) => {
+          const active = hour === value;
+          const besideOn = active || HOURS[i - 1] === value;
+          return (
+            <Fragment key={hour}>
+              {i > 0 ? (
+                <View style={[styles.hourDivider, besideOn && styles.hourDividerClear]} />
+              ) : null}
+              <Pressable
+                onPress={() => {
+                  tap();
+                  onChange(hour);
+                }}
+                accessibilityRole="button"
+                accessibilityState={{ selected: active }}
+                style={[styles.hourCell, { transform: mirror }]}
+              >
+                {/* No glow here, unlike the chips: the rail clips to its own
+                    rounded box, so it would be cut off at the rail's edge. */}
+                {active ? <LitFill radius={HOUR_RADIUS} /> : null}
+                <Text style={[styles.hourText, active && styles.hourTextActive]}>
+                  {hourLabel(hour)}
+                </Text>
+              </Pressable>
+            </Fragment>
+          );
+        })}
+      </ScrollView>
+    </View>
   );
 }
 
@@ -121,7 +170,7 @@ export function HourRangePicker({
   onFrom,
   onTo,
   tile,
-  surface = colors.surface,
+  surface = NIGHT.card,
 }: {
   from: number;
   to: number;
@@ -145,7 +194,7 @@ export function HourRangePicker({
 export function BufferPicker({
   value,
   onChange,
-  surface = colors.surface,
+  surface = NIGHT.card,
 }: {
   value: number;
   onChange: (minutes: number) => void;
@@ -174,7 +223,7 @@ export function BufferPicker({
 export function EventTypePicker({
   value,
   onChange,
-  surface = colors.surface,
+  surface = NIGHT.card,
 }: {
   value: EventType[];
   onChange: (types: EventType[]) => void;
@@ -201,9 +250,9 @@ export function EventTypePicker({
 }
 
 const GENDER_OPTIONS = [
-  { key: 'male', Icon: Mars, tile: 'blue' },
-  { key: 'female', Icon: Venus, tile: 'yellow' },
-] as const satisfies readonly { key: Exclude<Gender, 'unspecified'>; Icon: typeof Mars; tile: AuraKey }[];
+  { key: 'male', Icon: Mars },
+  { key: 'female', Icon: Venus },
+] as const satisfies readonly { key: Exclude<Gender, 'unspecified'>; Icon: typeof Mars }[];
 
 /**
  * Man / woman / rather not say — asked once, only so the sleep card below can
@@ -213,7 +262,7 @@ const GENDER_OPTIONS = [
 export function GenderPicker({
   value,
   onChange,
-  surface = colors.surface,
+  surface = NIGHT.card,
 }: {
   value: Gender;
   onChange: (gender: Gender) => void;
@@ -222,7 +271,7 @@ export function GenderPicker({
   return (
     <View>
       <View style={styles.genderRow}>
-        {GENDER_OPTIONS.map(({ key, Icon, tile }) => {
+        {GENDER_OPTIONS.map(({ key, Icon }) => {
           const active = value === key;
           return (
             <Pressable
@@ -235,10 +284,20 @@ export function GenderPicker({
               accessibilityState={{ selected: active }}
               style={[
                 styles.genderCard,
-                { backgroundColor: active ? AURA[tile].tint : surface },
+                active ? styles.lit : [styles.idle, { backgroundColor: surface }],
               ]}
             >
-              <Icon color={active ? AURA[tile].ink : colors.textMuted} size={26} strokeWidth={2} />
+              {active ? <LitFill radius={CARD_RADIUS} from={0.85} /> : null}
+              {/* In a view of its own: on the web a bare svg paints beneath a
+                  positioned layer drawn before it, and the glyph would sit
+                  under the blue it is meant to stand on. */}
+              <View>
+                <Icon
+                  color={active ? colors.primaryText : colors.textMuted}
+                  size={26}
+                  strokeWidth={2}
+                />
+              </View>
               <Text style={[styles.genderLabel, active && styles.genderLabelActive]}>
                 {t(`onboarding.sleep.gender.${key}`)}
               </Text>
@@ -284,7 +343,7 @@ export function SleepInsight({
   gender,
   startHour,
   endHour,
-  surface = colors.surface,
+  surface = NIGHT.card,
 }: {
   gender: Gender;
   startHour: number;
@@ -297,19 +356,25 @@ export function SleepInsight({
   const start = { textAlign: alignStart() } as const;
 
   return (
-    <View style={[styles.insightCard, { backgroundColor: surface }]}>
-      <View style={[styles.insightIcon, { backgroundColor: AURA[tile].tint }]}>
-        <BedDouble color={AURA[tile].ink} size={20} strokeWidth={2} />
+    // Keyed by what it says, so a new reading arrives rather than the words
+    // swapping in place: the card rises again each time the answer changes,
+    // which is what draws the eye down from the picker to it. A short rise —
+    // it is answering a tap, not opening a page.
+    <Entrance key={`${gender}-${hours}`} from={10}>
+      <View style={[styles.insightCard, { backgroundColor: surface }]}>
+        <View style={[styles.insightIcon, { backgroundColor: AURA[tile].tint }]}>
+          <BedDouble color={AURA[tile].ink} size={20} strokeWidth={2} />
+        </View>
+        <View style={{ flex: 1 }}>
+          <Text style={[styles.insightRecommended, start]}>
+            {t(`onboarding.sleep.recommended.${gender}`)}
+          </Text>
+          <Text style={[styles.insightFit, start]}>
+            {t(`onboarding.sleep.fit.${fit}`, { hours: String(hours) })}
+          </Text>
+        </View>
       </View>
-      <View style={{ flex: 1 }}>
-        <Text style={[styles.insightRecommended, start]}>
-          {t(`onboarding.sleep.recommended.${gender}`)}
-        </Text>
-        <Text style={[styles.insightFit, start]}>
-          {t(`onboarding.sleep.fit.${fit}`, { hours: String(hours) })}
-        </Text>
-      </View>
-    </View>
+    </Entrance>
   );
 }
 
@@ -325,7 +390,7 @@ export function CountryPicker({
   country,
   currency,
   onChange,
-  surface = colors.surface,
+  surface = NIGHT.card,
 }: {
   country: string | null;
   currency: string | null;
@@ -333,6 +398,7 @@ export function CountryPicker({
   surface?: string;
 }) {
   const showCurrencies = country === null;
+  const idle = [styles.idle, { backgroundColor: surface }];
 
   return (
     <View>
@@ -348,8 +414,9 @@ export function CountryPicker({
               }}
               accessibilityRole="button"
               accessibilityState={{ selected: active }}
-              style={[styles.countryChip, { backgroundColor: active ? colors.primary : surface }]}
+              style={[styles.countryChip, active ? styles.lit : idle]}
             >
+              {active ? <LitFill radius={PILL} /> : null}
               <Text style={styles.countryFlag}>{c.flag}</Text>
               <Text style={[styles.chipText, active && styles.chipTextActive]}>
                 {t(`country.${c.code}`)}
@@ -364,20 +431,24 @@ export function CountryPicker({
           }}
           accessibilityRole="button"
           accessibilityState={{ selected: showCurrencies }}
-          style={[
-            styles.countryChip,
-            { backgroundColor: showCurrencies ? colors.primary : surface },
-          ]}
+          style={[styles.countryChip, showCurrencies ? styles.lit : idle]}
         >
+          {showCurrencies ? <LitFill radius={PILL} /> : null}
           <Text style={[styles.chipText, showCurrencies && styles.chipTextActive]}>
             {t('country.other')}
           </Text>
         </Pressable>
       </View>
 
-      {/* Only when no country carries the answer already. */}
+      {/* Only when no country carries the answer already.
+
+          It rises in when "somewhere else" is chosen, so the list reads as
+          the answer to that tap. An entrance rather than a layout animation:
+          the tap that opens it also mounts a lit fill, and a layout
+          animation's fade on a newly mounted view would pull at the same
+          opacity that fill's pop drives. */}
       {showCurrencies ? (
-        <>
+        <Entrance from={12}>
           <Text style={[styles.railLabelSmall, { textAlign: alignStart() }]}>
             {t('onboarding.place.currency')}
           </Text>
@@ -393,8 +464,9 @@ export function CountryPicker({
                   }}
                   accessibilityRole="button"
                   accessibilityState={{ selected: active }}
-                  style={[styles.chip, { backgroundColor: active ? colors.primary : surface }]}
+                  style={[styles.chip, active ? styles.lit : idle]}
                 >
+                  {active ? <LitFill radius={PILL} /> : null}
                   <Text style={[styles.chipText, active && styles.chipTextActive]}>
                     {currencySymbol(code, locale())} {code}
                   </Text>
@@ -402,84 +474,126 @@ export function CountryPicker({
               );
             })}
           </View>
-        </>
+        </Entrance>
       ) : null}
     </View>
   );
 }
 
-const styles = StyleSheet.create({
-  chipWrap: { flexDirection: 'row', flexWrap: 'wrap', gap: 8 },
-  countryChip: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 7,
-    paddingHorizontal: 14,
-    paddingVertical: 10,
-    borderRadius: 50,
-  },
-  countryFlag: { fontSize: 15 },
-  railLabelSmall: {
-    ...font(600),
-    fontSize: 13,
-    color: colors.textMuted,
-    marginTop: spacing.md,
-    marginBottom: 8,
-  },
-  chip: {
-    paddingHorizontal: 15,
-    paddingVertical: 11,
-    borderRadius: 50,
-  },
-  chipText: { ...font(600), fontSize: 14, color: colors.text },
-  chipTextActive: { color: colors.primaryText },
+/** Chips are pills; the fill behind a chosen one is rounded to match. */
+const PILL = 50;
+const HOUR_RADIUS = 12;
+const CARD_RADIUS = 16;
 
-  railLabel: { ...font(700), fontSize: 20, color: colors.text, marginBottom: 6 },
-  hourRail: { gap: 8, paddingBottom: spacing.md },
-  hourChip: {
-    minWidth: 58,
-    paddingHorizontal: 12,
-    paddingVertical: 11,
-    borderRadius: 14,
-    alignItems: 'center',
-  },
-  hourText: { ...font(600), fontSize: 14, color: colors.textMuted },
-  hourTextActive: { color: colors.text },
+const styles = themed(() =>
+  StyleSheet.create({
+    /** An option nobody has picked: a pane of glass with a hairline edge. */
+    idle: {
+      borderWidth: StyleSheet.hairlineWidth,
+      borderColor: NIGHT.line,
+    },
+    /**
+     * The chosen option under its `LitFill`. The ground is the gradient's lower
+     * stop, which is what the glow is cast from on iOS; the edge stays, clear,
+     * so choosing an option doesn't change its size by a hairline.
+     */
+    lit: {
+      borderWidth: StyleSheet.hairlineWidth,
+      borderColor: 'transparent',
+      backgroundColor: NIGHT.blue[1],
+      shadowColor: NIGHT.blue[1],
+      shadowOffset: { width: 0, height: 4 },
+      shadowOpacity: 0.5,
+      shadowRadius: 10,
+      elevation: 6,
+    },
 
-  genderRow: { flexDirection: 'row', gap: 10, marginBottom: 10 },
-  genderCard: {
-    flex: 1,
-    alignItems: 'center',
-    gap: 6,
-    paddingVertical: 18,
-    borderRadius: radius.md,
-  },
-  genderLabel: { ...font(600), fontSize: 14, color: colors.textMuted },
-  genderLabelActive: { color: colors.text },
-  genderSkipText: {
-    ...font(600),
-    fontSize: 12.5,
-    color: colors.textMuted,
-    textAlign: 'center',
-    paddingVertical: 4,
-  },
-  genderSkipTextActive: { color: colors.text, textDecorationLine: 'underline' },
+    chipWrap: { flexDirection: 'row', flexWrap: 'wrap', gap: 8 },
+    countryChip: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      gap: 7,
+      paddingHorizontal: 14,
+      paddingVertical: 10,
+      borderRadius: PILL,
+    },
+    countryFlag: { fontSize: 15 },
+    railLabelSmall: {
+      ...font(600),
+      fontSize: 13,
+      color: colors.textMuted,
+      marginTop: spacing.md,
+      marginBottom: 8,
+    },
+    chip: {
+      paddingHorizontal: 15,
+      paddingVertical: 11,
+      borderRadius: PILL,
+    },
+    // One weight either way: a bolder label on the chosen chip would widen it,
+    // and the wrap would reflow under the finger that just tapped it.
+    chipText: { ...font(600), fontSize: 14, color: colors.textMuted },
+    chipTextActive: { color: colors.primaryText },
 
-  insightCard: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 12,
-    borderRadius: radius.md,
-    padding: spacing.md,
-    marginTop: spacing.md,
-  },
-  insightIcon: {
-    width: 40,
-    height: 40,
-    borderRadius: 13,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  insightRecommended: { ...font(600), fontSize: 14, color: colors.text, lineHeight: 19 },
-  insightFit: { ...font(500), fontSize: 13, color: colors.textMuted, marginTop: 3 },
-});
+    railLabel: { ...font(700), fontSize: 20, color: colors.text, marginBottom: 8 },
+    /** The glass around the scroll; clips the chosen hour to its rounded ends. */
+    hourRail: {
+      borderWidth: StyleSheet.hairlineWidth,
+      borderColor: NIGHT.line,
+      borderRadius: 13,
+      overflow: 'hidden',
+      marginBottom: spacing.md,
+    },
+    hourCell: {
+      minWidth: 62,
+      height: 48,
+      paddingHorizontal: 12,
+      alignItems: 'center',
+      justifyContent: 'center',
+    },
+    hourDivider: { width: 1, marginVertical: 12, backgroundColor: NIGHT.line },
+    hourDividerClear: { backgroundColor: 'transparent' },
+    hourText: { ...font(600), fontSize: 14.5, color: colors.textMuted },
+    hourTextActive: { color: colors.primaryText },
+
+    genderRow: { flexDirection: 'row', gap: 10, marginBottom: 10 },
+    genderCard: {
+      flex: 1,
+      alignItems: 'center',
+      gap: 6,
+      paddingVertical: 18,
+      borderRadius: CARD_RADIUS,
+    },
+    genderLabel: { ...font(600), fontSize: 14, color: colors.textMuted },
+    genderLabelActive: { color: colors.primaryText },
+    genderSkipText: {
+      ...font(600),
+      fontSize: 12.5,
+      color: colors.textMuted,
+      textAlign: 'center',
+      paddingVertical: 4,
+    },
+    genderSkipTextActive: { color: colors.text, textDecorationLine: 'underline' },
+
+    insightCard: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      gap: 12,
+      borderRadius: CARD_RADIUS,
+      borderWidth: StyleSheet.hairlineWidth,
+      borderColor: NIGHT.line,
+      padding: spacing.md,
+      marginTop: spacing.md,
+    },
+    /** The fit, in its hue: a whisper of it for the ground, the lit ink for the glyph. */
+    insightIcon: {
+      width: 40,
+      height: 40,
+      borderRadius: 20,
+      alignItems: 'center',
+      justifyContent: 'center',
+    },
+    insightRecommended: { ...font(600), fontSize: 14, color: colors.text, lineHeight: 19 },
+    insightFit: { ...font(500), fontSize: 13, color: colors.textMuted, marginTop: 3 },
+  }),
+);

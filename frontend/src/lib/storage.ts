@@ -8,16 +8,19 @@ const KEYS = {
   entryCount: '@pa/entryCount',
   profile: '@pa/profile',
   onboarded: '@pa/onboarded',
+  tourOptOut: '@pa/tourOptOut',
 } as const;
 
 export type Settings = {
   displayName: string;
   notifications: boolean;
+  shoppingEstimates: boolean;
 };
 
 export const defaultSettings: Settings = {
   displayName: '',
   notifications: true,
+  shoppingEstimates: false,
 };
 
 /** The kinds of thing a diary is made of. Keys, not labels — they are translated. */
@@ -64,6 +67,11 @@ export type Profile = {
   eventTypes: EventType[];
   /** Whatever repeats and cannot move, in the user's own words. */
   fixedCommitments: string;
+  workDays: number[];
+  focusPeriod: 'morning' | 'afternoon' | 'evening' | 'flexible';
+  primaryGoal: 'balance' | 'productivity' | 'lessStress' | 'health' | 'finances';
+  sleepQuality: 'rested' | 'tired' | 'irregular' | 'unspecified';
+  assistanceStyle: 'brief' | 'guided' | 'proactive';
 };
 
 export const defaultProfile: Profile = {
@@ -77,6 +85,11 @@ export const defaultProfile: Profile = {
   bufferMinutes: 15,
   eventTypes: ['work'],
   fixedCommitments: '',
+  workDays: [0, 1, 2, 3, 4],
+  focusPeriod: 'flexible',
+  primaryGoal: 'balance',
+  sleepQuality: 'unspecified',
+  assistanceStyle: 'brief',
 };
 
 async function getJSON<T>(key: string, fallback: T): Promise<T> {
@@ -133,4 +146,16 @@ export const storage = {
     await setJSON(KEYS.entryCount, next);
     return next;
   },
+
+  /**
+   * Whether the reader has opted out of the feature tour.
+   *
+   * The tour opens on every cold launch by default, so a returning reader who
+   * has learned the app can dismiss it once and never see it again. Anyone
+   * who tapped through and did not press "don't show again" keeps seeing it.
+   */
+  async isTourOptedOut(): Promise<boolean> {
+    return getJSON<boolean>(KEYS.tourOptOut, false);
+  },
+  setTourOptedOut: (out: boolean) => setJSON(KEYS.tourOptOut, out),
 };

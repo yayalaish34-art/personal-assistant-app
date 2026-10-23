@@ -21,7 +21,12 @@ import { describe, it, expect } from 'vitest';
 import request from 'supertest';
 
 import { app } from '../src/app.js';
-import { collectAction, alreadyOnAgenda, type Snapshot } from '../src/modules/voice/agent.js';
+import {
+  collectAction,
+  alreadyOnAgenda,
+  describeHousehold,
+  type Snapshot,
+} from '../src/modules/voice/agent.js';
 import { modelFor } from '../src/modules/voice/tts.js';
 import { config } from '../src/config.js';
 
@@ -35,7 +40,7 @@ const AFTERNOON = '2026-03-10T14:00:00.000Z';
 const NEXT_DAY = '2026-03-11T08:00:00.000Z';
 
 function snapshot(over: Partial<Snapshot> = {}): Snapshot {
-  return { tasks: [], events: [], ...over };
+  return { tasks: [], events: [], shopping: [], money: [], debts: [], budgets: {}, ...over };
 }
 
 function task(over: Partial<Snapshot['tasks'][number]> = {}): Snapshot['tasks'][number] {
@@ -346,6 +351,146 @@ describe('collectAction — add_money_entry', () => {
       category: 'salary',
     });
     expect(action?.arguments).toMatchObject({ date: '2026-03-10', category: 'salary' });
+  });
+});
+
+// ─── The list, the money and the debts ──────────────────────────────────────
+
+function item(over: Partial<Snapshot['shopping'][number]> = {}): Snapshot['shopping'][number] {
+  return { id: 'item-1', name: 'Milk', quantity: null, isBought: false, ...over };
+}
+
+function entry(over: Partial<Snapshot['money'][number]> = {}): Snapshot['money'][number] {
+  return {
+    id: 'money-1',
+    kind: 'expense',
+    description: 'Lunch',
+    amount: 40,
+    date: '2026-03-05',
+    category: 'food',
+    ...over,
+  };
+}
+
+function debt(over: Partial<Snapshot['debts'][number]> = {}): Snapshot['debts'][number] {
+  return {
+    id: 'debt-1',
+    direction: 'owed',
+    person: 'Dan',
+    amount: 200,
+    description: null,
+    isSettled: false,
+    ...over,
+  };
+}
+
+describe('collectAction — shopping list rows', () => {
+  it('47. milk still waiting on the list is not added twice', () => {
+    const { action, result } = call(
+      'add_shopping_item',
+      { name: ' milk ' },
+      snapshot({ shopping: [item()] }),
+    );
+    expect(action).toBeNull();
+    expect(errorOf(result)).toMatch(/already on the shopping list/);
+  });
+
+  it('48. milk already bought can go back on', () => {
+    const { action } = call(
+      'add_shopping_item',
+      { name: 'Milk' },
+      snapshot({ shopping: [item({ isBought: true })] }),
+    );
+    expect(action).not.toBeNull();
+  });
+
+  it('49. ticking off needs a real id with the matching name', () => {
+    const snap = snapshot({ shopping: [item()] });
+    expect(call('check_shopping_item', { id: 'item-1', matchTitle: 'milk' }, snap).action).toEqual({
+      tool: 'check_shopping_item',
+      arguments: { id: 'item-1', matchTitle: 'milk' },
+    });
+    expect(call('check_shopping_item', { id: 'item-1', matchTitle: 'Eggs' }, snap).action).toBeNull();
+    expect(call('remove_shopping_item', { id: 'nope', matchTitle: 'Milk' }, snap).action).toBeNull();
+  });
+
+  it('50. a task id is not a shopping id', () => {
+    const { action } = call(
+      'check_shopping_item',
+      { id: 'task-1', matchTitle: 'Buy milk' },
+      snapshot({ tasks: [task()] }),
+    );
+    expect(action).toBeNull();
+  });
+});
+
+describe('collectAction — money and debts', () => {
+  it('51. deleting an entry is checked against its description', () => {
+    const snap = snapshot({ money: [entry()] });
+    expect(call('delete_money_entry', { id: 'money-1', matchTitle: 'lunch' }, snap).action).not.toBeNull();
+    expect(call('delete_money_entry', { id: 'money-1', matchTitle: 'Rent' }, snap).action).toBeNull();
+  });
+
+  it('52. a debt needs a direction, a person and a positive amount', () => {
+    expect(call('add_debt', { direction: 'owed', person: 'Dan', amount: 200 }).action).not.toBeNull();
+    expect(call('add_debt', { direction: 'lent', person: 'Dan', amount: 200 }).action).toBeNull();
+    expect(call('add_debt', { direction: 'owe', person: 'Dan', amount: -5 }).action).toBeNull();
+  });
+
+  it('53. settling is checked against the person', () => {
+    const snap = snapshot({ debts: [debt()] });
+    expect(call('settle_debt', { id: 'debt-1', matchTitle: 'dan' }, snap).action).not.toBeNull();
+    expect(call('settle_debt', { id: 'debt-1', matchTitle: 'Maya' }, snap).action).toBeNull();
+  });
+});
+
+describe('describeHousehold — totals are added up for her', () => {
+  const now = new Date('2026-03-20T10:00:00.000Z');
+
+  it('54. this month and last month are summed separately, by category', () => {
+    const text = describeHousehold(
+      snapshot({
+        money: [
+          entry({ id: 'a', amount: 40 }),
+          entry({ id: 'b', amount: 60, date: '2026-03-18' }),
+          entry({ id: 'c', kind: 'income', amount: 1000, category: 'salary' }),
+          entry({ id: 'd', amount: 500, date: '2026-02-10' }),
+        ],
+        budgets: { food: 300 },
+        currency: 'ILS',
+      }),
+      TZ,
+      now,
+    );
+    expect(text).toContain('This month (2026-03): income 1000 ILS, spent 100 ILS, balance 900 ILS');
+    expect(text).toContain('food 100 ILS of a 300 ILS budget');
+    expect(text).toContain('Last month (2026-02): income 0 ILS, spent 500 ILS');
+  });
+
+  it('55. open debts are totalled each way; settled ones are left out', () => {
+    const text = describeHousehold(
+      snapshot({
+        debts: [
+          debt(),
+          debt({ id: 'd2', direction: 'owe', person: 'Mum', amount: 50 }),
+          debt({ id: 'd3', person: 'Old', amount: 999, isSettled: true }),
+        ],
+      }),
+      TZ,
+      now,
+    );
+    expect(text).toContain('The user owes 50 in total; others owe the user 200.');
+    expect(text).not.toContain('Old');
+  });
+
+  it('56. only what is still to buy is listed as needed', () => {
+    const text = describeHousehold(
+      snapshot({ shopping: [item(), item({ id: 'i2', name: 'Eggs', isBought: true })] }),
+      TZ,
+      now,
+    );
+    expect(text).toContain('- [item-1] Milk');
+    expect(text).toContain('Already bought: [i2] Eggs');
   });
 });
 

@@ -6,6 +6,7 @@ import { config } from '../../config.js';
 import { logger } from '../../lib/logger.js';
 import { reviewSchedule, type KnownEvent, type ProposedEvent } from './schedule.js';
 import { findTime, today, type AvailabilityEvent } from './availability.js';
+import { geocode, distanceKm, travelMinutes, searchNearby } from './travel.js';
 
 // The voice assistant's turn: what she heard in, what she says back plus the
 // changes to apply.
@@ -46,6 +47,52 @@ export const snapshotSchema = z.object({
     )
     .max(200)
     .default([]),
+  // Everything below arrived after tasks and events, so an older install sends
+  // none of it and each list defaults to empty rather than failing the turn.
+  /** What is on the shopping list, bought or not. */
+  shopping: z
+    .array(
+      z.object({
+        id: z.string().min(1),
+        name: z.string(),
+        quantity: z.string().nullish(),
+        isBought: z.boolean().default(false),
+      }),
+    )
+    .max(200)
+    .default([]),
+  /** Income and expenses, this month and the one before. */
+  money: z
+    .array(
+      z.object({
+        id: z.string().min(1),
+        kind: z.enum(['income', 'expense']),
+        description: z.string(),
+        amount: z.number().finite(),
+        date: z.string(),
+        category: z.string().nullish(),
+      }),
+    )
+    .max(400)
+    .default([]),
+  /** Money owed either way. */
+  debts: z
+    .array(
+      z.object({
+        id: z.string().min(1),
+        direction: z.enum(['owe', 'owed']),
+        person: z.string(),
+        amount: z.number().finite(),
+        description: z.string().nullish(),
+        isSettled: z.boolean().default(false),
+      }),
+    )
+    .max(100)
+    .default([]),
+  /** Monthly limit per expense category, as the user set them. */
+  budgets: z.record(z.string(), z.number().finite()).default({}),
+  /** ISO 4217, so she says amounts in the right money. */
+  currency: z.string().max(8).nullish(),
 });
 
 export type Snapshot = z.infer<typeof snapshotSchema>;
@@ -68,6 +115,11 @@ export const profileSchema = z.object({
   bufferMinutes: z.number().int().min(0).max(120).default(15),
   eventTypes: z.array(z.string().max(40)).max(20).default([]),
   fixedCommitments: z.string().max(500).default(''),
+  workDays: z.array(z.number().int().min(0).max(6)).max(7).optional(),
+  focusPeriod: z.enum(['morning', 'afternoon', 'evening', 'flexible']).optional(),
+  primaryGoal: z.enum(['balance', 'productivity', 'lessStress', 'health', 'finances']).optional(),
+  sleepQuality: z.enum(['rested', 'tired', 'irregular', 'unspecified']).optional(),
+  assistanceStyle: z.enum(['brief', 'guided', 'proactive']).optional(),
 });
 
 export type Profile = z.infer<typeof profileSchema>;
@@ -248,6 +300,405 @@ export const ACTION_TOOLS = [
   {
     type: 'function' as const,
     function: {
+      name: 'check_shopping_item',
+      description:
+        'Tick something off the shopping list because the user bought it. The id must come from the shopping list you were given.',
+      parameters: {
+        type: 'object',
+        properties: {
+          id: { type: 'string' },
+          matchTitle: { type: 'string', description: 'The item name exactly as on the list.' },
+        },
+        required: ['id', 'matchTitle'],
+      },
+    },
+  },
+  {
+    type: 'function' as const,
+    function: {
+      name: 'remove_shopping_item',
+      description: 'Take something off the shopping list because it is no longer needed.',
+      parameters: {
+        type: 'object',
+        properties: {
+          id: { type: 'string' },
+          matchTitle: { type: 'string', description: 'The item name exactly as on the list.' },
+        },
+        required: ['id', 'matchTitle'],
+      },
+    },
+  },
+  {
+    type: 'function' as const,
+    function: {
+      name: 'delete_money_entry',
+      description:
+        'Remove an income or expense that was recorded by mistake. The id must come from the money list you were given.',
+      parameters: {
+        type: 'object',
+        properties: {
+          id: { type: 'string' },
+          matchTitle: { type: 'string', description: 'The description exactly as on the list.' },
+        },
+        required: ['id', 'matchTitle'],
+      },
+    },
+  },
+  {
+    type: 'function' as const,
+    function: {
+      name: 'add_debt',
+      description:
+        'Record money owed between the user and someone else — "Dan owes me 200", "I owe mum 50".',
+      parameters: {
+        type: 'object',
+        properties: {
+          direction: {
+            type: 'string',
+            enum: ['owe', 'owed'],
+            description: '"owe" when the user owes them; "owed" when they owe the user.',
+          },
+          person: { type: 'string', description: 'Who, by name.' },
+          amount: { type: 'number', description: 'A positive number.' },
+          description: { type: 'string', description: 'What it was for, if they said.' },
+        },
+        required: ['direction', 'person', 'amount'],
+      },
+    },
+  },
+  {
+    type: 'function' as const,
+    function: {
+      name: 'settle_debt',
+      description:
+        'Mark a debt as paid back. The id must come from the debts list you were given.',
+      parameters: {
+        type: 'object',
+        properties: {
+          id: { type: 'string' },
+          matchTitle: { type: 'string', description: 'The person’s name exactly as on the list.' },
+        },
+        required: ['id', 'matchTitle'],
+      },
+    },
+  },
+  {
+    type: 'function' as const,
+    function: {
+      name: 'present_cards',
+      description:
+        'Show structured content as visual cards on screen. Use when there are multiple options to choose from, recommendations, a summary with key points, or a comparison — anything a spoken list would be awkward for. Each card has a short heading and optional detail.',
+      parameters: {
+        type: 'object',
+        properties: {
+          title: {
+            type: 'string',
+            description: 'Optional heading above the cards.',
+          },
+          cards: {
+            type: 'array',
+            items: {
+              type: 'object',
+              properties: {
+                label: { type: 'string', description: 'Card heading, a few words.' },
+                detail: { type: 'string', description: 'One line of extra info.' },
+              },
+              required: ['label'],
+            },
+            minItems: 2,
+            maxItems: 6,
+            description: 'The cards to show.',
+          },
+          selectable: {
+            type: 'boolean',
+            description: 'True when the user should pick one. Default false.',
+          },
+        },
+        required: ['cards'],
+      },
+    },
+  },
+  {
+    type: 'function' as const,
+    function: {
+      name: 'present_checklist',
+      description:
+        'Show a list of tasks or shopping items as an interactive checklist with checkboxes the user can tap to mark done. Use when listing tasks, things to buy, or anything they might check off.',
+      parameters: {
+        type: 'object',
+        properties: {
+          title: { type: 'string', description: 'Heading above the list.' },
+          kind: {
+            type: 'string',
+            enum: ['tasks', 'shopping'],
+            description: 'What kind of items.',
+          },
+          items: {
+            type: 'array',
+            items: {
+              type: 'object',
+              properties: {
+                id: { type: 'string', description: 'The id from the agenda.' },
+                label: { type: 'string', description: 'The item text.' },
+                checked: { type: 'boolean', description: 'Already done / bought.' },
+                detail: { type: 'string', description: 'Extra info — due date, quantity.' },
+              },
+              required: ['id', 'label', 'checked'],
+            },
+            maxItems: 20,
+          },
+        },
+        required: ['kind', 'items'],
+      },
+    },
+  },
+  {
+    type: 'function' as const,
+    function: {
+      name: 'present_confirmation',
+      description:
+        'Show a visual confirmation card after creating or modifying something — a task, event, expense, debt. Call alongside the tool that made the change.',
+      parameters: {
+        type: 'object',
+        properties: {
+          title: { type: 'string', description: 'What happened, in the user\'s language.' },
+          fields: {
+            type: 'array',
+            items: {
+              type: 'object',
+              properties: {
+                label: { type: 'string' },
+                value: { type: 'string' },
+              },
+              required: ['label', 'value'],
+            },
+            maxItems: 6,
+          },
+        },
+        required: ['title', 'fields'],
+      },
+    },
+  },
+  {
+    type: 'function' as const,
+    function: {
+      name: 'present_budget',
+      description:
+        'Show spending by category as visual progress bars against budgets. Use when discussing how much was spent, budget status, or financial summaries.',
+      parameters: {
+        type: 'object',
+        properties: {
+          title: { type: 'string' },
+          categories: {
+            type: 'array',
+            items: {
+              type: 'object',
+              properties: {
+                name: { type: 'string', description: 'Category name.' },
+                spent: { type: 'number', description: 'Amount spent.' },
+                limit: { type: 'number', description: 'Budget limit.' },
+              },
+              required: ['name', 'spent', 'limit'],
+            },
+            maxItems: 10,
+          },
+        },
+        required: ['categories'],
+      },
+    },
+  },
+  {
+    type: 'function' as const,
+    function: {
+      name: 'present_timeline',
+      description:
+        "Show the day's schedule as a visual timeline with time blocks. Use when describing what the day or a specific day looks like.",
+      parameters: {
+        type: 'object',
+        properties: {
+          title: { type: 'string', description: 'E.g. "היום שלך" or "Wednesday".' },
+          events: {
+            type: 'array',
+            items: {
+              type: 'object',
+              properties: {
+                title: { type: 'string' },
+                start: { type: 'string', description: 'HH:MM.' },
+                end: { type: 'string', description: 'HH:MM. Omit if unknown.' },
+              },
+              required: ['title', 'start'],
+            },
+            maxItems: 12,
+          },
+        },
+        required: ['events'],
+      },
+    },
+  },
+  {
+    type: 'function' as const,
+    function: {
+      name: 'present_actions',
+      description:
+        'Show 2–4 quick action chips the user can tap as follow-ups. Use after answering to suggest what they might want next.',
+      parameters: {
+        type: 'object',
+        properties: {
+          actions: {
+            type: 'array',
+            items: {
+              type: 'object',
+              properties: {
+                label: { type: 'string', description: 'Short label, 2–4 words.' },
+              },
+              required: ['label'],
+            },
+            minItems: 2,
+            maxItems: 4,
+          },
+        },
+        required: ['actions'],
+      },
+    },
+  },
+  {
+    type: 'function' as const,
+    function: {
+      name: 'present_debt',
+      description:
+        'Show open debts as visual cards with a settle button. Use when discussing who owes whom.',
+      parameters: {
+        type: 'object',
+        properties: {
+          title: { type: 'string' },
+          debts: {
+            type: 'array',
+            items: {
+              type: 'object',
+              properties: {
+                id: { type: 'string', description: 'Debt id from the debts list.' },
+                person: { type: 'string' },
+                amount: { type: 'number' },
+                direction: { type: 'string', enum: ['owe', 'owed'] },
+                description: { type: 'string' },
+              },
+              required: ['id', 'person', 'amount', 'direction'],
+            },
+            maxItems: 10,
+          },
+        },
+        required: ['debts'],
+      },
+    },
+  },
+  {
+    type: 'function' as const,
+    function: {
+      name: 'present_weather',
+      description:
+        'Show a weather forecast as a visual card. Use whenever the user asks about the weather.',
+      parameters: {
+        type: 'object',
+        properties: {
+          location: { type: 'string' },
+          days: {
+            type: 'array',
+            items: {
+              type: 'object',
+              properties: {
+                day: { type: 'string', description: 'Day label, e.g. "Today", "Tomorrow", "Wednesday"' },
+                icon: { type: 'string', enum: ['sun', 'cloud', 'rain', 'storm', 'snow', 'partly_cloudy', 'wind', 'fog'] },
+                high: { type: 'number' },
+                low: { type: 'number' },
+                description: { type: 'string', description: 'Short description like "Sunny and warm"' },
+              },
+              required: ['day', 'icon', 'high', 'low'],
+            },
+            maxItems: 7,
+          },
+        },
+        required: ['days'],
+      },
+    },
+  },
+  {
+    type: 'function' as const,
+    function: {
+      name: 'present_summary',
+      description:
+        'Show a summary card with stats and highlights. Use for daily summaries, weekly reviews, or any overview with numbers.',
+      parameters: {
+        type: 'object',
+        properties: {
+          title: { type: 'string' },
+          stats: {
+            type: 'array',
+            items: {
+              type: 'object',
+              properties: {
+                label: { type: 'string' },
+                value: { type: 'string' },
+                trend: { type: 'string', enum: ['up', 'down', 'neutral'], description: 'Optional trend indicator' },
+              },
+              required: ['label', 'value'],
+            },
+            maxItems: 6,
+          },
+          highlights: {
+            type: 'array',
+            items: { type: 'string' },
+            maxItems: 5,
+            description: 'Key highlights or notes as short strings.',
+          },
+        },
+        required: ['title'],
+      },
+    },
+  },
+  {
+    type: 'function' as const,
+    function: {
+      name: 'find_nearby',
+      description:
+        "Find real places near the user's current location. Call this when the user asks what is nearby, where to shop, eat, get coffee, find a pharmacy, etc. Returns actual named places with distances.",
+      parameters: {
+        type: 'object',
+        properties: {
+          category: {
+            type: 'string',
+            enum: ['shopping', 'supermarket', 'mall', 'restaurant', 'cafe', 'pharmacy', 'gas_station', 'gym', 'park', 'hospital', 'bank', 'hotel'],
+            description: 'What kind of place to search for.',
+          },
+          radiusMeters: {
+            type: 'number',
+            description: 'Search radius in meters. Default 3000 (3km). Use larger for sparse areas.',
+          },
+        },
+        required: ['category'],
+      },
+    },
+  },
+  {
+    type: 'function' as const,
+    function: {
+      name: 'check_travel',
+      description:
+        "Estimate travel time from the user's current location to a destination. Call this when the user asks 'can I make it?', 'how far is X?', 'how long to get to...', or whenever you need to know travel time from where they are now. Requires the user's location to be available.",
+      parameters: {
+        type: 'object',
+        properties: {
+          destination: {
+            type: 'string',
+            description: 'The place to travel to — a city, a venue, an address.',
+          },
+        },
+        required: ['destination'],
+      },
+    },
+  },
+  {
+    type: 'function' as const,
+    function: {
       name: 'find_free_time',
       description:
         "Work out when the user is actually free. Call this for ANY question about free time, availability, gaps, or when something could fit — and before suggesting a time for anything. Do not read the agenda and work it out yourself: this accounts for meetings that carry no end time, for travel between places, and for evenings that an event has effectively taken over, none of which are visible in the agenda text.",
@@ -387,6 +838,137 @@ const ARG_SCHEMAS = {
       ])
       .optional(),
   }),
+  check_shopping_item: z.object({ id: z.string().min(1), matchTitle: z.string().min(1) }),
+  remove_shopping_item: z.object({ id: z.string().min(1), matchTitle: z.string().min(1) }),
+  delete_money_entry: z.object({ id: z.string().min(1), matchTitle: z.string().min(1) }),
+  add_debt: z.object({
+    direction: z.enum(['owe', 'owed']),
+    person: z.string().min(1).max(120),
+    amount: z.number().positive().finite(),
+    description: z.string().max(300).optional(),
+  }),
+  settle_debt: z.object({ id: z.string().min(1), matchTitle: z.string().min(1) }),
+  present_cards: z.object({
+    title: z.string().max(200).optional(),
+    cards: z
+      .array(
+        z.object({
+          label: z.string().min(1).max(100),
+          detail: z.string().max(300).optional(),
+        }),
+      )
+      .min(2)
+      .max(6),
+    selectable: z.boolean().optional(),
+  }),
+  present_checklist: z.object({
+    title: z.string().max(200).optional(),
+    kind: z.enum(['tasks', 'shopping']),
+    items: z
+      .array(
+        z.object({
+          id: z.string().min(1),
+          label: z.string().min(1).max(200),
+          checked: z.boolean(),
+          detail: z.string().max(200).optional(),
+        }),
+      )
+      .max(20),
+  }),
+  present_confirmation: z.object({
+    title: z.string().min(1).max(200),
+    fields: z
+      .array(
+        z.object({
+          label: z.string().min(1).max(60),
+          value: z.string().min(1).max(200),
+        }),
+      )
+      .max(6),
+  }),
+  present_budget: z.object({
+    title: z.string().max(200).optional(),
+    categories: z
+      .array(
+        z.object({
+          name: z.string().min(1).max(60),
+          spent: z.number().finite(),
+          limit: z.number().positive().finite(),
+        }),
+      )
+      .max(10),
+  }),
+  present_timeline: z.object({
+    title: z.string().max(200).optional(),
+    events: z
+      .array(
+        z.object({
+          title: z.string().min(1).max(200),
+          start: z.string().regex(/^\d{1,2}:\d{2}$/),
+          end: z.string().regex(/^\d{1,2}:\d{2}$/).optional(),
+        }),
+      )
+      .max(12),
+  }),
+  present_actions: z.object({
+    actions: z
+      .array(
+        z.object({
+          label: z.string().min(1).max(60),
+        }),
+      )
+      .min(2)
+      .max(4),
+  }),
+  present_debt: z.object({
+    title: z.string().max(200).optional(),
+    debts: z
+      .array(
+        z.object({
+          id: z.string().min(1),
+          person: z.string().min(1).max(120),
+          amount: z.number().positive().finite(),
+          direction: z.enum(['owe', 'owed']),
+          description: z.string().max(200).optional(),
+        }),
+      )
+      .max(10),
+  }),
+  present_weather: z.object({
+    location: z.string().max(120).optional(),
+    days: z
+      .array(
+        z.object({
+          day: z.string().min(1).max(30),
+          icon: z.enum(['sun', 'cloud', 'rain', 'storm', 'snow', 'partly_cloudy', 'wind', 'fog']),
+          high: z.number().finite(),
+          low: z.number().finite(),
+          description: z.string().max(120).optional(),
+        }),
+      )
+      .max(7),
+  }),
+  present_summary: z.object({
+    title: z.string().min(1).max(200),
+    stats: z
+      .array(
+        z.object({
+          label: z.string().min(1).max(60),
+          value: z.string().min(1).max(60),
+          trend: z.enum(['up', 'down', 'neutral']).optional(),
+        }),
+      )
+      .max(6)
+      .optional(),
+    highlights: z.array(z.string().max(200)).max(5).optional(),
+  }),
+  find_nearby: z.object({
+    category: z.enum(['shopping', 'supermarket', 'mall', 'restaurant', 'cafe', 'pharmacy', 'gas_station', 'gym', 'park', 'hospital', 'bank', 'hotel']),
+    radiusMeters: z.number().positive().max(50_000).optional(),
+  }),
+  check_travel: z.object({
+    destination: z.string().min(1).max(200),
+  }),
   find_free_time: z.object({
     fromDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional(),
     eveningOnly: z.boolean().optional(),
@@ -417,14 +999,39 @@ function isActionName(name: string): name is ActionName {
   return name in ARG_SCHEMAS;
 }
 
+type IdSource = 'tasks' | 'events' | 'shopping' | 'money' | 'debts';
+
 /** Which snapshot list an action's `id` has to be found in, if it has one. */
-const ID_SOURCE: Partial<Record<ActionName, 'tasks' | 'events'>> = {
+const ID_SOURCE: Partial<Record<ActionName, IdSource>> = {
   update_task: 'tasks',
   complete_task: 'tasks',
   delete_task: 'tasks',
   update_event: 'events',
   delete_event: 'events',
+  check_shopping_item: 'shopping',
+  remove_shopping_item: 'shopping',
+  delete_money_entry: 'money',
+  settle_debt: 'debts',
 };
+
+/**
+ * The words a row is known by — what `matchTitle` has to repeat. Each list
+ * names its rows differently, and the check is the same for all of them.
+ */
+function rowsOf(snapshot: Snapshot, source: IdSource): { id: string; title: string }[] {
+  switch (source) {
+    case 'tasks':
+      return snapshot.tasks;
+    case 'events':
+      return snapshot.events;
+    case 'shopping':
+      return snapshot.shopping.map((r) => ({ id: r.id, title: r.name }));
+    case 'money':
+      return snapshot.money.map((r) => ({ id: r.id, title: r.description }));
+    case 'debts':
+      return snapshot.debts.map((r) => ({ id: r.id, title: r.person }));
+  }
+}
 
 /** The day an ISO timestamp falls on, or null when there isn't one. */
 function dayOf(iso: string | null | undefined, timezone: string): string | null {
@@ -457,6 +1064,16 @@ export function alreadyOnAgenda(
   snapshot: Snapshot,
   timezone: string,
 ): boolean {
+  // The list is one list, not one per day: milk that is still waiting to be
+  // bought is on it already, whenever it was put there.
+  if (name === 'add_shopping_item') {
+    const item = normalizeTitle(String(args.name ?? ''));
+    return (
+      item.length > 0 &&
+      snapshot.shopping.some((s) => !s.isBought && normalizeTitle(s.name) === item)
+    );
+  }
+
   const title = normalizeTitle(String(args.title ?? ''));
   if (!title) return false;
 
@@ -607,6 +1224,88 @@ function describeSnapshot(snapshot: Snapshot, timezone: string): string {
   return `TASKS:\n${tasks}\n\nCALENDAR:\n${events}`;
 }
 
+/** YYYY-MM of an instant, in the user's zone. */
+function monthOf(now: Date, timezone: string, back = 0): string {
+  const [y, m] = (dayOf(now.toISOString(), timezone) ?? '1970-01-01').split('-').map(Number);
+  const d = new Date(Date.UTC(y!, m! - 1 - back, 1));
+  return `${d.getUTCFullYear()}-${String(d.getUTCMonth() + 1).padStart(2, '0')}`;
+}
+
+/**
+ * The list, the money and the debts, as the prompt sees them.
+ *
+ * Totals are added up here, not left to the model: asked "how much did I spend
+ * on food", it would otherwise sum a column of figures in its head, and a
+ * finance answer that is roughly right is wrong.
+ */
+export function describeHousehold(snapshot: Snapshot, timezone: string, now: Date): string {
+  const cur = snapshot.currency ? ` ${snapshot.currency}` : '';
+  const amt = (n: number) => `${Math.round(n * 100) / 100}${cur}`;
+
+  const open = snapshot.shopping.filter((s) => !s.isBought);
+  const inTrolley = snapshot.shopping.filter((s) => s.isBought);
+  const shopping = [
+    open.length
+      ? open.map((s) => `- [${s.id}] ${s.name}${s.quantity ? ` (${s.quantity})` : ''}`).join('\n')
+      : '- (nothing to buy)',
+    ...(inTrolley.length
+      ? [`Already bought: ${inTrolley.map((s) => `[${s.id}] ${s.name}`).join(', ')}`]
+      : []),
+  ].join('\n');
+
+  const months = [monthOf(now, timezone), monthOf(now, timezone, 1)];
+  const summary = months
+    .map((month, i) => {
+      const rows = snapshot.money.filter((m) => m.date.startsWith(month));
+      const income = rows.filter((r) => r.kind === 'income').reduce((s, r) => s + r.amount, 0);
+      const spent = rows.filter((r) => r.kind === 'expense').reduce((s, r) => s + r.amount, 0);
+      const byCat = new Map<string, number>();
+      for (const r of rows) {
+        if (r.kind !== 'expense') continue;
+        const key = r.category ?? 'uncategorised';
+        byCat.set(key, (byCat.get(key) ?? 0) + r.amount);
+      }
+      const cats = [...byCat.entries()]
+        .sort((a, b) => b[1] - a[1])
+        .map(([k, v]) => {
+          const limit = snapshot.budgets[k];
+          return `${k} ${amt(v)}${limit ? ` of a ${amt(limit)} budget` : ''}`;
+        })
+        .join(', ');
+      return `${i === 0 ? 'This month' : 'Last month'} (${month}): income ${amt(income)}, spent ${amt(spent)}, balance ${amt(income - spent)}${cats ? `. Spending by category: ${cats}` : ''}.`;
+    })
+    .join('\n');
+
+  const recent = snapshot.money
+    .filter((m) => m.date.startsWith(months[0]!))
+    .sort((a, b) => b.date.localeCompare(a.date))
+    .slice(0, 40)
+    .map(
+      (m) =>
+        `- [${m.id}] ${m.date} ${m.kind === 'income' ? '+' : '-'}${amt(m.amount)} ${m.description}${m.category ? ` (${m.category})` : ''}`,
+    )
+    .join('\n');
+
+  const openDebts = snapshot.debts.filter((d) => !d.isSettled);
+  const owe = openDebts.filter((d) => d.direction === 'owe').reduce((s, d) => s + d.amount, 0);
+  const owed = openDebts.filter((d) => d.direction === 'owed').reduce((s, d) => s + d.amount, 0);
+  const debts = openDebts.length
+    ? [
+        `The user owes ${amt(owe)} in total; others owe the user ${amt(owed)}.`,
+        ...openDebts.map(
+          (d) =>
+            `- [${d.id}] ${d.person} — ${d.direction === 'owe' ? 'the user owes them' : 'owes the user'} ${amt(d.amount)}${d.description ? ` for ${d.description}` : ''}`,
+        ),
+      ].join('\n')
+    : '- (no open debts)';
+
+  return [
+    `SHOPPING LIST:\n${shopping}`,
+    `MONEY (already added up — quote these totals, never add figures yourself):\n${summary}\nThis month's entries:\n${recent || '- (none)'}`,
+    `OPEN DEBTS:\n${debts}`,
+  ].join('\n\n');
+}
+
 /**
  * The next week, named and dated.
  *
@@ -661,16 +1360,27 @@ function describeProfile(p: Profile): string {
       `- Standing commitments, in their words: "${p.fixedCommitments.trim()}". Plan around these.`,
     );
   }
+  if (p.workDays) {
+    const days = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
+    lines.push(`- Working days: ${p.workDays.map((d) => days[d]).join(', ') || 'none specified'}. Prefer these for work; ask before assuming other days are available for work.`);
+  }
+  if (p.focusPeriod) lines.push(`- Best focus period: ${p.focusPeriod}. Prefer it for demanding tasks, while respecting sleep and existing commitments.`);
+  if (p.primaryGoal) lines.push(`- Main planning goal: ${p.primaryGoal}. Tailor suggestions to this goal.`);
+  if (p.sleepQuality) lines.push(`- Self-reported sleep: ${p.sleepQuality}. Protect their chosen sleep window; offer practical routine suggestions when relevant, without diagnosis or promises.`);
+  if (p.assistanceStyle) lines.push(`- Preferred help style: ${p.assistanceStyle}. Brief = direct answers; guided = one step or question at a time; proactive = one relevant optional suggestion, never unsolicited changes.`);
+  lines.push('- The app detects arrival at meeting locations automatically (geofencing). If an event has a location, the user gets a heads-up on arrival. Encourage adding locations to events.');
+  lines.push(`- Notifications respect the sleep window (${hour(p.sleepStartHour)}–${hour(p.sleepEndHour)}). Anything scheduled during sleep is pushed to wake time.`);
   return lines.join('\n');
 }
 
-function buildSystemPrompt(input: {
+export function buildSystemPrompt(input: {
   language: string;
   timezone: string;
   now: Date;
   userName?: string;
   snapshot: Snapshot;
   profile?: Profile;
+  location?: DeviceLocation;
 }): string {
   const languageName = LANGUAGE_NAMES[input.language] ?? 'English';
   const localNow = new Intl.DateTimeFormat('en-US', {
@@ -681,20 +1391,32 @@ function buildSystemPrompt(input: {
 
   return [
     `You are ${input.userName ? `${input.userName}'s` : 'the user’s'} personal assistant.`,
-    'You are warm, upbeat and a little playful — a friend who happens to run their diary.',
+    'You are a helpful, attentive personal assistant. Speak naturally, calmly and concretely.',
     '',
     'HOW YOU SPEAK:',
-    "- Answer in the language of the user's latest message, whatever it is —",
-    '  match their language every turn. If they switch mid-conversation, switch',
-    '  with them. Never answer in a different language than they used.',
-    `- When there is nothing of theirs to mirror — the "[SESSION START]" turn —`,
-    `  speak ${languageName}.`,
+    `- ALWAYS answer in ${languageName}. This is the user's chosen language.`,
+    '  Understand names and borrowed words in other languages without changing the reply language.',
     '- You are a woman. In any language that marks gender on verbs and',
     '  adjectives — Hebrew, Arabic, Spanish, French, Italian, Russian and the',
     '  like — always speak about yourself in the feminine.',
+    '- In Hebrew, use fluent everyday Israeli Hebrew, correct word boundaries and grammar.',
+    '  Avoid literal translations, stiff stock phrases, repeated greetings and unnecessary thanks.',
+    '- Never say goodbye, "תודה רבה ביי", or end the conversation unless the user clearly ends it.',
+    '  A completed task is not a goodbye. Silence or unclear audio is not a farewell.',
+    '- Speech transcripts can contain spelling or spacing errors. Resolve obvious errors using',
+    '  the request and conversation context. For example, in a shopping request "מיצנבים"',
+    '  can mean "מיץ ענבים". If the intended item is ambiguous, ask one short clarification',
+    '  BEFORE calling a mutation tool. Never silently substitute a different product or person.',
+    '- Interpret follow-ups and corrections using the conversation. "No, grape juice" corrects',
+    '  the previous item; it does not authorize unrelated changes or a second unwanted item.',
+    '- Never invent prices, quantities, dates, transactions, weather or facts missing from the data.',
+    '  Adding a shopping item does not mean it was purchased and does not create an expense.',
     '- Your answer is read aloud, so keep it to one or two short spoken sentences',
     '  on a single line. No line breaks.',
     '- Plain speech only: no markdown, no bullet points, no emoji, no lists of ids.',
+    '  When the answer has structured content, use a visual tool instead of listing',
+    '  everything out loud. Say a SHORT intro (max 15 words) and let the screen',
+    '  carry the detail. Briefly confirm the important item or time aloud; read the details if asked.',
     '- Say times the way a person would ("tomorrow at four"), never as ISO timestamps.',
     '- Never tell the user to type, tap or open a form. Anything they ask for, you do.',
     '',
@@ -719,8 +1441,17 @@ function buildSystemPrompt(input: {
     '  event starts as the minute someone is free again.',
     '- Use add_shopping_item when they mention something to buy — groceries,',
     '  household things. One call per item: three items is three calls.',
+    '  Something already on the list (and not yet bought) is not added again —',
+    '  say it is already there.',
+    '- "I bought the milk" is check_shopping_item; "we don\'t need eggs any more"',
+    '  is remove_shopping_item. "What do I need to buy?" is answered from the list.',
     '- Use add_money_entry when they say they earned, spent or paid something.',
     '  The amount is always positive; `kind` says which way it went.',
+    '- "Dan owes me 200" or "I owe mum 50" is add_debt; "Dan paid me back" is',
+    '  settle_debt. A mistaken income or expense is removed with delete_money_entry.',
+    '- Questions about money — how much was spent, on what, against which',
+    '  budget, how this month compares to last — are answered from the MONEY',
+    '  section below, quoting its totals. Never sum the entries yourself.',
     '- Calling the tool is the only thing that changes anything. Saying "I am',
     '  deleting it" or "I will add that" without a tool call in the same reply',
     '  changes nothing and is a broken promise — so when the user asks for a',
@@ -735,13 +1466,58 @@ function buildSystemPrompt(input: {
     '- Act on an entry only when its title is clearly the one the user named.',
     '  If nothing in the agenda matches, say so — never fall back to the closest',
     '  entry, and never delete something they did not ask about.',
+    '- VISUAL TOOLS — use a visual tool for lists, comparisons and structured data.',
+    '  A simple action only needs a natural spoken confirmation of what changed.',
+    '  present_cards: options, recommendations, comparisons (set selectable when',
+    '  they should pick one).',
+    '  present_checklist: tasks OR shopping items — ALWAYS use this when the user',
+    '  asks what they need to buy, what is on their list, or what tasks they have.',
+    '  present_confirmation: after a successful change, if a visual confirmation is useful.',
+    '  present_budget: spending, budgets, or expense breakdowns.',
+    '  present_timeline: the day\'s schedule, what\'s coming up, or any time-ordered info.',
+    '  present_debt: who owes whom.',
+    '  present_actions: suggest 2–4 follow-up actions the user can tap.',
+    '  present_weather: weather forecasts — always visual, not spoken.',
+    '  present_summary: daily/weekly summaries with stats and highlights.',
+    '  Keep speech concise without omitting the information the user asked to hear.',
     '- If several entries match what they said, ask which one — briefly.',
     '- If a request is missing a time you cannot reasonably guess, ask one short question.',
     '- After acting, say what you did in one sentence.',
     '- For anything about their schedule, answer from the agenda below.',
     '- The turn "[SESSION START]" is not something they said: they have just',
-    '  opened you. Greet them by name in one short line, say what today holds,',
-    '  and ask what they need. Call no tools for it.',
+    '  opened you. Be proactive and personal:',
+    '  1. Greet them by name. Give a short, insightful daily briefing: what is',
+    '     coming up, how busy the day looks, anything that needs attention.',
+    '  2. If tasks are overdue or piling up, mention it gently with encouragement.',
+    '  3. If their location is known and the shopping list has unbought items,',
+    '     call find_nearby for supermarket or shopping and mention a nearby store.',
+    '  4. Suggest one small actionable thing based on their schedule — e.g. "you',
+    '     have a free hour before your 3pm, good time to knock out that errand".',
+    '  5. If they completed a lot yesterday, acknowledge it ("you crushed it',
+    '     yesterday — 8 tasks done!").',
+    '  Keep it to 2–3 spoken sentences. Call no mutation tools for session start.',
+    '- BE PROACTIVE throughout the conversation, not just at session start:',
+    '  * After completing a task, suggest what to tackle next based on priority.',
+    '  * If you notice patterns (e.g. they always add groceries on Thursdays),',
+    '    mention it: "shopping day tomorrow — want me to check the list?".',
+    '  * Offer small challenges: "you have 3 tasks left today — think you can',
+    '    finish them all before 6?".',
+    '  * When the day is winding down, offer a quick summary of what got done.',
+    '  * Suggest breaks between back-to-back meetings.',
+    '  The goal: feel like an assistant who truly knows them, not a command parser.',
+    '- MEETING LIFECYCLE: be aware of the full arc of a meeting:',
+    '  * Before: "Time to get ready for your meeting with X. Drive to Y is about 30 min."',
+    '  * During: if they open you while a meeting is live, ask how it is going.',
+    '  * After early end: "You finished early — you have 45 free minutes before',
+    '    your next thing. Want to knock out that errand or just take a breather?"',
+    '  * After a long day: "Your last few days were packed. Want me to help',
+    '    clear some time for yourself?"',
+    '- LANGUAGE TONE: never use robotic phrases like "you have free time from',
+    '  15:00 to 23:00". Instead: "your evening is clear — perfect for catching',
+    '  up on that show or getting ahead on tomorrow".',
+    '  Never say "trip to client". Say "time to head out for your meeting with',
+    '  Sami in Kfar Kana — about 30 minutes on the road".',
+    '  Speak like a thoughtful friend, not a system notification.',
     '',
     `The user's local time is ${localNow} (${input.timezone}).`,
     'Resolve "tomorrow", "next Tuesday", "in an hour" against the calendar below,',
@@ -750,15 +1526,35 @@ function buildSystemPrompt(input: {
     'not keep the entry on its old date and change only the time.',
     describeDays(input.now, input.timezone),
     '',
+    ...(input.location
+      ? [
+          'CURRENT LOCATION:',
+          `Coordinates: ${input.location.latitude.toFixed(4)}, ${input.location.longitude.toFixed(4)}`,
+          ...(input.location.city ? [`City: ${input.location.city}`] : []),
+          ...(input.location.country ? [`Country: ${input.location.country}`] : []),
+          'Use this when the user asks about nearby places, directions, meeting spots, weather, or anything location-dependent.',
+          'BE PROACTIVE about location: if the user has items on their shopping list and they are near a supermarket or mall, mention it. If they have errands that could be done nearby, suggest it. Use find_nearby and check_travel without being asked when the context makes it useful.',
+          '',
+        ]
+      : []),
     ...(input.profile
       ? ['HOW THEIR WEEK IS SHAPED:', describeProfile(input.profile), '']
       : []),
     "THE USER'S CURRENT AGENDA:",
     describeSnapshot(input.snapshot, input.timezone),
+    '',
+    describeHousehold(input.snapshot, input.timezone, input.now),
   ].join('\n');
 }
 
 // ─── The turn ───────────────────────────────────────────────────────────────
+
+export interface DeviceLocation {
+  latitude: number;
+  longitude: number;
+  city?: string;
+  country?: string;
+}
 
 export interface VoiceTurnInput {
   text: string;
@@ -771,6 +1567,8 @@ export interface VoiceTurnInput {
   snapshot: Snapshot;
   /** Absent for an install that predates the questionnaire, or a skipped one. */
   profile?: Profile;
+  /** The phone's current GPS position, when available. */
+  location?: DeviceLocation;
 }
 
 export interface VoiceTurnResult {
@@ -831,7 +1629,8 @@ export async function runVoiceTurn(input: VoiceTurnInput): Promise<VoiceTurnResu
         tools: ACTION_TOOLS,
         // On the final round she has already acted; all that is left is to say so.
         tool_choice: lastRound ? 'none' : 'auto',
-        temperature: 0.6,
+        temperature: 0.3,
+        max_completion_tokens: 2000,
       },
       // No retry: a second attempt at a request that has already spent the
       // user's patience arrives after they have stopped waiting for it, and
@@ -866,6 +1665,24 @@ export async function runVoiceTurn(input: VoiceTurnInput): Promise<VoiceTurnResu
       // Asking when someone is free is a question, not a change. It is
       // answered here, into the conversation, and never reaches the device as
       // an action — there is nothing for the device to apply.
+      if (outcome.action?.tool === 'find_nearby') {
+        messages.push({
+          role: 'tool',
+          tool_call_id: call.id,
+          content: await answerNearbySearch(outcome.action.arguments, input),
+        });
+        continue;
+      }
+
+      if (outcome.action?.tool === 'check_travel') {
+        messages.push({
+          role: 'tool',
+          tool_call_id: call.id,
+          content: await answerTravelCheck(outcome.action.arguments, input),
+        });
+        continue;
+      }
+
       if (outcome.action?.tool === 'find_free_time') {
         logger.info(
           { args: outcome.action.arguments },
@@ -958,6 +1775,9 @@ async function answerFreeTime(
         }
       : undefined,
     eveningOnly,
+    currentPosition: input.location
+      ? { latitude: input.location.latitude, longitude: input.location.longitude }
+      : undefined,
   });
 
   const needed =
@@ -1008,6 +1828,77 @@ async function answerFreeTime(
       'When a day was skipped for eveningClosed, say that evening is taken by the event and give the next one that works.',
       'Give one or two windows in plain speech, not a list of every option.',
     ].join(' '),
+  });
+}
+
+/**
+ * Answers "how far is X from here?" using the phone's GPS and the geocoder.
+ */
+async function answerNearbySearch(
+  args: Record<string, unknown>,
+  input: VoiceTurnInput,
+): Promise<string> {
+  const category = typeof args.category === 'string' ? args.category : '';
+  if (!category) {
+    return JSON.stringify({ ok: false, error: 'No category given.' });
+  }
+
+  if (!input.location) {
+    return JSON.stringify({ ok: false, error: 'The user\'s location is not available. Ask them to enable location services.' });
+  }
+
+  const center = { latitude: input.location.latitude, longitude: input.location.longitude };
+  const radius = typeof args.radiusMeters === 'number' ? args.radiusMeters : 3000;
+
+  const places = await searchNearby(center, category, radius);
+
+  if (places.length === 0) {
+    return JSON.stringify({
+      ok: true,
+      places: [],
+      note: `No ${category} places found within ${radius / 1000} km.`,
+    });
+  }
+
+  return JSON.stringify({
+    ok: true,
+    places: places.map((p) => ({
+      name: p.name,
+      distanceKm: p.distanceKm,
+    })),
+    instruction: 'List the closest 3–4 places naturally, with approximate distance. Mention there are more if the list is longer.',
+  });
+}
+
+async function answerTravelCheck(
+  args: Record<string, unknown>,
+  input: VoiceTurnInput,
+): Promise<string> {
+  const destination = typeof args.destination === 'string' ? args.destination.trim() : '';
+  if (!destination) {
+    return JSON.stringify({ ok: false, error: 'No destination given.' });
+  }
+
+  if (!input.location) {
+    return JSON.stringify({ ok: false, error: 'The user\'s location is not available. Ask them to enable location services.' });
+  }
+
+  const from = { latitude: input.location.latitude, longitude: input.location.longitude };
+  const to = await geocode(destination);
+  if (!to) {
+    return JSON.stringify({ ok: false, error: `Could not find "${destination}" on the map.` });
+  }
+
+  const km = distanceKm(from, to);
+  const mins = travelMinutes(km);
+
+  return JSON.stringify({
+    ok: true,
+    from: input.location.city ?? `${from.latitude.toFixed(3)}, ${from.longitude.toFixed(3)}`,
+    to: destination,
+    distanceKm: Math.round(km),
+    estimatedMinutes: mins,
+    instruction: 'This is a minimum estimate (straight-line distance + fixed overhead). Real driving may take longer in traffic. Say the estimate naturally, e.g. "about 40 minutes from where you are".',
   });
 }
 
@@ -1152,7 +2043,7 @@ export function collectAction(
   const source = ID_SOURCE[name];
   if (source) {
     const { id, matchTitle } = validated.data as { id: string; matchTitle: string };
-    const row = snapshot[source].find((r) => r.id === id);
+    const row = rowsOf(snapshot, source).find((r) => r.id === id);
     if (!row) {
       logger.warn({ name, id }, 'voice agent referenced an id outside the snapshot');
       return {
@@ -1178,12 +2069,18 @@ export function collectAction(
   const args = validated.data as Record<string, unknown>;
 
   if (alreadyOnAgenda(name, args, snapshot, timezone)) {
-    logger.warn({ name, title: args.title }, 'voice agent tried to re-add an existing entry');
+    logger.warn(
+      { name, title: args.title ?? args.name },
+      'voice agent tried to re-add an existing entry',
+    );
     return {
       action: null,
       result: JSON.stringify({
         ok: false,
-        error: `"${args.title}" is already on the agenda for that day. Mention it rather than adding it again.`,
+        error:
+          name === 'add_shopping_item'
+            ? `"${args.name}" is already on the shopping list. Say so rather than adding it again.`
+            : `"${args.title}" is already on the agenda for that day. Mention it rather than adding it again.`,
       }),
     };
   }

@@ -16,6 +16,8 @@ export const configSchema = z.object({
   GOOGLE_CLIENT_ID: z.string().optional(),
   APPLE_CLIENT_ID: z.string().optional(),
   OPENAI_API_KEY: z.string().optional(),
+  // Approx. $0.003/minute; full gpt-4o-transcribe is $0.006/minute.
+  OPENAI_TRANSCRIBE_MODEL: z.string().trim().min(1).default('gpt-4o-mini-transcribe'),
   // The voice assistant runs on its own model: it has to pick the right tool
   // first time (a spoken "I deleted it" that called nothing is a lie the user
   // only discovers later), and it has to answer fast enough to feel like a

@@ -282,6 +282,8 @@ export async function freeWindowsForDay(
   now: number = Date.now(),
   prefs?: AvailabilityPrefs,
   resolve: (place: string) => Promise<Point | null> = geocode,
+  /** The phone's live GPS, used as the starting point for the first meeting. */
+  currentPosition?: Point | null,
 ): Promise<DayAvailability> {
   const timeZone = safeZone(rawZone);
   const [y, m, d] = date.split('-').map(Number);
@@ -319,6 +321,14 @@ export async function freeWindowsForDay(
       if (previous?.place) {
         const mins = await legMinutes(previous.place, booking.place, resolve);
         if (mins !== null) travel = mins * MINUTE;
+      } else if (currentPosition) {
+        // No previous meeting with a location — use the phone's GPS as
+        // the starting point so "can I make it there from here?" works.
+        const dest = await resolve(booking.place);
+        if (dest) {
+          const mins = travelMinutes(distanceKm(currentPosition, dest));
+          if (mins > 0) travel = mins * MINUTE;
+        }
       }
     }
 
@@ -395,6 +405,8 @@ export async function findTime(input: {
   /** How far forward to look at all. */
   searchDays?: number;
   resolve?: (place: string) => Promise<Point | null>;
+  /** The phone's live GPS position. */
+  currentPosition?: Point | null;
 }): Promise<FindTimeResult> {
   const {
     fromDate,
@@ -406,6 +418,7 @@ export async function findTime(input: {
     wantDays = 2,
     searchDays = 7,
     resolve = geocode,
+    currentPosition,
   } = input;
 
   const days: DayAvailability[] = [];
@@ -421,7 +434,7 @@ export async function findTime(input: {
       return `${p.year}-${pad(p.month)}-${pad(p.day)}` === date;
     });
 
-    const day = await freeWindowsForDay(date, onDay, zone, now, prefs, resolve);
+    const day = await freeWindowsForDay(date, onDay, zone, now, prefs, resolve, currentPosition);
 
     if (eveningOnly) {
       // An evening already spoken for is not a candidate at all — this is the

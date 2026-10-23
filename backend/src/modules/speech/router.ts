@@ -1,7 +1,6 @@
 import { Router } from 'express';
 import multer from 'multer';
-import OpenAI from 'openai';
-import { toFile } from 'openai/uploads';
+import { transcribeAudio } from './transcribe.js';
 import { authMiddleware } from '../../middleware/auth.js';
 import { speechLimiter } from '../../middleware/rateLimit.js';
 import { asyncHandler } from '../../lib/http.js';
@@ -31,7 +30,11 @@ const ALLOWED_MIME_TYPES = new Set([
 
 const ALLOWED_EXTENSIONS = new Set(['m4a', 'webm', 'mp3', 'wav']);
 
-const ALLOWED_LANGUAGES = new Set(['he', 'en']);
+const ALLOWED_LANGUAGES = new Set([
+  'he', 'en', 'ar', 'es', 'fr', 'it', 'ru', 'de', 'pt', 'hi',
+  'zh', 'ja', 'ko', 'tr', 'nl', 'pl', 'uk', 'ro', 'el', 'sv',
+  'fa', 'id', 'vi', 'th', 'bn',
+]);
 
 // ─── Multer setup — memory storage, no disk writes ────────────────────────────
 
@@ -110,27 +113,6 @@ speechRouter.post(
       );
     }
 
-    const openai = new OpenAI({ apiKey: config.OPENAI_API_KEY });
-
-    // Convert multer buffer to an OpenAI-compatible Uploadable via toFile.
-    // The buffer is held only in memory and will be GC'd after this request.
-    const audioFile = await toFile(
-      req.file.buffer,
-      req.file.originalname,
-      { type: req.file.mimetype },
-    );
-
-    const transcription = await openai.audio.transcriptions.create({
-      model: 'whisper-1',
-      file: audioFile,
-      ...(language !== undefined ? { language } : {}),
-    });
-
-    // Clear the buffer reference so it can be GC'd immediately.
-    // (Multer memoryStorage holds it on req.file.buffer; we don't log or
-    // propagate it anywhere.)
-    req.file.buffer = Buffer.alloc(0);
-
-    return res.status(200).json({ text: transcription.text });
+    return res.status(200).json({ text: await transcribeAudio(req.file, language) });
   }),
 );

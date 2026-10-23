@@ -1,4 +1,4 @@
-import { DevSettings, I18nManager, Platform } from 'react-native';
+import { I18nManager, Platform } from 'react-native';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import * as Localization from 'expo-localization';
 
@@ -89,17 +89,25 @@ export const LANGUAGES = {
 export type Language = keyof typeof LANGUAGES;
 
 const STORAGE_KEY = '@pa/language';
+const VOICE_LANG_KEY = '@pa/voiceLanguage';
 
 const DICTS: Record<Language, Dict> = {
   en, he, ar, es, fr, it, ru,
   bn, zh, nl, de, el, hi, id, ja, ko, fa, pl, pt, ro, sv, th, tr, uk, vi,
 };
 
-/** Active language. Set synchronously at startup before the first render. */
+/** One language choice for the interface and the assistant. */
 let current: Language = 'en';
+
+/** The language the voice assistant listens and speaks in. */
+let voiceLang: Language = 'en';
 
 export function getLanguage(): Language {
   return current;
+}
+
+export function getVoiceLanguage(): Language {
+  return voiceLang;
 }
 
 export function isRTL(): boolean {
@@ -120,6 +128,42 @@ export function isRTL(): boolean {
  */
 export function alignStart(): 'left' | 'right' {
   return isRTL() ? 'right' : 'left';
+}
+
+/**
+ * An offset from the side a line starts on — the left in English, the right in
+ * Hebrew — or from the side it ends on, for absolutely positioned marks: a
+ * row's coloured edge, a badge on a corner.
+ *
+ * Named physically rather than as `insetInlineStart`/`insetInlineEnd`, which
+ * react-native-web resolves from its own idea of direction, one the
+ * document's `dir` never reaches: in Hebrew the edge sat at the row's far end.
+ * Read at render, like `alignStart`, not in a StyleSheet built at import.
+ */
+export function startAt(v: number): { left: number } | { right: number } {
+  return isRTL() ? { right: v } : { left: v };
+}
+
+export function endAt(v: number): { left: number } | { right: number } {
+  return isRTL() ? { left: v } : { right: v };
+}
+
+const LRM = String.fromCharCode(0x200e);
+
+/**
+ * Keeps a left-to-right run — "28°", "9:00 AM" — in its own order inside a
+ * right-to-left line.
+ *
+ * Signs and spaces have no direction of their own, and a number counts as
+ * right-to-left for placing them — so in Hebrew the degree sign lands on the
+ * far side ("°28") and a time reads "AM 9:00". The marks either side make the
+ * whole run left-to-right. In a left-to-right line they do nothing.
+ *
+ * For display only: the marks are real characters, so nothing that is stored,
+ * compared or sent to the assistant should go through this.
+ */
+export function ltr(s: string): string {
+  return `${LRM}${s}${LRM}`;
 }
 
 /**
@@ -148,15 +192,23 @@ function deviceLanguage(): Language | null {
   return tag && tag in LANGUAGES ? (tag as Language) : null;
 }
 
-/** Reads the stored choice, falling back to the device language, then English. */
+/** Migrate the previous voice-only choice into the shared app language. */
 export async function loadLanguage(): Promise<Language> {
   try {
-    const saved = (await AsyncStorage.getItem(STORAGE_KEY)) as Language | null;
-    current = saved && saved in LANGUAGES ? saved : (deviceLanguage() ?? 'en');
+    const saved = (await AsyncStorage.getItem(VOICE_LANG_KEY)) as Language | null;
+    // Fall back to the old key so existing users keep their voice language.
+    const legacy = saved ? null : (await AsyncStorage.getItem(STORAGE_KEY)) as Language | null;
+    voiceLang = saved && saved in LANGUAGES
+      ? saved
+      : legacy && legacy in LANGUAGES
+        ? legacy
+        : (deviceLanguage() ?? 'en');
   } catch {
-    current = 'en';
+    voiceLang = deviceLanguage() ?? 'en';
   }
+  current = voiceLang;
   await applyDirection();
+  announceLanguage();
   return current;
 }
 
@@ -192,29 +244,6 @@ function announceLanguage(): void {
 }
 
 /**
- * Restarts the JS surface. The native RTL flag is read when a surface starts,
- * so flipping it only shows up after a reload.
- *
- * Returns false when it cannot restart by itself and the user has to do it.
- */
-function reloadApp(): boolean {
-  if (Platform.OS === 'web') {
-    const loc = (globalThis as { location?: Location }).location;
-    if (!loc) return false;
-    loc.reload();
-    return true;
-  }
-  // DevSettings.reload only exists while the dev client is attached, which is
-  // the case in Expo Go and in a debug build. A release build has to be
-  // restarted by hand (expo-updates is not a dependency here).
-  if (__DEV__ && typeof DevSettings?.reload === 'function') {
-    DevSettings.reload();
-    return true;
-  }
-  return false;
-}
-
-/**
  * Tells React Native which way to lay out.
  *
  * Two mechanisms, because neither covers every case on its own:
@@ -229,8 +258,7 @@ function reloadApp(): boolean {
  *    the new architecture (the old Android renderer has no such prop) and on
  *    web, where the `dir` attribute below does the same job.
  *
- * Returns true when it kicked off a reload, so the caller knows not to also
- * ask the user to restart.
+ * The root, navigator and modal content apply direction immediately.
  */
 async function applyDirection(): Promise<boolean> {
   const rtl = LANGUAGES[current].rtl;
@@ -274,23 +302,18 @@ async function applyDirection(): Promise<boolean> {
 /**
  * Saves the choice and applies it.
  *
- * Returns true when the app has to be restarted by hand for the new direction
- * to show — React Native cannot flip an already-rendered tree, so the text
- * would translate while the layout stayed mirrored the old way. When the
- * restart could be done for us, this returns false and the app is already on
- * its way back up.
+ * The boolean is retained for older callers. Direction is applied without
+ * restarting the app, so it always returns false.
  */
 export async function setLanguage(next: Language): Promise<boolean> {
   current = next;
+  voiceLang = next;
   try {
-    await AsyncStorage.setItem(STORAGE_KEY, next);
+    await AsyncStorage.multiSet([[STORAGE_KEY, next], [VOICE_LANG_KEY, next]]);
   } catch {
     /* the in-memory value still applies for this session */
   }
   await applyDirection();
-  // Whoever is listening re-reads `current` and re-renders; nobody is asked to
-  // restart anything. Kept returning a boolean so the callers' "you have to
-  // restart by hand" path survives if a platform ever needs it again.
   announceLanguage();
   return false;
 }

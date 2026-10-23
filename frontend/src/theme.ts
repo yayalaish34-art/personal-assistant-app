@@ -1,212 +1,368 @@
 // Central design tokens so screens stay visually consistent.
 //
-// The look: an almost-white paper background, white cards, and flat pastel
-// tiles — sage green, powder blue, butter yellow — with near-black type and
-// near-black controls. No gradients, no glass: colour comes from the tiles,
-// hierarchy from weight and size.
+// The look, everywhere: a page lit by a faint blue glow, cards a step off it
+// with a hairline edge, type in two weights, and a few lit colours that mean
+// something — the app's blue for the chosen thing, the green-blue-yellow sweep
+// for the one word a headline leans on, and lit discs behind the icons that
+// label a count. Hierarchy comes from size and weight; colour is kept for
+// meaning.
+//
+// It comes in two schemes, dark and light, chosen in Settings. Every token
+// below is a live object that `applyScheme` rewrites in place, the same way
+// `t()` reads the current language: a screen that reads `colors.text` at
+// render gets the scheme in force, and the app remounts its tree when the
+// scheme changes (see App.tsx). Styles built once at import would keep the
+// scheme they were built in, so every StyleSheet is wrapped in `themed`, which
+// rebuilds it the first time it is read after a change.
 
-export const colors = {
-  /** The page itself. Warm off-white, not pure white, so cards can be white. */
-  bg: '#FBFBF9',
-  surface: '#FFFFFF',
-  /** Quiet fill for segmented controls and inactive chips. */
-  surfaceAlt: '#F2F2EF',
-  /** Near-black: type, active chips, the selected tab. */
-  primary: '#14150F',
-  primaryText: '#FFFFFF',
-  text: '#14150F',
-  textMuted: '#8C8D86',
-  border: 'rgba(20, 21, 15, 0.07)',
-  danger: '#E5484D',
-  success: '#5F9B3C',
-  /** Filled favourite star. */
-  star: '#F0A32B',
-  /** The unread dot on the bell. */
-  alert: '#F4753A',
-  lime: '#DCE8C0',
+export type Scheme = 'dark' | 'light';
+
+type Pair = readonly [string, string];
+type Triple = readonly [string, string, string];
+
+// ── The two palettes ──────────────────────────────────────────────────────
+
+/**
+ * The page's names for things.
+ *
+ * Dark: `text` 16.9:1 and `textMuted` 7:1 on `surface`. Light: `text` 18:1 and
+ * `textMuted` 6.2:1 on white, 5.6:1 on `surfaceAlt`; `danger` is deepened to
+ * 4.7:1 because the dark scheme's coral is 2.9:1 on white.
+ */
+const COLORS = {
+  dark: {
+    /** The page. Blue-black: `Screen` draws the glow over it. */
+    bg: '#05080E',
+    /** Cards, sheets, fields. Opaque, so a sheet over a backdrop stays solid. */
+    surface: '#0F141C',
+    /** Quiet fill for segmented controls, inactive chips, a field's ground. */
+    surfaceAlt: '#171D28',
+    /** The chosen thing and the primary button. White on it clears 4.5:1. */
+    primary: '#2A6FE0',
+    primaryText: '#FFFFFF',
+    text: '#F5F7FA',
+    textMuted: '#9AA3B2',
+    border: 'rgba(255, 255, 255, 0.08)',
+    danger: '#FF6B6B',
+    success: '#6EE7A8',
+    /** Filled favourite star. */
+    star: '#FFD24D',
+    /** The unread dot on the bell. */
+    alert: '#FF6A2B',
+    lime: 'rgba(110, 231, 168, 0.14)',
+  },
+  light: {
+    bg: '#FFFFFF',
+    surface: '#FFFFFF',
+    surfaceAlt: '#F1F4F9',
+    primary: '#2A6FE0',
+    primaryText: '#FFFFFF',
+    text: '#0B1220',
+    textMuted: '#5B6576',
+    border: 'rgba(11, 18, 32, 0.09)',
+    danger: '#D64545',
+    success: '#1E9E5A',
+    star: '#B8860B',
+    alert: '#F4753A',
+    lime: 'rgba(30, 158, 90, 0.12)',
+  },
 };
-
-// ── The day card ──────────────────────────────────────────────────────────
-// The one big surface on the home screen. It changes with the sky rather than
-// staying one colour all day: a pale morning blue, and a dusk that is still
-// light enough to keep near-black type on it, because the app has no dark
-// surface anywhere else and one would read as a mistake.
-export const DAY_CARD = {
-  day: {
-    colors: ['#CFE1F2', '#E8F1FA'] as const,
-    ink: '#14150F',
-    sub: 'rgba(20, 21, 15, 0.62)',
-    glyph: '#4E82B4',
-  },
-  night: {
-    colors: ['#D5D8EA', '#ECEDF5'] as const,
-    ink: '#14150F',
-    sub: 'rgba(20, 21, 15, 0.62)',
-    glyph: '#5F6796',
-  },
-} as const;
-
-/** The three pastel tiles everything is built from, plus a neutral. */
-export const TILES = {
-  green: '#DCE8C0',
-  blue: '#CFE1F2',
-  yellow: '#FAE0A0',
-  neutral: '#F2F2EF',
-} as const;
-
-export type TileColor = keyof typeof TILES;
-
-/** Ink that reads on each tile — used for icons and secondary marks. */
-export const TILE_INK = {
-  green: '#6E9036',
-  blue: '#4E82B4',
-  yellow: '#CE9424',
-  neutral: '#8C8D86',
-} as const;
-
-/** Task and event rows cycle through these, in this order. */
-export const ROW_TILES: TileColor[] = ['green', 'blue', 'yellow'];
 
 /**
  * The sweep — green, blue, yellow. It marks the *chosen* thing: the mic button
- * in the bar, the selected day on Home. Mid-tone on purpose, so near-black ink
- * stays readable on top of it, and ordered green→blue→yellow so the two ends
- * are the pair furthest apart in hue.
+ * in the bar, the selected tab. Mid-tone on purpose, so dark ink stays
+ * readable on top of it in both schemes; it is a fill, never type.
  */
-export const IRIDESCENT = ['#A8D98C', '#8FC7FF', '#FFD98A'] as const;
+const SWEEP: Triple = ['#A8D98C', '#8FC7FF', '#FFD98A'];
+
+/**
+ * The sweep in reading order — blue into green into yellow — for the one word
+ * a headline is painted with: "Planzi" on Home.
+ *
+ * This one *is* type, so on white it is deepened: the dark scheme's butter
+ * yellow is 1.4:1 on white and the word's last letters would simply vanish.
+ * Every stop of the light version holds 3:1 at headline size.
+ */
+const SWEEP_WORD: Record<Scheme, Triple> = {
+  dark: [SWEEP[1], SWEEP[0], SWEEP[2]],
+  light: ['#2F7FE6', '#1E9E5A', '#C28400'],
+};
 
 /**
  * The palette, unpacked into surfaces and marks: green, blue, yellow.
  *
- * `tint` is the pale card ground, `ink` the mark that sits on it. The slots
- * keep neutral names rather than colour names — every screen refers to them,
- * and a slot called `green` is a promise the next repaint has to keep.
+ * `tint` is a card ground — the hue at a whisper over the page — and `ink` the
+ * mark that sits on it or on the page. Type on a tint is `colors.text`, never
+ * the ink. The slots keep neutral names rather than colour names: every screen
+ * refers to them, and a slot called `green` is a promise a repaint has to keep.
  *
- * The inks are validated, not eyeballed. As a categorical set they clear all
- * six checks: the lightness band, the chroma floor, adjacent-pair CVD
- * separation (worst pair ΔE 13.6 protan), the normal-vision floor, and 3:1
- * against the page.
+ * Every ink clears 3:1 against its page. Green and yellow are neighbours in
+ * hue — the pair red-blind vision merges — so they are held apart by
+ * lightness: the green is the darker of the two by a clear step, in both
+ * schemes. The light inks are the ones the app was validated with when it was
+ * a light app (worst adjacent pair ΔE 13.6 for a protanope).
  *
- * Two things that validation forced, and which are easy to undo by accident:
- *
- * The yellow is an amber (#B8860B), not the butter yellow it looks like it
- * should be. Anything lighter cannot reach 3:1 on a near-white page — the
- * previous butter yellow sat at 2.59:1 — so a lighter one would be a mark
- * some people simply cannot see. The *tint* is still buttery; only the ink
- * that has to be read is deepened.
- *
- * The green and the yellow are neighbours in hue, which is the pair red-blind
- * vision merges. They are separated by lightness rather than by hue, which is
- * why the green is this dark. Nudging either toward the other collapses them:
- * the palette this replaced sat at ΔE 5.8 for a protanope, well under the 8
- * floor, and two of its rows were genuinely indistinguishable.
- *
- * One rule survives from before: `yellow.ink` is never a status mark. Against
- * `colors.danger` it drops to ΔE 4.7 for a deuteranope, so a yellow
- * "scheduled" dot and a red "overdue" dot would be the same dot. Yellow
- * dresses surfaces; the status vocabulary is green, blue, muted grey and red.
+ * One rule holds in both: `yellow.ink` is never a status mark. Beside
+ * `colors.danger` it is too close for a deuteranope, so a yellow "scheduled"
+ * dot and a red "overdue" dot would be the same dot. Yellow dresses surfaces;
+ * the status vocabulary is green, blue, muted grey and red.
  */
-export const AURA = {
-  green: { tint: '#DFF0D2', ink: '#2E6B24' },
-  blue: { tint: '#DCEAF8', ink: '#3E86C4' },
-  yellow: { tint: '#FAECC8', ink: '#B8860B' },
-} as const;
-
-export type AuraKey = keyof typeof AURA;
+const AURAS = {
+  dark: {
+    green: { tint: 'rgba(63, 191, 127, 0.14)', ink: '#3FBF7F' },
+    blue: { tint: 'rgba(77, 166, 255, 0.14)', ink: '#6AB4FF' },
+    yellow: { tint: 'rgba(255, 210, 77, 0.13)', ink: '#FFD24D' },
+  },
+  light: {
+    green: { tint: 'rgba(46, 107, 36, 0.10)', ink: '#2E6B24' },
+    blue: { tint: 'rgba(62, 134, 196, 0.12)', ink: '#3E86C4' },
+    yellow: { tint: 'rgba(232, 170, 20, 0.15)', ink: '#B8860B' },
+  },
+};
 
 /**
- * The band the day is chosen on.
+ * Home's lit pieces, shared by every screen with something of the same kind:
+ * the glass cards, the blue selection, the discs, the row edges.
  *
- * Home opens on a dark head — the greeting and the week rail — and the rest of
- * the screen is a white sheet that starts under it with its top corners
- * rounded, so the page reads as one card lifted onto a darker ground rather
- * than a stack of loose blocks.
+ * Cards are translucent over the page rather than a fixed grey, so the glow
+ * behind them shows through. On white that means a whisper of ink rather than
+ * of white; the edge does the rest.
  *
- * `ink` is white; `sub` and `line` are the two steps down from it that the
- * weekday letters and the pill outlines use. They are alphas rather than fixed
- * greys so the same three work if the band's colour is ever changed.
+ * On white the lit marks are deepened where they are marks: the "now" line,
+ * a task's edge and the sun glyph each hold 3:1, and the timeline's blocks are
+ * a step more saturated so a pale cyan block does not disappear into its card.
+ * The discs and the blue stay as they are — dark glyphs and white type sit on
+ * them the same on either page.
  */
-export const BAND = {
-  bg: '#14150F',
-  ink: '#FFFFFF',
-  /** Weekday letters, and any second line on the band. */
-  sub: 'rgba(255, 255, 255, 0.62)',
-  /** The outline on an unchosen day, and the chrome buttons' fill. */
-  line: 'rgba(255, 255, 255, 0.14)',
-} as const;
+const NIGHTS = {
+  dark: {
+    /** The page. Blue-black, not warm: the glow over it is blue. */
+    bg: '#05080E',
+    /** Cards, rows, the day rail: white at a whisper over the page. */
+    card: 'rgba(255, 255, 255, 0.045)',
+    /** A quieter fill inside a card, and the bell's disc. */
+    cardAlt: 'rgba(255, 255, 255, 0.08)',
+    /** Type. */
+    ink: '#F5F7FA',
+    /** Second lines, timestamps, weekday letters. */
+    sub: '#9AA3B2',
+    /** Hairlines: card edges and the dividers inside the rails. */
+    line: 'rgba(255, 255, 255, 0.08)',
+    /** The glow behind the head of the page. */
+    glow: '#2B4F80',
+    /** The chosen day, and the accent on a meeting's row. */
+    blue: ['#4DA6FF', '#2D78F0'] as Pair,
+    /** The "now" line on the timeline. */
+    now: '#6FD6FF',
+    /** The accent on a task's row. */
+    green: '#6EE7A8',
+    /** Sun glyphs in the forecast. */
+    sun: '#FFD24D',
+    /** Unread dot on the bell. */
+    alert: '#FF6A2B',
+    /** Blocks on the timeline, cycled in clock order. */
+    blocks: [
+      ['#9BEAFF', '#5CC6F2'],
+      ['#FFE7A0', '#F7CD62'],
+      ['#6AA6FF', '#3F7CF0'],
+    ] as readonly Pair[],
+    /** The lit discs behind the counts; the tasks one also fills a ticked row. */
+    discs: {
+      tasks: ['#C4E8FF', '#5EAEF6'] as Pair,
+      meetings: ['#FFEBB5', '#F4BE5E'] as Pair,
+      reminders: ['#E2F3FF', '#94CDF6'] as Pair,
+    },
+    /** Glyphs sitting on a lit disc: near-black with a blue cast. */
+    glyph: '#0C1726',
+    /** The ring of a tick that is not ticked yet. */
+    tickRing: '#7D8696',
+    /** The handle at the top of a sheet. */
+    grip: 'rgba(255, 255, 255, 0.18)',
+    /** What dims the page behind a sheet or a dialog. */
+    backdrop: 'rgba(0, 0, 0, 0.55)',
+    /** A light catching glass as it passes: the shimmer on a pill. */
+    sheen: 'rgba(255, 255, 255, 0.12)',
+    /**
+     * The card across the foot of Home, which the nav bar sits on.
+     *
+     * Light in both schemes — it is the one pale surface on the dark, which is
+     * what makes it and the white bar read as one footer. Off-white rather
+     * than white: on the dark, white at full strength glares.
+     */
+    foot: '#EDF1F7',
+    footInk: '#0B1220',
+    footSub: '#5B6576',
+  },
+  light: {
+    bg: '#FFFFFF',
+    card: 'rgba(11, 18, 32, 0.045)',
+    cardAlt: 'rgba(11, 18, 32, 0.07)',
+    ink: '#0B1220',
+    sub: '#5B6576',
+    line: 'rgba(11, 18, 32, 0.1)',
+    /** Paler than the dark one: on white a strong pool reads as a blue page. */
+    glow: '#D3E4FD',
+    blue: ['#4DA6FF', '#2D78F0'] as Pair,
+    now: '#1590CF',
+    green: '#1E9E5A',
+    sun: '#B8860B',
+    alert: '#F4753A',
+    blocks: [
+      ['#6FD3F7', '#2FB2E6'],
+      ['#FFD470', '#F2B53A'],
+      ['#5B9BFF', '#2F6FE8'],
+    ] as readonly Pair[],
+    discs: {
+      tasks: ['#BFE3FF', '#4EA2F2'] as Pair,
+      meetings: ['#FFE6A8', '#F2B544'] as Pair,
+      reminders: ['#DAEFFF', '#80BFF2'] as Pair,
+    },
+    glyph: '#0C1726',
+    tickRing: '#A3ACB9',
+    grip: 'rgba(11, 18, 32, 0.16)',
+    backdrop: 'rgba(11, 18, 32, 0.35)',
+    sheen: 'rgba(255, 255, 255, 0.7)',
+    /** On white the foot is a step *down*, not up: its edge does the rest. */
+    foot: '#E4E9F2',
+    footInk: '#0B1220',
+    footSub: '#5B6576',
+  },
+};
 
-// ── Home, after dark ──────────────────────────────────────────────────────
-// Home is the one screen that runs dark. It began as a dark band across the
-// top with the day on white below; the whole page is dark now, and the band
-// is simply where the page has nothing on it yet.
-//
-// These are a separate set rather than a repaint of `colors`, because every
-// other screen still reads that one. Repainting it would drag Calendar,
-// Shopping, Finance and Settings into the dark uninvited.
-//
-// The numbers, on the card ground: `ink` 14.4:1, `sub` 6.5:1, and the three
-// gradient stops between 9.7:1 and 12.8:1, so the palette's own colours stay
-// readable as type here without being re-picked. `card` sits 1.27:1 off the
-// page, which is the usual dark-theme surface step — a card is read by its
-// edge and its shadow at this end of the scale, not by brightness, and
-// anything louder starts to look like a lit panel.
-export const NIGHT = {
-  /** The page. Warm near-black, matching the band it grew out of. */
-  bg: '#0B0C0A',
-  /** Cards, rows, the weather panel. */
-  card: '#232520',
-  /** Chips, inactive halves of a toggle, the quiet fill inside a card. */
-  cardAlt: '#2E302A',
-  /** Type. */
-  ink: '#F7F7F4',
-  /** Second lines, timestamps, weekday letters. */
-  sub: '#A8A9A2',
-  /** Hairlines: the only thing separating two surfaces this close together. */
-  line: 'rgba(255, 255, 255, 0.10)',
-} as const;
+/**
+ * The assistant's names for the shared palette, plus the three things only she
+ * has: the halo, the wave and the orbit.
+ *
+ * She was once violet on lavender, so that walking in said "this is where you
+ * talk to her". She wears the app's scheme now like every other screen, and
+ * what sets her apart is what only she has — the lit orb, the sound either
+ * side of it, the ring turning — rather than a different ground under it.
+ *
+ * In the dark the inks were checked under the brightest point of the glow,
+ * where her bubbles sit in Hebrew: `meta`, the 11px timestamps, clears 4.5:1
+ * there (4.6:1), which is why her bubble is a card's whisper and not more, and
+ * `accent` is the cyan because the blue falls to 3.6:1 on a time row under the
+ * glow. On white the cyan is the deepened one from `NIGHTS.light`.
+ */
+function voiceFor(s: Scheme) {
+  const c = COLORS[s];
+  const n = NIGHTS[s];
+  return {
+    /** The page, top to bottom, a shade bluer by the composer. */
+    page: (s === 'dark' ? [c.bg, '#0A1220'] : [c.bg, '#EEF4FF']) as Pair,
+    /** Type on the page and in her bubbles. */
+    ink: c.text,
+    /** Her marks: undo, restart, a time's weekday, the spinner, the send glyph at rest. */
+    accent: n.now,
+    /**
+     * The orb. The sweep the mic button in the bar is made of, so the button
+     * you pressed to open her is the thing you are now talking to. Glyphs on
+     * it are `NIGHT.glyph`.
+     */
+    accentGradient: SWEEP,
+    /** What she says: glass, like a card on Home, with a hairline edge. */
+    her: n.card,
+    /** What you said: the app's blue, with white on it (4.7:1). */
+    me: c.primary,
+    /** Timestamps on her lines, the hint under the caption, the placeholder. */
+    meta: c.textMuted,
+    /** Glass discs and pills: the header buttons, the undo bar, a time to pick. */
+    chrome: n.cardAlt,
+    /** The breathing halo behind the orb, palest (and widest) first. */
+    halo: (s === 'dark'
+      ? ['rgba(77, 166, 255, 0.04)', 'rgba(77, 166, 255, 0.06)', 'rgba(77, 166, 255, 0.08)', 'rgba(77, 166, 255, 0.1)']
+      : ['rgba(47, 127, 230, 0.05)', 'rgba(47, 127, 230, 0.07)', 'rgba(47, 127, 230, 0.09)', 'rgba(47, 127, 230, 0.12)']) as readonly [
+      string,
+      string,
+      string,
+      string,
+    ],
+    /** The sound she is listening to, drawn either side of the orb. */
+    wave: n.now,
+    /** The dotted orbit and the motes riding it. */
+    orbit: s === 'dark' ? 'rgba(111, 214, 255, 0.3)' : 'rgba(21, 144, 207, 0.3)',
+  };
+}
+
+// Priority pill palette (task form + task cards), drawn from the same palette.
+export type Priority = 'Low' | 'Medium' | 'High';
+function prioritiesFor(s: Scheme): Record<Priority, { color: string; bg: string }> {
+  return {
+    Low: { color: AURAS[s].green.ink, bg: AURAS[s].green.tint },
+    Medium: { color: AURAS[s].yellow.ink, bg: AURAS[s].yellow.tint },
+    High: {
+      color: COLORS[s].danger,
+      bg: s === 'dark' ? 'rgba(255, 107, 107, 0.14)' : 'rgba(214, 69, 69, 0.10)',
+    },
+  };
+}
+
+// ── The live tokens ───────────────────────────────────────────────────────
+// What every screen imports. They start dark and are rewritten in place by
+// `applyScheme`; nothing may hold on to a value read from them across a change.
+
+export const colors = { ...COLORS.dark };
+export const IRIDESCENT = SWEEP;
+export const SWEEP_TEXT: Triple = [...SWEEP_WORD.dark];
+export const AURA = { ...AURAS.dark };
+export type AuraKey = keyof typeof AURA;
+export const NIGHT = { ...NIGHTS.dark };
+export const VOICE = voiceFor('dark');
+export const PRIORITY_COLORS = prioritiesFor('dark');
 
 /** Rows and chips cycle through the gradient's stops, in its own order. */
 export const AURA_CYCLE: AuraKey[] = ['green', 'blue', 'yellow'];
 
-// ── The assistant, out loud ───────────────────────────────────────────────
-// She gets a palette of her own — violet on lavender — and nothing else in the
-// app does. That is the point: the rest of the app is a surface you fill in by
-// hand, and she is the one place you talk to. Walking into a different colour
-// says which of the two you are in without a word of explanation.
-//
-// The inks are the readable half of it: `ink` and `accent` both clear 4.5:1 on
-// the page, and `meta` — the 11px timestamps, the smallest type on the screen
-// — was deepened from the mockup's grey until it did too (4.8:1). A timestamp
-// nobody can read is decoration pretending to be information.
-export const VOICE = {
-  /** The page, top to bottom: almost white, settling into lavender. */
-  page: ['#FAF9FE', '#EFE9FB'] as const,
-  /** Type on the page and inside bubbles. Near-black, with a violet cast. */
-  ink: '#1D1A33',
-  /** The mic, the ticks, the send glyph — everything that is *her*. */
-  accent: '#6D45E0',
-  /** The raised mic button's sphere, lit from the top-left. */
-  accentGradient: ['#A98BF5', '#7C5CF0', '#5B36C7'] as const,
-  /** What she says. */
-  her: '#EAE3FA',
-  /** What you said: white, floated off the page on a soft shadow. */
-  me: '#FFFFFF',
-  /** Timestamps and the delivered ticks' quieter half. */
-  meta: '#726A96',
-  /** The round chrome buttons in the header, and the composer's field. */
-  chrome: '#FFFFFF',
-  /** The breathing halo behind the orb, palest first. */
-  halo: [
-    'rgba(124, 92, 240, 0.035)',
-    'rgba(124, 92, 240, 0.05)',
-    'rgba(124, 92, 240, 0.065)',
-    'rgba(124, 92, 240, 0.085)',
-  ] as const,
-  /** The sound she is listening to, drawn either side of the orb. */
-  wave: '#9E7CEE',
-  /** The dotted orbit and the motes riding it. */
-  orbit: 'rgba(109, 69, 224, 0.28)',
-} as const;
+let scheme: Scheme = 'dark';
+/** Bumps on every change, so `themed` knows its sheet is stale. */
+let schemeVersion = 0;
+
+/** The scheme in force. */
+export function currentScheme(): Scheme {
+  return scheme;
+}
+
+/**
+ * Rewrites every live token for `next`. The caller remounts whatever is on
+ * screen; `lib/appearance.ts` does both, and saves the choice.
+ */
+export function applyScheme(next: Scheme): void {
+  if (next === scheme) return;
+  scheme = next;
+  Object.assign(colors, COLORS[next]);
+  (SWEEP_TEXT as unknown as string[]).splice(0, 3, ...SWEEP_WORD[next]);
+  Object.assign(AURA, AURAS[next]);
+  Object.assign(NIGHT, NIGHTS[next]);
+  Object.assign(VOICE, voiceFor(next));
+  Object.assign(PRIORITY_COLORS, prioritiesFor(next));
+  schemeVersion += 1;
+}
+
+/**
+ * A StyleSheet that follows the scheme.
+ *
+ * `StyleSheet.create` is evaluated once, at import, and bakes in whatever the
+ * tokens held then. Wrap it — `const styles = themed(() => StyleSheet.create({…}))`
+ * — and it is rebuilt the first time a style is read after the scheme changes,
+ * so the remounted screen gets the new colours. Anything else a module builds
+ * from tokens at import (a shared `glass` object, a table of colours) has to
+ * be built inside the factory or at render for the same reason.
+ */
+export function themed<T extends object>(make: () => T): T {
+  let sheet: T | undefined;
+  let builtFor = -1;
+  return new Proxy({} as T, {
+    get(_, key) {
+      if (builtFor !== schemeVersion || sheet === undefined) {
+        sheet = make();
+        builtFor = schemeVersion;
+      }
+      return (sheet as Record<string | symbol, unknown>)[key];
+    },
+  });
+}
+
+// ── Scheme-free tokens ────────────────────────────────────────────────────
 
 export const spacing = {
   xs: 4,
@@ -244,7 +400,9 @@ export function font(weight: FontWeight = 400) {
 // ── Bottom navigation bar ─────────────────────────────────────────────────
 // A pane of glass hovering over the page: translucent, so what's behind it
 // ghosts through, lit along its top edge, and floating on two stacked shadows
-// — a tight one for contact and a wide one for height.
+// — a tight one for contact and a wide one for height. White in both schemes:
+// on the dark it is the one light surface, which is what makes it read as the
+// app's chrome; on white its shadows lift it off the page.
 export const NAV_BAR = {
   /** Panel fill, top to bottom. Not opaque: the page shows through. */
   glassTop: 'rgba(255, 255, 255, 0.95)',
@@ -267,21 +425,6 @@ export const NAV_BAR = {
   /** The disc behind the selected glyph — shape carrying what colour alone did. */
   activeSurface: 'rgba(244, 117, 58, 0.10)',
   inactiveIcon: '#9A9A93',
-};
-
-/** Kept as a two-stop "gradient" so existing call sites need no changes. */
-export const ACCENT_GRADIENT = {
-  colors: ['#14150F', '#14150F'] as const,
-  start: { x: 0, y: 0 },
-  end: { x: 1, y: 1 },
-};
-
-// Priority pill palette (task form + task cards), drawn from the same tiles.
-export type Priority = 'Low' | 'Medium' | 'High';
-export const PRIORITY_COLORS: Record<Priority, { color: string; bg: string }> = {
-  Low: { color: TILE_INK.green, bg: TILES.green },
-  Medium: { color: TILE_INK.yellow, bg: TILES.yellow },
-  High: { color: '#C0483C', bg: '#F6D9D2' },
 };
 
 /** Extra bottom room on scroll content so it clears the bar *and* its raised +. */

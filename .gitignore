@@ -5,6 +5,7 @@ node_modules/
 .expo/
 dist/
 web-build/
+.qa/
 
 # Backend local data
 backend/data/

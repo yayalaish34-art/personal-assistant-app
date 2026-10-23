@@ -174,3 +174,102 @@ export async function findImpossibleLeg(
 
   return null;
 }
+
+// ── Nearby places via OpenStreetMap Overpass ────────────────────────────────
+
+const OVERPASS_URL = 'https://overpass-api.de/api/interpreter';
+const OVERPASS_TIMEOUT_MS = 6_000;
+
+const CATEGORY_TAGS: Record<string, string[]> = {
+  shopping:     ['"shop"="mall"', '"shop"="department_store"', '"shop"="supermarket"'],
+  supermarket:  ['"shop"="supermarket"'],
+  mall:         ['"shop"="mall"', '"shop"="department_store"'],
+  restaurant:   ['"amenity"="restaurant"'],
+  cafe:         ['"amenity"="cafe"'],
+  pharmacy:     ['"amenity"="pharmacy"'],
+  gas_station:  ['"amenity"="fuel"'],
+  gym:          ['"leisure"="fitness_centre"'],
+  park:         ['"leisure"="park"'],
+  hospital:     ['"amenity"="hospital"'],
+  bank:         ['"amenity"="bank"'],
+  hotel:        ['"tourism"="hotel"'],
+};
+
+export interface NearbyPlace {
+  name: string;
+  category: string;
+  distanceKm: number;
+  latitude: number;
+  longitude: number;
+}
+
+export async function searchNearby(
+  center: Point,
+  category: string,
+  radiusMeters = 3000,
+  limit = 8,
+): Promise<NearbyPlace[]> {
+  const tags = CATEGORY_TAGS[category];
+  if (!tags) return [];
+
+  const unions = tags
+    .flatMap((tag) => [
+      `node[${tag}](around:${radiusMeters},${center.latitude},${center.longitude});`,
+      `way[${tag}](around:${radiusMeters},${center.latitude},${center.longitude});`,
+    ])
+    .join('\n');
+
+  const query = `[out:json][timeout:5];(\n${unions}\n);out center ${limit * 2};`;
+
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), OVERPASS_TIMEOUT_MS);
+  try {
+    const res = await fetch(OVERPASS_URL, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+      body: `data=${encodeURIComponent(query)}`,
+      signal: controller.signal,
+    });
+    if (!res.ok) return [];
+
+    const body = (await res.json()) as {
+      elements?: Array<{
+        tags?: Record<string, string>;
+        lat?: number;
+        lon?: number;
+        center?: { lat: number; lon: number };
+      }>;
+    };
+
+    const seen = new Set<string>();
+    const results: NearbyPlace[] = [];
+
+    for (const el of body.elements ?? []) {
+      const name = el.tags?.name;
+      if (!name) continue;
+      const key = name.toLowerCase();
+      if (seen.has(key)) continue;
+      seen.add(key);
+
+      const lat = el.lat ?? el.center?.lat;
+      const lon = el.lon ?? el.center?.lon;
+      if (lat == null || lon == null) continue;
+
+      results.push({
+        name,
+        category,
+        distanceKm: Math.round(distanceKm(center, { latitude: lat, longitude: lon }) * 10) / 10,
+        latitude: lat,
+        longitude: lon,
+      });
+    }
+
+    results.sort((a, b) => a.distanceKm - b.distanceKm);
+    return results.slice(0, limit);
+  } catch (err) {
+    logger.warn({ err, category }, 'nearby search failed');
+    return [];
+  } finally {
+    clearTimeout(timer);
+  }
+}

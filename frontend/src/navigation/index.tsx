@@ -1,8 +1,10 @@
 import { useEffect, useMemo, useRef } from 'react';
-import { View, Pressable, StyleSheet, Animated, Easing, useWindowDimensions } from 'react-native';
+import { View, StyleSheet, Animated, Easing, useWindowDimensions } from 'react-native';
+import { Pressable } from '../components/motion';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { createBottomTabNavigator, type BottomTabBarProps } from '@react-navigation/bottom-tabs';
 import { createNativeStackNavigator } from '@react-navigation/native-stack';
+import { createNavigationContainerRef } from '@react-navigation/native';
 import * as Haptics from 'expo-haptics';
 import { House, Calendar, ShoppingCart, Wallet, Mic } from 'lucide-react-native';
 import { LinearGradient } from 'expo-linear-gradient';
@@ -15,7 +17,7 @@ import Svg, {
   Stop,
 } from 'react-native-svg';
 
-import { colors, NAV_BAR, IRIDESCENT } from '../theme';
+import { colors, NAV_BAR, IRIDESCENT, NIGHT, themed } from '../theme';
 import { t } from '../lib/i18n';
 import { playTapSound } from '../lib/tapSound';
 import TodayScreen from '../screens/TodayScreen';
@@ -25,6 +27,31 @@ import FinanceScreen from '../screens/FinanceScreen';
 import SettingsScreen from '../screens/SettingsScreen';
 import EntryFormScreen from '../screens/EntryFormScreen';
 import AssistantScreen from '../screens/AssistantScreen';
+import StatsScreen, { type StatsKind } from '../screens/StatsScreen';
+
+/**
+ * A ref onto the running navigation container, so code outside a screen — the
+ * feature tour that rides on top of the whole tree — can jump the reader to a
+ * specific tab or open a specific screen. `navigationRef.isReady()` guards
+ * every call, because the tree may not have mounted yet on the first tick.
+ */
+export const navigationRef = createNavigationContainerRef();
+
+/**
+ * Jump to a top-level tab. Wrapped so callers do not have to know about the
+ * nested tabs navigator or write the `screen:` param by hand.
+ *
+ * The `any` cast on `navigate` is deliberate: this ref is typed as any-route
+ * by `createNavigationContainerRef` (the constructor takes no generic here,
+ * so react-navigation cannot narrow the arguments), and TypeScript rejects
+ * every literal form of `(name, params)` against that signature.
+ */
+export function goToTab(name: 'Today' | 'Calendar' | 'Shopping' | 'Finance') {
+  if (!navigationRef.isReady()) return;
+  (navigationRef as unknown as { navigate: (n: string, p: unknown) => void }).navigate('Tabs', {
+    screen: name,
+  });
+}
 
 export type RootStackParamList = {
   Tabs: undefined;
@@ -36,6 +63,8 @@ export type RootStackParamList = {
   // language or the sleep hours the assistant schedules around, so it stays
   // in the stack behind the gear on Finance rather than being deleted.
   Settings: undefined;
+  // Full statistics: one screen reused for finance, calendar and shopping.
+  Stats: { kind: StatsKind };
 };
 
 const Tab = createBottomTabNavigator();
@@ -161,7 +190,7 @@ function TabGlyph({ Icon, active }: { Icon: typeof House; active: boolean }) {
           end={{ x: 0.9, y: 0.95 }}
           style={styles.tabDisc}
         >
-          <Icon color={colors.text} fill="rgba(255,255,255,0.28)" size={23} strokeWidth={2.2} />
+          <Icon color={NIGHT.glyph} fill="rgba(255,255,255,0.28)" size={23} strokeWidth={2.2} />
         </LinearGradient>
       ) : (
         <View style={styles.tabDisc}>
@@ -310,7 +339,7 @@ function BottomBar({ state, descriptors, navigation }: BottomTabBarProps) {
           ]}
         />
         <Animated.View style={[styles.fabFillWrap, { transform: [{ scale: pop }] }]}>
-          {/* The green-blue-yellow sweep, with ink on top — the
+          {/* The green-blue-yellow sweep, with dark ink on top — the
               pastels are light enough that a white glyph would wash out. */}
           <LinearGradient
             colors={IRIDESCENT}
@@ -318,7 +347,7 @@ function BottomBar({ state, descriptors, navigation }: BottomTabBarProps) {
             end={{ x: 0.9, y: 0.95 }}
             style={styles.fabFill}
           >
-            <Mic color={colors.text} size={26} strokeWidth={2.5} />
+            <Mic color={NIGHT.glyph} size={26} strokeWidth={2.5} />
           </LinearGradient>
         </Animated.View>
       </Pressable>
@@ -384,7 +413,14 @@ function Tabs() {
   return (
     <Tab.Navigator
       tabBar={(props) => <BottomBar {...props} />}
-      screenOptions={{ headerShown: false, sceneStyle: { backgroundColor: colors.bg } }}
+      screenOptions={{
+        headerShown: false,
+        sceneStyle: { backgroundColor: colors.bg },
+        // Pages slide a little toward the side the tab you pressed is on, so
+        // switching tabs moves through the app rather than cutting between
+        // pictures of it. Each page then builds itself in (see `PageReveal`).
+        animation: 'shift',
+      }}
     >
       <Tab.Screen name="Today" component={TodayScreen} options={{ title: t('tab.home') }} />
       <Tab.Screen
@@ -412,6 +448,9 @@ export default function RootNavigator() {
       screenOptions={{
         headerShown: false,
         contentStyle: { backgroundColor: colors.bg },
+        // Sheets rise from the bottom on both platforms. iOS does this for a
+        // modal already; Android's default is a fade that reads as a cut.
+        animation: 'slide_from_bottom',
       }}
     >
       <Stack.Screen name="Tabs" component={Tabs} />
@@ -431,74 +470,81 @@ export default function RootNavigator() {
         component={SettingsScreen}
         options={{ presentation: 'modal' }}
       />
+      <Stack.Screen
+        name="Stats"
+        component={StatsScreen}
+        options={{ presentation: 'modal' }}
+      />
     </Stack.Navigator>
   );
 }
 
-const styles = StyleSheet.create({
-  wrapper: {
-    position: 'absolute',
-    insetInlineStart: 0,
-    insetInlineEnd: 0,
-    bottom: 0,
-    paddingHorizontal: SIDE_MARGIN,
-  },
-  bar: {
-    height: BAR_HEIGHT,
-    flexDirection: 'row',
-    alignItems: 'center',
-  },
-  canvas: { position: 'absolute' },
-  tab: {
-    flex: 1,
-    height: BAR_HEIGHT,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  tabDisc: {
-    width: 40,
-    height: 40,
-    borderRadius: 13,
-    alignItems: 'center',
-    justifyContent: 'center',
-    overflow: 'hidden',
-  },
-  notchGap: { width: SHOULDER_X * 2 },
-  fab: {
-    alignSelf: 'center',
-    // Pulls the bar back up under the button until only FAB_LIFT of the
-    // button's radius is left showing above the bar's top edge.
-    marginBottom: -(FAB_R + FAB_LIFT),
-    zIndex: 2,
-    width: FAB_SIZE,
-    height: FAB_SIZE,
-    borderRadius: FAB_R,
-    backgroundColor: IRIDESCENT[1],
-    // Its own glow, in its own colour — the button floats above the panel the
-    // way the panel floats above the page. Kept tight: a wide one spills into
-    // the gap around the scoop and muddies the edge the scoop is there to make.
-    shadowColor: IRIDESCENT[1],
-    shadowOffset: { width: 0, height: 6 },
-    shadowOpacity: 0.45,
-    shadowRadius: 11,
-    elevation: 10,
-  },
-  fabPressed: { transform: [{ scale: 0.94 }], shadowOpacity: 0.2 },
-  fabRing: {
-    position: 'absolute',
-    top: 0,
-    insetInlineStart: 0,
-    insetInlineEnd: 0,
-    bottom: 0,
-    borderRadius: FAB_R,
-    backgroundColor: IRIDESCENT[1],
-  },
-  fabFillWrap: { width: '100%', height: '100%' },
-  fabFill: {
-    width: '100%',
-    height: '100%',
-    borderRadius: FAB_R,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-});
+const styles = themed(() =>
+  StyleSheet.create({
+    wrapper: {
+      position: 'absolute',
+      insetInlineStart: 0,
+      insetInlineEnd: 0,
+      bottom: 0,
+      paddingHorizontal: SIDE_MARGIN,
+    },
+    bar: {
+      height: BAR_HEIGHT,
+      flexDirection: 'row',
+      alignItems: 'center',
+    },
+    canvas: { position: 'absolute' },
+    tab: {
+      flex: 1,
+      height: BAR_HEIGHT,
+      alignItems: 'center',
+      justifyContent: 'center',
+    },
+    tabDisc: {
+      width: 40,
+      height: 40,
+      borderRadius: 13,
+      alignItems: 'center',
+      justifyContent: 'center',
+      overflow: 'hidden',
+    },
+    notchGap: { width: SHOULDER_X * 2 },
+    fab: {
+      alignSelf: 'center',
+      // Pulls the bar back up under the button until only FAB_LIFT of the
+      // button's radius is left showing above the bar's top edge.
+      marginBottom: -(FAB_R + FAB_LIFT),
+      zIndex: 2,
+      width: FAB_SIZE,
+      height: FAB_SIZE,
+      borderRadius: FAB_R,
+      backgroundColor: IRIDESCENT[1],
+      // Its own glow, in its own colour — the button floats above the panel the
+      // way the panel floats above the page. Kept tight: a wide one spills into
+      // the gap around the scoop and muddies the edge the scoop is there to make.
+      shadowColor: IRIDESCENT[1],
+      shadowOffset: { width: 0, height: 6 },
+      shadowOpacity: 0.45,
+      shadowRadius: 11,
+      elevation: 10,
+    },
+    fabPressed: { shadowOpacity: 0.2 },
+    fabRing: {
+      position: 'absolute',
+      top: 0,
+      insetInlineStart: 0,
+      insetInlineEnd: 0,
+      bottom: 0,
+      borderRadius: FAB_R,
+      backgroundColor: IRIDESCENT[1],
+    },
+    fabFillWrap: { width: '100%', height: '100%' },
+    fabFill: {
+      width: '100%',
+      height: '100%',
+      borderRadius: FAB_R,
+      alignItems: 'center',
+      justifyContent: 'center',
+    },
+  }),
+);

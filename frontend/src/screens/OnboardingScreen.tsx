@@ -1,10 +1,10 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState, type ReactNode } from 'react';
 import {
+  Animated,
   ScrollView,
   View,
   Text,
   TextInput,
-  Pressable,
   StyleSheet,
   Alert,
   ActivityIndicator,
@@ -31,8 +31,16 @@ import {
 
 import { LinearGradient } from 'expo-linear-gradient';
 
-import { Button } from '../components/ui';
-import { Entrance } from '../components/motion';
+import { Button, Glow, LitDisc } from '../components/ui';
+import {
+  Entrance,
+  PageReveal,
+  PopIn,
+  Pressable,
+  useBreathe,
+  useGrow,
+  useReducedMotion,
+} from '../components/motion';
 import {
   HourRangePicker,
   BufferPicker,
@@ -42,6 +50,7 @@ import {
   CountryPicker,
 } from '../components/ProfileFields';
 import { storage, defaultProfile, type Profile } from '../lib/storage';
+import { PersonalizationField, PERSONALIZATION_QUESTIONS, type PersonalizationQuestion } from '../components/PersonalizationFields';
 import { guessCountry, currencyOf } from '../lib/currency';
 import { api } from '../lib/api';
 import {
@@ -51,11 +60,11 @@ import {
   requestNotifications,
   type PermissionState,
 } from '../lib/permissions';
-import { colors, spacing, font, radius, AURA, IRIDESCENT, type AuraKey } from '../theme';
+import { colors, spacing, font, radius, AURA, NIGHT, type AuraKey, themed } from '../theme';
 import {
   t,
   LANGUAGES,
-  getLanguage,
+  getVoiceLanguage,
   setLanguage,
   isRTL,
   alignStart,
@@ -88,6 +97,7 @@ import {
  */
 
 type StepId =
+  | PersonalizationQuestion
   | 'language'
   | 'intro'
   | 'name'
@@ -105,7 +115,12 @@ const STEPS: StepId[] = [
   'name',
   'place',
   'work',
+  'workDays',
+  'focusPeriod',
+  'primaryGoal',
   'sleep',
+  'sleepQuality',
+  'assistanceStyle',
   'buffer',
   'types',
   'fixed',
@@ -113,12 +128,14 @@ const STEPS: StepId[] = [
 ];
 
 /**
- * The face each step wears.
+ * The face each step wears: a glyph on a tile of its own colour at the head of
+ * the page.
  *
  * Colour cycles through the app's own tiles rather than meaning anything —
  * the same thing `AURA_CYCLE` does on the lists. What it buys is a sense of
- * moving through chapters instead of filling in one long form: nine
- * identically white screens in a row is what made this read as a survey.
+ * moving through chapters instead of filling in one long form: nine identical
+ * screens in a row is what made this read as a survey. The page itself stays
+ * dark on every step, as Home does; the chapter is carried by the tile.
  */
 const STEP_SKIN: Record<StepId, { tile: AuraKey; Icon: typeof Mic }> = {
   language: { tile: 'blue', Icon: Languages },
@@ -131,28 +148,11 @@ const STEP_SKIN: Record<StepId, { tile: AuraKey; Icon: typeof Mic }> = {
   types: { tile: 'green', Icon: CalendarDays },
   fixed: { tile: 'blue', Icon: Pin },
   permissions: { tile: 'yellow', Icon: ShieldCheck },
-};
-
-/**
- * The panel behind each question, as a slice of the app's own gradient.
- *
- * Walking the questionnaire walks the sweep: green at the start, blue through
- * the middle, yellow at the end. It is a pair rather than all three stops so
- * each screen is a calm wash instead of a rainbow, and consecutive steps
- * always share an edge — which is what makes moving between them read as one
- * surface sliding rather than nine unrelated colours.
- */
-const STEP_WASH: Record<StepId, readonly [string, string]> = {
-  language: [IRIDESCENT[0], AURA.green.tint],
-  intro: [AURA.green.tint, IRIDESCENT[0]],
-  name: [IRIDESCENT[0], IRIDESCENT[1]],
-  place: [IRIDESCENT[1], AURA.green.tint],
-  work: [AURA.green.tint, IRIDESCENT[1]],
-  sleep: [IRIDESCENT[1], AURA.blue.tint],
-  buffer: [AURA.blue.tint, IRIDESCENT[1]],
-  types: [IRIDESCENT[1], IRIDESCENT[2]],
-  fixed: [IRIDESCENT[2], AURA.yellow.tint],
-  permissions: [AURA.yellow.tint, IRIDESCENT[2]],
+  workDays: { tile: 'green', Icon: CalendarDays },
+  focusPeriod: { tile: 'blue', Icon: Clock },
+  primaryGoal: { tile: 'yellow', Icon: Sparkles },
+  sleepQuality: { tile: 'blue', Icon: Moon },
+  assistanceStyle: { tile: 'green', Icon: Mic },
 };
 
 /** The three things worth knowing before answering anything. */
@@ -182,13 +182,154 @@ const PERMISSIONS = [
 
 type PermissionKey = (typeof PERMISSIONS)[number]['key'];
 
-/** Tinted icon square, the same glyph treatment the cards use elsewhere. */
+/**
+ * Tinted icon square, the same glyph treatment the cards use elsewhere: the hue
+ * at a whisper over the dark, and its lit ink for the glyph.
+ */
 function IconSquare({ tile, Icon }: { tile: AuraKey; Icon: typeof Mic }) {
   return (
     <View style={[styles.iconSquare, { backgroundColor: AURA[tile].tint }]}>
       <Icon color={AURA[tile].ink} size={19} strokeWidth={2.2} />
     </View>
   );
+}
+
+// ── Moving between steps ────────────────────────────────────────────────────
+
+/** Which way the questionnaire last moved: on, or back. */
+type Heading = 1 | -1;
+
+/** How far a step's pieces travel in from the side, in px. */
+const STEP_TRAVEL = 44;
+/** When the answers start to arrive: a beat behind the question. */
+const ANSWERS_AT = 170;
+/** The gap between one row of answers and the next. */
+const ROW_BEAT = 70;
+
+/**
+ * One piece of a step, arriving from the side the questionnaire is heading:
+ * Continue brings the next page in from ahead, Back brings the last one in from
+ * behind. The same rise both ways made Back read as one more step on.
+ *
+ * Ahead is the end of the line, so it swaps sides with the language — in Hebrew
+ * the next page comes in from the left. Transforms are physical and do not
+ * mirror with the layout, so the side is flipped here by hand.
+ *
+ * Key it on the step: mounting is what plays it.
+ */
+function StepIn({
+  heading,
+  delay = 0,
+  travel = STEP_TRAVEL,
+  children,
+}: {
+  heading: Heading;
+  delay?: number;
+  /** How far in from the side it starts, in px. */
+  travel?: number;
+  children: ReactNode;
+}) {
+  const reduce = useReducedMotion();
+  const v = useRef(new Animated.Value(reduce ? 1 : 0)).current;
+
+  useEffect(() => {
+    if (reduce) {
+      v.setValue(1);
+      return;
+    }
+    // The spring `Entrance` uses, so a step arrives with the same weight a
+    // page does everywhere else — only from the side instead of from below.
+    const anim = Animated.spring(v, {
+      toValue: 1,
+      delay,
+      friction: 8,
+      tension: 46,
+      useNativeDriver: true,
+    });
+    anim.start();
+    return () => anim.stop();
+  }, [delay, reduce, v]);
+
+  const from = travel * heading * (isRTL() ? -1 : 1);
+  return (
+    <Animated.View
+      style={{
+        opacity: v.interpolate({ inputRange: [0, 1], outputRange: [0, 1], extrapolate: 'clamp' }),
+        transform: [{ translateX: v.interpolate({ inputRange: [0, 1], outputRange: [from, 0] }) }],
+      }}
+    >
+      {children}
+    </Animated.View>
+  );
+}
+
+/**
+ * Holds its children back for `delay` ms, then mounts them.
+ *
+ * For a pop that belongs after something has arrived. Picking a language
+ * rebuilds the whole questionnaire, so the chosen chip is always a fresh mount
+ * — and a pop that played at mount would be over, unseen, before the chip's own
+ * entrance had brought it into view. Nothing is held back for someone who has
+ * asked for less motion.
+ */
+function After({ delay, children }: { delay: number; children: ReactNode }) {
+  const reduce = useReducedMotion();
+  const [due, setDue] = useState(false);
+  useEffect(() => {
+    if (reduce) return;
+    const timer = setTimeout(() => setDue(true), delay);
+    return () => clearTimeout(timer);
+  }, [delay, reduce]);
+  return reduce || due ? <>{children}</> : null;
+}
+
+/** How much wider than the rest the pip in hand is. */
+const PIP_NOW_FLEX = 2.2;
+
+/**
+ * One step's pip.
+ *
+ * The one in hand widens as it lights, and the one it took over from narrows
+ * back at the same time, so moving on reads as the light travelling along the
+ * row rather than blinking out in one place and on in another.
+ */
+function Pip({ now, done }: { now: boolean; done: boolean }) {
+  const grow = useGrow(now ? 1 : 0, 0);
+  return (
+    <Animated.View
+      style={[
+        styles.progressPip,
+        done && styles.progressPipDone,
+        { flex: grow.interpolate({ inputRange: [0, 1], outputRange: [1, PIP_NOW_FLEX] }) },
+      ]}
+    >
+      {now ? (
+        // The lit ground and its glow ride in with the fill. Left on the pip
+        // itself, the blue would be there already and the pop would only
+        // show the gradient's top edge.
+        <PopIn from={0.5} style={styles.progressPipLit}>
+          <LinearGradient
+            colors={NIGHT.blue}
+            start={{ x: 0, y: 0 }}
+            end={{ x: 0, y: 1 }}
+            style={[StyleSheet.absoluteFill, styles.progressPipFill]}
+          />
+        </PopIn>
+      ) : null}
+    </Animated.View>
+  );
+}
+
+/**
+ * The closing screen's one button, breathing once everything has arrived.
+ *
+ * Only there. Continue is pressed ten times running under a page that is
+ * already moving on every step, and a pulse on it would nag; Finish is the one
+ * press the whole questionnaire has been leading to.
+ */
+function Breathing({ children }: { children: ReactNode }) {
+  const pulse = useBreathe(1, 1.025, 1600, 1000);
+  return <Animated.View style={{ transform: [{ scale: pulse }] }}>{children}</Animated.View>;
 }
 
 /**
@@ -250,7 +391,11 @@ function PermissionRow({
         {busy ? (
           <ActivityIndicator size="small" color={colors.text} />
         ) : granted ? (
-          <Check color={AURA.green.ink} size={17} strokeWidth={3} />
+          // Springs in the moment the answer comes back yes: the check is the
+          // thing that was just given.
+          <PopIn from={0.3}>
+            <Check color={AURA.green.ink} size={17} strokeWidth={3} />
+          </PopIn>
         ) : (
           <Text style={styles.permBtnText} numberOfLines={1}>
             {label}
@@ -266,7 +411,7 @@ export default function OnboardingScreen({ onDone }: { onDone: () => void }) {
 
   const [index, setIndex] = useState(0);
   const [finished, setFinished] = useState(false);
-  const [lang, setLang] = useState<Language>(getLanguage());
+  const [lang, setLang] = useState<Language>(getVoiceLanguage());
   const [name, setName] = useState('');
   const [profile, setProfile] = useState<Profile>(() => {
     // Pre-answered from the device's timezone, the same way the language
@@ -288,6 +433,8 @@ export default function OnboardingScreen({ onDone }: { onDone: () => void }) {
    * buttons.
    */
   const [refused, setRefused] = useState<PermissionKey[]>([]);
+  /** Only which side the next page slides in from; nothing reads it but motion. */
+  const [heading, setHeading] = useState<Heading>(1);
 
   const step = STEPS[index];
 
@@ -388,12 +535,14 @@ export default function OnboardingScreen({ onDone }: { onDone: () => void }) {
 
   const next = () => {
     Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+    setHeading(1);
     if (index < STEPS.length - 1) setIndex(index + 1);
     else setFinished(true);
   };
 
   const back = () => {
     Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+    setHeading(-1);
     if (finished) setFinished(false);
     else if (index > 0) setIndex(index - 1);
   };
@@ -413,19 +562,44 @@ export default function OnboardingScreen({ onDone }: { onDone: () => void }) {
   if (finished) {
     return (
       <View style={[styles.screen, direction, { paddingTop: insets.top + spacing.lg }]}>
-        <View style={styles.doneBody}>
-          <View style={styles.doneMark}>
-            <Check color={AURA.green.ink} size={34} strokeWidth={2.4} />
+        <Glow />
+        {/* Keyed apart from the steps' reveal, which sits in the same place in
+            the tree: without it React keeps the one instance and the closing
+            page would swap in without playing. */}
+        <PageReveal key="done">
+          <View style={styles.doneBody}>
+            {/* The same lit tick a finished row gets on Home, and it arrives
+                the way that one does when a row is ticked. Its margin is on
+                the pop, so the spring scales about the disc's own centre. */}
+            <PopIn from={0.3} style={styles.doneMark}>
+              <LitDisc colors={NIGHT.discs.tasks} size={76}>
+                <Check color={NIGHT.glyph} size={34} strokeWidth={2.6} />
+              </LitDisc>
+            </PopIn>
+            <Entrance delay={140} from={18}>
+              <Text style={[styles.title, { textAlign: 'center' }]}>
+                {t('onboarding.done.title')}
+              </Text>
+            </Entrance>
+            <Entrance delay={210} from={18}>
+              <Text style={[styles.body, { textAlign: 'center' }]}>
+                {t('onboarding.done.body')}
+              </Text>
+            </Entrance>
           </View>
-          <Text style={[styles.title, { textAlign: 'center' }]}>{t('onboarding.done.title')}</Text>
-          <Text style={[styles.body, { textAlign: 'center' }]}>{t('onboarding.done.body')}</Text>
-        </View>
-        <View style={[styles.footer, { paddingBottom: Math.max(insets.bottom, spacing.md) }]}>
-          <Button label={t('onboarding.finish')} onPress={finish} />
-          <Pressable onPress={back} style={styles.quietBtn}>
-            <Text style={styles.quietBtnText}>{t('onboarding.back')}</Text>
-          </Pressable>
-        </View>
+          <Entrance
+            delay={320}
+            from={16}
+            style={[styles.footer, { paddingBottom: Math.max(insets.bottom, spacing.md) }]}
+          >
+            <Breathing>
+              <Button label={t('onboarding.finish')} onPress={finish} />
+            </Breathing>
+            <Pressable onPress={back} style={styles.quietBtn}>
+              <Text style={styles.quietBtnText}>{t('onboarding.back')}</Text>
+            </Pressable>
+          </Entrance>
+        </PageReveal>
       </View>
     );
   }
@@ -435,379 +609,501 @@ export default function OnboardingScreen({ onDone }: { onDone: () => void }) {
 
   return (
     <View style={[styles.screen, direction]}>
-      {/* The question lives on a tinted panel of its own, and the answers on
-          the paper below it. Before this the two ran together in one column of
-          off-white, which is what made nine screens of it read as a form. */}
-      <LinearGradient
-        key={step}
-        colors={STEP_WASH[step]}
-        start={{ x: 0, y: 0 }}
-        end={{ x: 1, y: 1 }}
-        style={[styles.hero, { paddingTop: insets.top + spacing.md }]}
-      >
-        <View style={styles.heroTop}>
-          <View style={styles.heroBadge}>
-            <StepIcon color={colors.text} size={20} strokeWidth={2.2} />
+      <Glow />
+      {/* Plays when the questionnaire opens and when the closing page hands
+          back to it. Moving between steps does not replay it — the steps slide
+          themselves, below — or the whole page would lurch on every Continue. */}
+      <PageReveal key="steps">
+        {/* The question heads the page in big type, and the answers sit below it
+            on glass. Run together in one column on one ground, nine screens of
+            this read as a form; with the page dark end to end, as Home is, size
+            and the glass are what keep the two apart. */}
+        <View style={[styles.hero, { paddingTop: insets.top + spacing.md }]}>
+          <View style={styles.heroTop}>
+            {/* The chapter's badge pops in with each step, ahead of the question,
+                so the new chapter is seen arriving rather than its tile
+                changing colour in place. */}
+            <PopIn
+              key={`badge-${step}`}
+              from={0.5}
+              style={[styles.heroBadge, { backgroundColor: AURA[skin.tile].tint }]}
+            >
+              <StepIcon color={AURA[skin.tile].ink} size={20} strokeWidth={2.2} />
+            </PopIn>
+            <StepIn key={`count-${step}`} heading={heading} travel={12}>
+              <Text style={styles.stepCount}>
+                {t('onboarding.step', { current: index + 1, total: STEPS.length })}
+              </Text>
+            </StepIn>
           </View>
-          <Text style={styles.stepCount}>
-            {t('onboarding.step', { current: index + 1, total: STEPS.length })}
-          </Text>
-        </View>
 
-        {/* A pip per step, on the tint rather than as a hairline at the very
-            edge of the screen where it was easy to miss entirely. The one in
-            hand is wider, so "where am I" is answerable without counting. */}
-        <View style={styles.progressRow}>
-          {STEPS.map((s, i) => (
-            <View
-              key={s}
-              style={[
-                styles.progressPip,
-                i < index && styles.progressPipDone,
-                i === index && styles.progressPipNow,
-              ]}
-            />
-          ))}
-        </View>
-
-        {/* Keyed on the step, so each question arrives rather than swapping
-            its text in place. */}
-        <Entrance key={`q-${step}`} delay={60} from={16}>
-          <Text style={[styles.title, start]}>{t(`onboarding.${step}.title`)}</Text>
-          <Text style={[styles.body, start]}>{t(`onboarding.${step}.body`)}</Text>
-        </Entrance>
-      </LinearGradient>
-
-      <ScrollView showsVerticalScrollIndicator={false} contentContainerStyle={styles.content}>
-        {/* The answers follow the question in, one beat behind it. */}
-        <Entrance key={`a-${step}`} delay={160} from={22}>
-
-        {step === 'language' ? (
-          <View style={styles.chipWrap}>
-            {(Object.keys(LANGUAGES) as Language[]).map((code) => {
-              const active = code === lang;
-              return (
-                <Pressable
-                  key={code}
-                  onPress={() => pickLanguage(code)}
-                  style={[styles.chip, active && styles.chipActive]}
-                >
-                  <Text style={[styles.chipText, active && styles.chipTextActive]}>
-                    {LANGUAGES[code].native}
-                  </Text>
-                </Pressable>
-              );
-            })}
-          </View>
-        ) : null}
-
-        {step === 'intro' ? (
-          <View style={styles.introList}>
-            {INTRO_POINTS.map(({ key, Icon, tile }) => (
-              <View key={key} style={styles.introRow}>
-                <IconSquare tile={tile} Icon={Icon} />
-                <View style={{ flex: 1 }}>
-                  <Text style={[styles.introTitle, start]}>
-                    {t(`onboarding.intro.${key}.title`)}
-                  </Text>
-                  <Text style={[styles.introBody, start]}>
-                    {t(`onboarding.intro.${key}.body`)}
-                  </Text>
-                </View>
-              </View>
+          {/* A pip per step, under the question's head rather than as a hairline
+              at the very edge of the screen where it was easy to miss entirely.
+              The one in hand is wider and lit like the chosen day on Home, so
+              "where am I" is answerable without counting; the ones behind it
+              keep a dimmer blue, so the trail reads as ground covered. */}
+          <View style={styles.progressRow}>
+            {STEPS.map((s, i) => (
+              <Pip key={s} now={i === index} done={i < index} />
             ))}
           </View>
-        ) : null}
 
-        {step === 'name' ? (
-          <TextInput
-            value={name}
-            onChangeText={setName}
-            placeholder={t('profile.yourName')}
-            placeholderTextColor={colors.textMuted}
-            style={[styles.input, start]}
-            autoFocus
-            returnKeyType="next"
-            onSubmitEditing={next}
-          />
-        ) : null}
-
-        {step === 'place' ? (
-          <CountryPicker
-            country={profile.country}
-            currency={profile.currency}
-            onChange={({ country, currency }) => patch({ country, currency })}
-          />
-        ) : null}
-
-        {step === 'work' ? (
-          <HourRangePicker
-            from={profile.workStartHour}
-            to={profile.workEndHour}
-            onFrom={(workStartHour) => patch({ workStartHour })}
-            onTo={(workEndHour) => patch({ workEndHour })}
-            tile="green"
-          />
-        ) : null}
-
-        {step === 'sleep' ? (
-          <>
-            <Text style={[styles.sleepPrompt, start]}>
-              {t('onboarding.sleep.genderPrompt')}
-            </Text>
-            <GenderPicker value={profile.gender} onChange={(gender) => patch({ gender })} />
-
-            <HourRangePicker
-              from={profile.sleepStartHour}
-              to={profile.sleepEndHour}
-              onFrom={(sleepStartHour) => patch({ sleepStartHour })}
-              onTo={(sleepEndHour) => patch({ sleepEndHour })}
-              tile="blue"
-            />
-
-            <SleepInsight
-              gender={profile.gender}
-              startHour={profile.sleepStartHour}
-              endHour={profile.sleepEndHour}
-            />
-          </>
-        ) : null}
-
-        {step === 'buffer' ? (
-          <BufferPicker
-            value={profile.bufferMinutes}
-            onChange={(bufferMinutes) => patch({ bufferMinutes })}
-          />
-        ) : null}
-
-        {step === 'types' ? (
-          <EventTypePicker
-            value={profile.eventTypes}
-            onChange={(eventTypes) => patch({ eventTypes })}
-          />
-        ) : null}
-
-        {step === 'fixed' ? (
-          <TextInput
-            value={profile.fixedCommitments}
-            onChangeText={(fixedCommitments) => patch({ fixedCommitments })}
-            placeholder={t('onboarding.fixed.placeholder')}
-            placeholderTextColor={colors.textMuted}
-            style={[styles.input, styles.inputTall, start]}
-            multiline
-            textAlignVertical="top"
-          />
-        ) : null}
-
-        {step === 'permissions' ? (
-          <View style={styles.introList}>
-            {PERMISSIONS.map(({ key, Icon, tile }) =>
-              // A permission the platform cannot grant is not offered. On web
-              // there is no recorder module to ask, and a button that can only
-              // fail is worse than no button.
-              permissions[key] === 'unavailable' ? null : (
-                <PermissionRow
-                  key={key}
-                  Icon={Icon}
-                  tile={tile}
-                  title={t(`onboarding.permissions.${key}.title`)}
-                  body={t(`onboarding.permissions.${key}.body`)}
-                  state={permissions[key]}
-                  refused={refused.includes(key)}
-                  busy={asking === key}
-                  onPress={() => askFor(key)}
-                />
-              ),
-            )}
-            <Text style={[styles.permFoot, start]}>{t('onboarding.permissions.optional')}</Text>
-          </View>
-        ) : null}
-        </Entrance>
-      </ScrollView>
-
-      <View style={[styles.footer, { paddingBottom: Math.max(insets.bottom, spacing.md) }]}>
-        <Button label={t('onboarding.next')} onPress={next} />
-        <View style={styles.footerRow}>
-          {index > 0 ? (
-            <Pressable onPress={back} style={styles.quietBtn}>
-              <Text style={styles.quietBtnText}>{t('onboarding.back')}</Text>
-            </Pressable>
-          ) : (
-            <View />
-          )}
-          <Pressable onPress={skip} style={styles.quietBtn}>
-            <Text style={styles.quietBtnText}>{t('onboarding.skip')}</Text>
-          </Pressable>
+          {/* Keyed on the step, so each question arrives rather than swapping
+              its text in place — the question first, what it means a beat
+              after. */}
+          <StepIn key={`title-${step}`} heading={heading} delay={60}>
+            <Text style={[styles.title, start]}>{t(`onboarding.${step}.title`)}</Text>
+          </StepIn>
+          <StepIn key={`body-${step}`} heading={heading} delay={115}>
+            <Text style={[styles.body, start]}>{t(`onboarding.${step}.body`)}</Text>
+          </StepIn>
         </View>
-      </View>
+
+        <ScrollView showsVerticalScrollIndicator={false} contentContainerStyle={styles.content}>
+          {/* The answers follow the question in, one beat behind it, and a list
+              of them comes in row by row. Each step's answers are their own
+              slot below, so a new step always mounts — which is what plays them. */}
+
+          {step === 'language' ? (
+            <View style={styles.chipWrap}>
+              {(Object.keys(LANGUAGES) as Language[]).map((code, i) => {
+                const active = code === lang;
+                // A quick ripple through the chips in reading order; there are
+                // two dozen of them, so the beat is short.
+                const arrives = ANSWERS_AT + i * 12;
+                return (
+                  <StepIn key={code} heading={heading} delay={arrives}>
+                    <Pressable
+                      onPress={() => pickLanguage(code)}
+                      style={[styles.chip, active && styles.chipActive]}
+                    >
+                      {active ? (
+                        // Lit once the chip has landed. Choosing rebuilds the
+                        // page in the new language, so this is the moment the
+                        // choice is seen to take.
+                        <After delay={arrives + 160}>
+                          <PopIn style={styles.chipLit}>
+                            <LinearGradient
+                              colors={NIGHT.blue}
+                              start={{ x: 0, y: 0 }}
+                              end={{ x: 0, y: 1 }}
+                              // Rounded itself rather than clipped by the chip: a
+                              // clip on iOS takes the chip's glow with it.
+                              style={[StyleSheet.absoluteFill, styles.chipFill]}
+                            />
+                          </PopIn>
+                        </After>
+                      ) : null}
+                      <Text style={[styles.chipText, active && styles.chipTextActive]}>
+                        {LANGUAGES[code].native}
+                      </Text>
+                    </Pressable>
+                  </StepIn>
+                );
+              })}
+            </View>
+          ) : null}
+
+          {step === 'intro' ? (
+            <View style={styles.introList}>
+              {INTRO_POINTS.map(({ key, Icon, tile }, i) => (
+                <StepIn key={key} heading={heading} delay={ANSWERS_AT + i * ROW_BEAT}>
+                  <View style={styles.introRow}>
+                    <IconSquare tile={tile} Icon={Icon} />
+                    <View style={{ flex: 1 }}>
+                      <Text style={[styles.introTitle, start]}>
+                        {t(`onboarding.intro.${key}.title`)}
+                      </Text>
+                      <Text style={[styles.introBody, start]}>
+                        {t(`onboarding.intro.${key}.body`)}
+                      </Text>
+                    </View>
+                  </View>
+                </StepIn>
+              ))}
+            </View>
+          ) : null}
+
+          {step === 'name' ? (
+            <StepIn heading={heading} delay={ANSWERS_AT}>
+              <TextInput
+                value={name}
+                onChangeText={setName}
+                placeholder={t('profile.yourName')}
+                placeholderTextColor={colors.textMuted}
+                selectionColor={NIGHT.blue[0]}
+                style={[styles.input, start]}
+                autoFocus
+                returnKeyType="next"
+                onSubmitEditing={next}
+              />
+            </StepIn>
+          ) : null}
+
+          {step === 'place' ? (
+            <StepIn heading={heading} delay={ANSWERS_AT}>
+              <CountryPicker
+                country={profile.country}
+                currency={profile.currency}
+                onChange={({ country, currency }) => patch({ country, currency })}
+              />
+            </StepIn>
+          ) : null}
+
+          {step === 'work' ? (
+            <StepIn heading={heading} delay={ANSWERS_AT}>
+              <HourRangePicker
+                from={profile.workStartHour}
+                to={profile.workEndHour}
+                onFrom={(workStartHour) => patch({ workStartHour })}
+                onTo={(workEndHour) => patch({ workEndHour })}
+                tile="green"
+              />
+            </StepIn>
+          ) : null}
+
+          {PERSONALIZATION_QUESTIONS.includes(step as PersonalizationQuestion) ? (
+            <StepIn key={step} heading={heading} delay={ANSWERS_AT}>
+              <PersonalizationField question={step as PersonalizationQuestion} profile={profile} onChange={patch} />
+            </StepIn>
+          ) : null}
+
+          {step === 'sleep' ? (
+            <>
+              <StepIn heading={heading} delay={ANSWERS_AT}>
+                <Text style={[styles.sleepPrompt, start]}>
+                  {t('onboarding.sleep.genderPrompt')}
+                </Text>
+                <GenderPicker value={profile.gender} onChange={(gender) => patch({ gender })} />
+              </StepIn>
+
+              <StepIn heading={heading} delay={ANSWERS_AT + ROW_BEAT}>
+                <HourRangePicker
+                  from={profile.sleepStartHour}
+                  to={profile.sleepEndHour}
+                  onFrom={(sleepStartHour) => patch({ sleepStartHour })}
+                  onTo={(sleepEndHour) => patch({ sleepEndHour })}
+                  tile="blue"
+                />
+              </StepIn>
+
+              <StepIn heading={heading} delay={ANSWERS_AT + ROW_BEAT * 2}>
+                <SleepInsight
+                  gender={profile.gender}
+                  startHour={profile.sleepStartHour}
+                  endHour={profile.sleepEndHour}
+                />
+              </StepIn>
+            </>
+          ) : null}
+
+          {step === 'buffer' ? (
+            <StepIn heading={heading} delay={ANSWERS_AT}>
+              <BufferPicker
+                value={profile.bufferMinutes}
+                onChange={(bufferMinutes) => patch({ bufferMinutes })}
+              />
+            </StepIn>
+          ) : null}
+
+          {step === 'types' ? (
+            <StepIn heading={heading} delay={ANSWERS_AT}>
+              <EventTypePicker
+                value={profile.eventTypes}
+                onChange={(eventTypes) => patch({ eventTypes })}
+              />
+            </StepIn>
+          ) : null}
+
+          {step === 'fixed' ? (
+            <StepIn heading={heading} delay={ANSWERS_AT}>
+              <TextInput
+                value={profile.fixedCommitments}
+                onChangeText={(fixedCommitments) => patch({ fixedCommitments })}
+                placeholder={t('onboarding.fixed.placeholder')}
+                placeholderTextColor={colors.textMuted}
+                selectionColor={NIGHT.blue[0]}
+                style={[styles.input, styles.inputTall, start]}
+                multiline
+                textAlignVertical="top"
+              />
+            </StepIn>
+          ) : null}
+
+          {step === 'permissions' ? (
+            <View style={styles.introList}>
+              {PERMISSIONS.map(({ key, Icon, tile }, i) =>
+                // A permission the platform cannot grant is not offered. On web
+                // there is no recorder module to ask, and a button that can only
+                // fail is worse than no button.
+                permissions[key] === 'unavailable' ? null : (
+                  <StepIn key={key} heading={heading} delay={ANSWERS_AT + i * ROW_BEAT}>
+                    <PermissionRow
+                      Icon={Icon}
+                      tile={tile}
+                      title={t(`onboarding.permissions.${key}.title`)}
+                      body={t(`onboarding.permissions.${key}.body`)}
+                      state={permissions[key]}
+                      refused={refused.includes(key)}
+                      busy={asking === key}
+                      onPress={() => askFor(key)}
+                    />
+                  </StepIn>
+                ),
+              )}
+              <StepIn heading={heading} delay={ANSWERS_AT + PERMISSIONS.length * ROW_BEAT}>
+                <Text style={[styles.permFoot, start]}>
+                  {t('onboarding.permissions.optional')}
+                </Text>
+              </StepIn>
+            </View>
+          ) : null}
+        </ScrollView>
+
+        {/* The footer stays put between steps: it is the same three buttons on
+            every page, and sliding them with the question would make Continue
+            move out from under a thumb that is about to press it again. */}
+        <View style={[styles.footer, { paddingBottom: Math.max(insets.bottom, spacing.md) }]}>
+          <Button label={t('onboarding.next')} onPress={next} />
+          <View style={styles.footerRow}>
+            {index > 0 ? (
+              // Pops in on the first step it has somewhere to go back to.
+              <PopIn from={0.8}>
+                <Pressable onPress={back} style={styles.quietBtn}>
+                  <Text style={styles.quietBtnText}>{t('onboarding.back')}</Text>
+                </Pressable>
+              </PopIn>
+            ) : (
+              <View />
+            )}
+            <Pressable onPress={skip} style={styles.quietBtn}>
+              <Text style={styles.quietBtnText}>{t('onboarding.skip')}</Text>
+            </Pressable>
+          </View>
+        </View>
+      </PageReveal>
     </View>
   );
 }
 
-const styles = StyleSheet.create({
-  screen: { flex: 1, backgroundColor: colors.bg },
+/**
+ * A glass card: a whisper over the page, with a hairline edge.
+ *
+ * The colours are getters, read each time the object is spread: a sheet built
+ * for the other scheme has to pick up the glass in force, not the one this
+ * module saw when it was imported.
+ */
+const glass = {
+  get backgroundColor() {
+    return NIGHT.card;
+  },
+  borderWidth: StyleSheet.hairlineWidth,
+  get borderColor() {
+    return NIGHT.line;
+  },
+};
 
-  // The tint runs to both edges and curves only at the foot, so it reads as
-  // the top of the page rather than as a card floating on it.
-  hero: {
-    paddingHorizontal: spacing.md + 4,
-    paddingBottom: spacing.lg,
-    borderBottomStartRadius: 30,
-    borderBottomEndRadius: 30,
-  },
-  heroTop: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    marginBottom: spacing.md,
-  },
-  heroBadge: {
-    width: 42,
-    height: 42,
-    borderRadius: 14,
-    backgroundColor: colors.surface,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
+const styles = themed(() =>
+  StyleSheet.create({
+    screen: { flex: 1, backgroundColor: colors.bg },
 
-  progressRow: { flexDirection: 'row', gap: 5, marginBottom: spacing.md },
-  progressPip: {
-    flex: 1,
-    height: 4,
-    borderRadius: 2,
-    // On a tinted ground a grey pip disappears; ink at low opacity does not.
-    backgroundColor: 'rgba(20, 21, 15, 0.14)',
-  },
-  progressPipDone: { backgroundColor: 'rgba(20, 21, 15, 0.45)' },
-  // The one in hand is wider as well as darker, so the position reads without
-  // counting pips.
-  progressPipNow: { flex: 2.2, backgroundColor: colors.primary },
-  stepCount: { ...font(600), fontSize: 12.5, color: colors.text, opacity: 0.55 },
+    hero: {
+      paddingHorizontal: spacing.md + 4,
+      paddingBottom: spacing.sm,
+    },
+    heroTop: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      justifyContent: 'space-between',
+      marginBottom: spacing.md,
+    },
+    /** Its ground is the step's tile, set where it is drawn. */
+    heroBadge: {
+      width: 42,
+      height: 42,
+      borderRadius: 14,
+      alignItems: 'center',
+      justifyContent: 'center',
+    },
 
-  content: {
-    paddingHorizontal: spacing.md + 4,
-    paddingTop: spacing.lg,
-    paddingBottom: spacing.lg,
-    // Short answers sit in the middle of the space rather than clinging to the
-    // top of it. Half the steps are one input or three rows, and left at the
-    // top they hung under the panel with a screen of nothing beneath them.
-    flexGrow: 1,
-    justifyContent: 'center',
-  },
-  title: {
-    fontSize: 30,
-    ...font(700),
-    color: colors.text,
-    letterSpacing: -0.7,
-    lineHeight: 36,
-    marginBottom: 6,
-  },
-  // Ink at reduced opacity rather than the muted grey: on a tinted ground the
-  // grey turns murky, and the two greys stop looking like one family.
-  body: {
-    fontSize: 15,
-    ...font(500),
-    color: colors.text,
-    opacity: 0.66,
-    lineHeight: 21,
-  },
+    progressRow: { flexDirection: 'row', gap: 5, marginBottom: spacing.md + 4 },
+    progressPip: {
+      flex: 1,
+      height: 4,
+      borderRadius: 2,
+      backgroundColor: NIGHT.cardAlt,
+    },
+    progressPipDone: { backgroundColor: NIGHT.blue[1], opacity: 0.5 },
+    // The one in hand is wider as well as lit (see `PIP_NOW_FLEX`), so the
+    // position reads without counting pips. The glow is its own blue, as the
+    // chosen day's is on Home. This is the fill that pops in over the pip.
+    progressPipLit: {
+      position: 'absolute',
+      top: 0,
+      bottom: 0,
+      left: 0,
+      right: 0,
+      borderRadius: 2,
+      backgroundColor: NIGHT.blue[1],
+      shadowColor: NIGHT.blue[1],
+      shadowOffset: { width: 0, height: 0 },
+      shadowOpacity: 0.5,
+      shadowRadius: 10,
+    },
+    progressPipFill: { borderRadius: 2 },
+    stepCount: { ...font(600), fontSize: 12.5, color: colors.textMuted },
 
-  chipWrap: { flexDirection: 'row', flexWrap: 'wrap', gap: 8 },
-  chip: {
-    paddingHorizontal: 15,
-    paddingVertical: 11,
-    borderRadius: 50,
-    backgroundColor: colors.surface,
-    // A hairline, so twenty-five of them read as one grid instead of as white
-    // shapes drifting on an almost-white page.
-    borderWidth: 1,
-    borderColor: colors.border,
-  },
-  chipActive: { backgroundColor: colors.primary, borderColor: colors.primary },
-  chipText: { ...font(600), fontSize: 14, color: colors.text },
-  chipTextActive: { color: colors.primaryText },
+    content: {
+      paddingHorizontal: spacing.md + 4,
+      paddingTop: spacing.lg,
+      paddingBottom: spacing.lg,
+      // Short answers sit in the middle of the space rather than clinging to the
+      // top of it. Half the steps are one input or three rows, and left at the
+      // top they hung under the question with a screen of nothing beneath them.
+      flexGrow: 1,
+      justifyContent: 'center',
+    },
+    /** The question, set the way Home sets its headline. */
+    title: {
+      fontSize: 32,
+      ...font(700),
+      color: colors.text,
+      letterSpacing: -1,
+      lineHeight: 36,
+      marginBottom: 8,
+    },
+    body: {
+      fontSize: 15,
+      ...font(500),
+      color: colors.textMuted,
+      lineHeight: 21,
+    },
 
-  iconSquare: {
-    width: 40,
-    height: 40,
-    borderRadius: 13,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
+    chipWrap: { flexDirection: 'row', flexWrap: 'wrap', gap: 8 },
+    chip: {
+      ...glass,
+      paddingHorizontal: 15,
+      paddingVertical: 11,
+      borderRadius: 50,
+    },
+    // Lit like the chosen day on Home: the blue from the top, glowing its own
+    // colour. The edge keeps its width, clear, so a chip does not change size
+    // when it is picked.
+    //
+    // The blue and its glow are on the fill (`chipLit`), which springs in, rather
+    // than on the chip, where they would be showing before the pop began. Android
+    // draws its glow from elevation, and that stays on the chip: on the fill it
+    // would lift the blue over the chip's own label.
+    chipActive: {
+      borderColor: 'transparent',
+      shadowColor: NIGHT.blue[1],
+      elevation: 6,
+    },
+    /** A hairline past the chip on every side, over the clear edge the blue used to fill. */
+    chipLit: {
+      position: 'absolute',
+      top: -StyleSheet.hairlineWidth,
+      bottom: -StyleSheet.hairlineWidth,
+      left: -StyleSheet.hairlineWidth,
+      right: -StyleSheet.hairlineWidth,
+      borderRadius: 50,
+      backgroundColor: NIGHT.blue[1],
+      shadowColor: NIGHT.blue[1],
+      shadowOffset: { width: 0, height: 4 },
+      shadowOpacity: 0.5,
+      shadowRadius: 10,
+    },
+    chipFill: { borderRadius: 50 },
+    chipText: { ...font(600), fontSize: 14, color: colors.text },
+    chipTextActive: { ...font(700), color: colors.primaryText },
 
-  // ── Intro and permissions: the same row, one with a button on the end ──
-  introList: { gap: 6 },
-  introRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 13,
-    backgroundColor: colors.surface,
-    borderRadius: radius.md,
-    padding: spacing.md,
-  },
-  introTitle: { ...font(600), fontSize: 15.5, color: colors.text },
-  introBody: { ...font(400), fontSize: 13, color: colors.textMuted, lineHeight: 18, marginTop: 2 },
+    iconSquare: {
+      width: 40,
+      height: 40,
+      borderRadius: 13,
+      alignItems: 'center',
+      justifyContent: 'center',
+    },
 
-  permRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 13,
-    backgroundColor: colors.surface,
-    borderRadius: radius.md,
-    padding: spacing.md,
-  },
-  permTitle: { ...font(600), fontSize: 15.5, color: colors.text },
-  permBody: { ...font(400), fontSize: 13, color: colors.textMuted, lineHeight: 18, marginTop: 2 },
-  permBtn: {
-    minWidth: 62,
-    // Capped so the longer "open settings" label cannot crowd out the reason
-    // for the permission, which is the part that does the persuading.
-    maxWidth: 132,
-    minHeight: 36,
-    paddingHorizontal: 14,
-    borderRadius: 50,
-    alignItems: 'center',
-    justifyContent: 'center',
-    backgroundColor: colors.surfaceAlt,
-  },
-  permBtnDone: { backgroundColor: AURA.green.tint },
-  permBtnText: { ...font(600), fontSize: 13.5, color: colors.text },
-  permFoot: {
-    ...font(400),
-    fontSize: 12.5,
-    color: colors.textMuted,
-    lineHeight: 18,
-    marginTop: spacing.sm,
-  },
+    // ── Intro and permissions: the same row, one with a button on the end ──
+    introList: { gap: 7 },
+    introRow: {
+      ...glass,
+      flexDirection: 'row',
+      alignItems: 'center',
+      gap: 13,
+      borderRadius: 16,
+      padding: spacing.md,
+    },
+    introTitle: { ...font(600), fontSize: 15.5, color: colors.text },
+    introBody: { ...font(400), fontSize: 13, color: colors.textMuted, lineHeight: 18, marginTop: 2 },
 
-  input: {
-    backgroundColor: colors.surface,
-    borderRadius: radius.md,
-    paddingHorizontal: 16,
-    paddingVertical: 16,
-    fontSize: 16,
-    ...font(500),
-    color: colors.text,
-  },
-  inputTall: { minHeight: 110 },
+    permRow: {
+      ...glass,
+      flexDirection: 'row',
+      alignItems: 'center',
+      gap: 13,
+      borderRadius: 16,
+      padding: spacing.md,
+    },
+    permTitle: { ...font(600), fontSize: 15.5, color: colors.text },
+    permBody: { ...font(400), fontSize: 13, color: colors.textMuted, lineHeight: 18, marginTop: 2 },
+    permBtn: {
+      minWidth: 62,
+      // Capped so the longer "open settings" label cannot crowd out the reason
+      // for the permission, which is the part that does the persuading.
+      maxWidth: 132,
+      minHeight: 36,
+      paddingHorizontal: 14,
+      borderRadius: 50,
+      alignItems: 'center',
+      justifyContent: 'center',
+      // Quiet on purpose: Continue is the button the page is asking for.
+      backgroundColor: NIGHT.cardAlt,
+      borderWidth: StyleSheet.hairlineWidth,
+      borderColor: NIGHT.line,
+    },
+    permBtnDone: { backgroundColor: AURA.green.tint },
+    permBtnText: { ...font(600), fontSize: 13.5, color: colors.text },
+    permFoot: {
+      ...font(400),
+      fontSize: 12.5,
+      color: colors.textMuted,
+      lineHeight: 18,
+      marginTop: spacing.sm,
+    },
 
-  sleepPrompt: { ...font(600), fontSize: 13.5, color: colors.textMuted, marginBottom: 8 },
+    /** The same field `Field` draws everywhere else, at the size a question wants. */
+    input: {
+      backgroundColor: colors.surfaceAlt,
+      borderWidth: StyleSheet.hairlineWidth,
+      borderColor: colors.border,
+      borderRadius: radius.md,
+      paddingHorizontal: 16,
+      paddingVertical: 16,
+      fontSize: 16,
+      ...font(500),
+      color: colors.text,
+    },
+    inputTall: { minHeight: 110 },
 
-  // The screen itself no longer pads its sides — the tint has to reach the
-  // edges — so the footer carries its own.
-  footer: { gap: 4, paddingTop: spacing.sm, paddingHorizontal: spacing.md + 4 },
-  footerRow: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' },
-  quietBtn: { paddingVertical: 12, paddingHorizontal: 4 },
-  quietBtnText: { ...font(600), fontSize: 14, color: colors.textMuted },
+    sleepPrompt: { ...font(600), fontSize: 13.5, color: colors.textMuted, marginBottom: 8 },
 
-  doneBody: { flex: 1, alignItems: 'center', justifyContent: 'center', gap: 4 },
-  doneMark: {
-    width: 76,
-    height: 76,
-    borderRadius: 38,
-    backgroundColor: AURA.green.tint,
-    alignItems: 'center',
-    justifyContent: 'center',
-    marginBottom: spacing.md,
-  },
-});
+    // The screen itself does not pad its sides, so the answers can scroll out to
+    // the edges; the head of the page and the footer carry their own.
+    footer: { gap: spacing.sm + 2, paddingTop: spacing.sm, paddingHorizontal: spacing.md + 4 },
+    footerRow: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' },
+    /** Back and skip: glass, sized to the word, a step below Continue. */
+    quietBtn: {
+      ...glass,
+      alignSelf: 'flex-start',
+      paddingVertical: 10,
+      paddingHorizontal: 16,
+      borderRadius: 50,
+    },
+    quietBtnText: { ...font(600), fontSize: 14, color: colors.textMuted },
+
+    doneBody: { flex: 1, alignItems: 'center', justifyContent: 'center', gap: 4 },
+    doneMark: { marginBottom: spacing.md },
+  }),
+);

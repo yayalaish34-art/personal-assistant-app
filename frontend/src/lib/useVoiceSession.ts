@@ -4,10 +4,22 @@ import * as Haptics from 'expo-haptics';
 
 import { uuid } from './api';
 import { t, locale } from './i18n';
+import { startLocationTracking, stopLocationTracking } from './location';
+import { createSpeechActivity } from './speechActivity';
 import {
   applyActions,
+  buildSnapshotWithProfile,
   generateImage,
+  parseCards,
   parseOffer,
+  parseChecklist,
+  parseConfirmation,
+  parseBudget,
+  parseTimeline,
+  parseActions,
+  parseDebt,
+  parseWeather,
+  parseSummary,
   clearConversation,
   loadConversation,
   saveConversation,
@@ -16,6 +28,15 @@ import {
   voiceTurn,
   VoiceUnavailableError,
   type AppliedChange,
+  type CardSet,
+  type ChecklistData,
+  type ConfirmationData,
+  type BudgetData,
+  type TimelineData,
+  type QuickActionsData,
+  type DebtData,
+  type WeatherData,
+  type SummaryData,
   type TurnMessage,
   type TimeOffer,
 } from './voice';
@@ -88,15 +109,15 @@ function getAudio(): AudioApi | null {
 // ── Tuning ──────────────────────────────────────────────────────────────────
 
 /** Above this (dBFS) counts as someone talking rather than room noise. */
-const SPEECH_DB = -38;
+const SPEECH_DB = -35;
 /**
  * How long a pause has to last before her turn starts.
  *
- * Long enough to think in. At 1.4s she answered the gap between "tomorrow
- * at..." and the hour, which is what made talking to her feel like dictating
- * one sentence at a time rather than holding a conversation.
+ * 1.1s is enough to breathe between sentences without feeling sluggish.
+ * Below ~900ms she cuts into "tomorrow at..." before the hour arrives;
+ * above ~1.4s every turn opens with dead air.
  */
-const SILENCE_MS = 2600;
+const SILENCE_MS = 1100;
 /** Don't cut anyone off mid-thought, even if they started quietly. */
 const MIN_LISTEN_MS = 900;
 /** A recording this long is someone who forgot to stop, or a noisy room. */
@@ -106,6 +127,8 @@ const POLL_MS = 150;
 const METERING_GRACE_MS = 1200;
 /** Failures in a row before the conversation is treated as genuinely broken. */
 const MAX_CONSECUTIVE_FAILURES = 3;
+/** After TTS finishes, wait this long before reopening the mic so the room echo dissipates. */
+const POST_SPEAK_MS = 250;
 
 /**
  * The turn the assistant opens with. The server recognises this exact string
@@ -134,6 +157,26 @@ export type Line = {
   offer?: TimeOffer;
   /** Which of them was taken. The line itself is the record of the choice. */
   chosen?: string;
+  /** Structured cards — options, summaries, key points. */
+  cards?: CardSet;
+  /** Which card was tapped, when the set is selectable. */
+  chosenCard?: string;
+  /** Interactive checklist (tasks / shopping). */
+  checklist?: ChecklistData;
+  /** Confirmation of a just-completed action. */
+  confirmation?: ConfirmationData;
+  /** Budget progress bars. */
+  budget?: BudgetData;
+  /** Day timeline. */
+  timeline?: TimelineData;
+  /** Follow-up action chips. */
+  quickActions?: QuickActionsData;
+  /** Debt cards. */
+  debtSummary?: DebtData;
+  /** Weather forecast. */
+  weather?: WeatherData;
+  /** Summary with stats and highlights. */
+  summary?: SummaryData;
   /**
    * When it was said, for the clock under the bubble.
    *
@@ -158,6 +201,12 @@ export interface VoiceSession {
   send: (text: string) => void;
   /** Take one of the offered times and put the meeting there. */
   chooseTime: (lineId: string, iso: string) => void;
+  /** Pick one of the presented cards. */
+  chooseCard: (lineId: string, label: string) => void;
+  /** Tap a checklist item to check it off. */
+  checkItem: (lineId: string, itemId: string) => void;
+  /** Settle a debt from a debt card. */
+  settleDebt: (lineId: string, debtId: string) => void;
   undoLast: () => void;
   /** Forget the thread and start over from a greeting. */
   startOver: () => void;
@@ -255,7 +304,7 @@ export function useVoiceSession(options: {
   }, []);
 
   const speak = useCallback(
-    async (text: string) => {
+    async (text: string, token?: string) => {
       const audio = getAudio();
       if (!audio || !text.trim() || doneRef.current) return;
 
@@ -271,12 +320,8 @@ export function useVoiceSession(options: {
           stopSpeaking();
           resolve();
         };
-        // Published so an interrupt from anywhere can end this turn without
-        // waiting for audio that is never going to finish playing.
         speakFinishRef.current = finish;
 
-        // Playing while the session is still in recording mode comes out of the
-        // earpiece on iOS, at a whisper.
         void audio
           .setAudioModeAsync({ allowsRecording: false, playsInSilentMode: true })
           .catch(() => undefined);
@@ -287,14 +332,13 @@ export function useVoiceSession(options: {
         try {
           const player = (
             audio as unknown as { createAudioPlayer: (source: { uri: string }) => Player }
-          ).createAudioPlayer({ uri: speechUrl(text) });
+          ).createAudioPlayer({ uri: speechUrl(text, token) });
           playerRef.current = player;
           subscription = player.addListener('playbackStatusUpdate', (status) => {
             if (status.didJustFinish) finish();
           });
           player.play();
         } catch {
-          // No voice is survivable — the line is on screen either way.
           finish();
         }
       });
@@ -316,29 +360,42 @@ export function useVoiceSession(options: {
     const audio = getAudio();
     if (!audio || doneRef.current) return null;
 
-    await audio.setAudioModeAsync({ allowsRecording: true, playsInSilentMode: true });
+    let step = 'setAudioMode';
+    let recorder: Recorder;
+    try {
+      await audio.setAudioModeAsync({ allowsRecording: true, playsInSilentMode: true });
 
-    // The recorder class hangs off the native module, not off the package
-    // root: `expo-audio` exports hooks, `createAudioPlayer` and the presets
-    // from its index, and nothing called AudioRecorder. Read from the root it
-    // came back undefined, so every attempt to listen threw here — before the
-    // microphone was ever opened. The greeting still played, because speaking
-    // only needs `createAudioPlayer`, which made it look like a transcription
-    // problem rather than a recorder that never existed.
-    const Ctor = (
-      audio as unknown as { AudioModule?: { AudioRecorder?: new (options: unknown) => Recorder } }
-    ).AudioModule?.AudioRecorder;
-    if (typeof Ctor !== 'function') throw new Error('The audio module loaded without a recorder.');
+      step = 'getRecorder';
+      const Ctor = (
+        audio as unknown as { AudioModule?: { AudioRecorder?: new (options: unknown) => Recorder } }
+      ).AudioModule?.AudioRecorder;
+      if (typeof Ctor !== 'function') throw new Error('AudioRecorder not found on AudioModule');
 
-    const recorder = new Ctor(recordingOptions(audio));
-    recorderRef.current = recorder;
-    await recorder.prepareToRecordAsync();
-    recorder.record();
+      step = 'buildOptions';
+      const preset = {
+        ...audio.RecordingPresets.HIGH_QUALITY,
+        isMeteringEnabled: true,
+      } as unknown as Record<string, unknown>;
+      const opts = recordingOptions(audio);
+
+      step = 'newRecorder';
+      recorder = new Ctor(opts);
+      recorderRef.current = recorder;
+
+      step = 'prepare';
+      await recorder.prepareToRecordAsync(preset);
+
+      step = 'record';
+      recorder.record();
+    } catch (e) {
+      recorderRef.current = null;
+      throw new Error(`[${step}] ${(e as Error)?.message ?? e}`);
+    }
     setPhase('listening');
 
     const startedAt = Date.now();
     let heardSpeech = false;
-    let quietSince: number | null = null;
+    const activity = createSpeechActivity(SPEECH_DB);
     let sawMetering = false;
 
     const reason = await new Promise<'stopped' | 'aborted'>((resolve) => {
@@ -370,15 +427,11 @@ export function useVoiceSession(options: {
         const loudness = Math.min(1, Math.max(0, (db + 60) / 55));
         setLevel(loudness);
 
-        if (db > SPEECH_DB) {
-          heardSpeech = true;
-          quietSince = null;
-          return;
+        const detected = activity.sample(db, Date.now());
+        heardSpeech = detected.heardSpeech;
+        if (heardSpeech && elapsed >= MIN_LISTEN_MS && detected.quietMs > SILENCE_MS) {
+          resolve('stopped');
         }
-        if (!heardSpeech || elapsed < MIN_LISTEN_MS) return;
-
-        if (quietSince === null) quietSince = Date.now();
-        else if (Date.now() - quietSince > SILENCE_MS) resolve('stopped');
       }, POLL_MS);
     });
 
@@ -402,9 +455,9 @@ export function useVoiceSession(options: {
   // ── One full turn ─────────────────────────────────────────────────────────
 
   const runTurn = useCallback(
-    async (said: string): Promise<void> => {
+    async (said: string, prebuilt?: { snapshot: Awaited<ReturnType<typeof buildSnapshotWithProfile>>['snapshot']; profile: unknown }): Promise<void> => {
       setPhase('thinking');
-      const result = await voiceTurn(said, historyRef.current, userName);
+      const result = await voiceTurn(said, historyRef.current, userName, prebuilt);
       if (doneRef.current) return;
 
       // Nothing was made out. She says so and the exchange is forgotten: there
@@ -412,7 +465,9 @@ export function useVoiceSession(options: {
       // again?" sitting in the thread as though it answered something.
       if (result.heard === false) {
         addLine('assistant', result.reply);
-        if (result.reply && result.canSpeak) await speak(result.reply);
+        if (result.reply && result.canSpeak) await speak(result.reply, result.speakToken);
+        // Let room echo dissipate before reopening the microphone.
+        await new Promise((r) => setTimeout(r, POST_SPEAK_MS));
         return;
       }
 
@@ -430,16 +485,53 @@ export function useVoiceSession(options: {
       // speech and the next turn of listening, and she would appear to have
       // frozen. The placeholder goes in now and fills itself later.
       const drawings = result.actions.filter((a) => a.tool === 'create_image');
-      // An offer is not a change to apply; it is a question to put on screen.
-      // The server raises it in place of the create it refused, so there is
-      // nothing to undo and nothing has happened yet.
       const offer = result.actions
         .filter((a) => a.tool === 'offer_times')
         .map((a) => parseOffer(a.arguments ?? {}))
         .find((o): o is TimeOffer => o !== null);
-      const rest = result.actions.filter(
-        (a) => a.tool !== 'create_image' && a.tool !== 'offer_times',
-      );
+      const cards = result.actions
+        .filter((a) => a.tool === 'present_cards')
+        .map((a) => parseCards(a.arguments ?? {}))
+        .find((c): c is CardSet => c !== null);
+      const checklist = result.actions
+        .filter((a) => a.tool === 'present_checklist')
+        .map((a) => parseChecklist(a.arguments ?? {}))
+        .find((c): c is ChecklistData => c !== null);
+      const confirmation = result.actions
+        .filter((a) => a.tool === 'present_confirmation')
+        .map((a) => parseConfirmation(a.arguments ?? {}))
+        .find((c): c is ConfirmationData => c !== null);
+      const budget = result.actions
+        .filter((a) => a.tool === 'present_budget')
+        .map((a) => parseBudget(a.arguments ?? {}))
+        .find((c): c is BudgetData => c !== null);
+      const timeline = result.actions
+        .filter((a) => a.tool === 'present_timeline')
+        .map((a) => parseTimeline(a.arguments ?? {}))
+        .find((c): c is TimelineData => c !== null);
+      const quickActions = result.actions
+        .filter((a) => a.tool === 'present_actions')
+        .map((a) => parseActions(a.arguments ?? {}))
+        .find((c): c is QuickActionsData => c !== null);
+      const debtSummary = result.actions
+        .filter((a) => a.tool === 'present_debt')
+        .map((a) => parseDebt(a.arguments ?? {}))
+        .find((c): c is DebtData => c !== null);
+      const weather = result.actions
+        .filter((a) => a.tool === 'present_weather')
+        .map((a) => parseWeather(a.arguments ?? {}))
+        .find((c): c is WeatherData => c !== null);
+      const summary = result.actions
+        .filter((a) => a.tool === 'present_summary')
+        .map((a) => parseSummary(a.arguments ?? {}))
+        .find((c): c is SummaryData => c !== null);
+      const DISPLAY_TOOLS = new Set([
+        'create_image', 'offer_times', 'present_cards',
+        'present_checklist', 'present_confirmation', 'present_budget',
+        'present_timeline', 'present_actions', 'present_debt',
+        'present_weather', 'present_summary',
+      ]);
+      const rest = result.actions.filter((a) => !DISPLAY_TOOLS.has(a.tool));
 
       for (const draw of drawings) {
         const prompt = typeof draw.arguments?.prompt === 'string' ? draw.arguments.prompt : '';
@@ -478,9 +570,8 @@ export function useVoiceSession(options: {
         }
       }
 
-      if (result.reply || offer) {
-        // One line carries both: what she said, and what there is to tap. They
-        // are the same turn, so splitting them would read as two answers.
+      const hasVisual = offer || cards || checklist || confirmation || budget || timeline || quickActions || debtSummary || weather || summary;
+      if (result.reply || hasVisual) {
         setLines((prev) => [
           ...prev,
           {
@@ -489,9 +580,19 @@ export function useVoiceSession(options: {
             text: result.reply,
             at: Date.now(),
             ...(offer ? { offer } : {}),
+            ...(cards ? { cards } : {}),
+            ...(checklist ? { checklist } : {}),
+            ...(confirmation ? { confirmation } : {}),
+            ...(budget ? { budget } : {}),
+            ...(timeline ? { timeline } : {}),
+            ...(quickActions ? { quickActions } : {}),
+            ...(debtSummary ? { debtSummary } : {}),
+            ...(weather ? { weather } : {}),
+            ...(summary ? { summary } : {}),
           },
         ]);
-        if (result.reply && result.canSpeak) await speak(result.reply);
+        if (result.reply && result.canSpeak) await speak(result.reply, result.speakToken);
+        await new Promise((r) => setTimeout(r, POST_SPEAK_MS));
       }
     },
     [addLine, onChanged, setPhase, speak, userName],
@@ -575,6 +676,8 @@ export function useVoiceSession(options: {
     let cancelled = false;
     doneRef.current = false;
 
+    void startLocationTracking().catch(() => undefined);
+
     (async () => {
       const { granted } = await audio.AudioModule.requestRecordingPermissionsAsync().catch(
         () => ({ granted: false }),
@@ -616,23 +719,22 @@ export function useVoiceSession(options: {
           if (!uri) continue; // silence — keep the mic open
 
           setPhase('thinking');
-          const said = (await transcribe(uri)).trim();
+          // Transcribe and pre-build the snapshot in parallel so the data
+          // is ready the moment the words come back.
+          const [said, prebuilt] = await Promise.all([
+            transcribe(uri).then((t) => t.trim()),
+            buildSnapshotWithProfile(),
+          ]);
           if (cancelled || doneRef.current) break;
 
           if (!said) {
-            // Something was recorded but no words came back. This used to
-            // `continue` in silence, which from the outside is identical to
-            // the app having frozen: the user says a short word, nothing
-            // whatsoever happens, and they reach for the button. Sent as an
-            // empty turn instead, so she answers "say that again?" — the
-            // server recognises it and replies without spending a model call.
             await runTurn('');
             consecutiveFailures = 0;
             continue;
           }
 
           addLine('user', said);
-          await runTurn(said);
+          await runTurn(said, prebuilt);
           consecutiveFailures = 0;
         } catch (e) {
           if (cancelled || doneRef.current) break;
@@ -652,19 +754,14 @@ export function useVoiceSession(options: {
           }
 
           consecutiveFailures += 1;
-          setError((e as Error).message);
-          // The line the user sees says only that the turn was lost, and the
-          // screen shows `error` for nothing but a refused microphone — so
-          // without this the actual reason reached no one, and a recorder that
-          // never loaded looked exactly like a bad connection.
-          console.warn('[voice] turn failed:', (e as Error)?.message ?? e);
+          const msg = (e as Error)?.message ?? String(e);
+          setError(msg);
+          console.warn('[voice] turn failed:', msg);
           if (consecutiveFailures >= MAX_CONSECUTIVE_FAILURES) {
             setPhase('stopped');
             break;
           }
-          // Say so and carry on listening, rather than dropping the user into
-          // a dead screen because one request failed.
-          addLine('assistant', t('voice.hiccup'));
+          addLine('assistant', `${t('voice.hiccup')}\n⚠️ ${msg}`);
           await new Promise((r) => setTimeout(r, 700));
         }
       }
@@ -676,6 +773,7 @@ export function useVoiceSession(options: {
       stopListeningRef.current?.('aborted');
       stopPolling();
       stopSpeaking();
+      stopLocationTracking();
       void recorderRef.current?.stop().catch(() => undefined);
       recorderRef.current = null;
       // Hand the audio session back, or the next app to play sound gets the
@@ -760,6 +858,84 @@ export function useVoiceSession(options: {
     [addLine, runTurn, stopSpeaking],
   );
 
+  const chooseCard = useCallback(
+    (lineId: string, label: string) => {
+      const line = linesRef.current.find((l) => l.id === lineId);
+      if (!line?.cards?.selectable || line.chosenCard) return;
+      Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+      setLines((prev) => prev.map((l) => (l.id === lineId ? { ...l, chosenCard: label } : l)));
+      send(label);
+    },
+    [send],
+  );
+
+  const checkItem = useCallback(
+    (lineId: string, itemId: string) => {
+      const line = linesRef.current.find((l) => l.id === lineId);
+      if (!line?.checklist) return;
+      const item = line.checklist.items.find((i) => i.id === itemId);
+      if (!item || item.checked) return;
+      Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+      setLines((prev) =>
+        prev.map((l) =>
+          l.id === lineId
+            ? {
+                ...l,
+                checklist: {
+                  ...l.checklist!,
+                  items: l.checklist!.items.map((i) =>
+                    i.id === itemId ? { ...i, checked: true } : i,
+                  ),
+                },
+              }
+            : l,
+        ),
+      );
+      const tool = line.checklist.kind === 'tasks' ? 'complete_task' : 'check_shopping_item';
+      void applyActions([{ tool, arguments: { id: itemId, matchTitle: item.label } }]).then(
+        (applied) => {
+          if (applied.length > 0) {
+            setUndoable(applied);
+            onChanged?.();
+          }
+        },
+      );
+    },
+    [onChanged],
+  );
+
+  const settleDebt = useCallback(
+    (lineId: string, debtId: string) => {
+      const line = linesRef.current.find((l) => l.id === lineId);
+      if (!line?.debtSummary) return;
+      const debt = line.debtSummary.debts.find((d) => d.id === debtId);
+      if (!debt) return;
+      Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+      setLines((prev) =>
+        prev.map((l) =>
+          l.id === lineId
+            ? {
+                ...l,
+                debtSummary: {
+                  ...l.debtSummary!,
+                  debts: l.debtSummary!.debts.filter((d) => d.id !== debtId),
+                },
+              }
+            : l,
+        ),
+      );
+      void applyActions([{ tool: 'settle_debt', arguments: { id: debtId, matchTitle: debt.person } }]).then(
+        (applied) => {
+          if (applied.length > 0) {
+            setUndoable(applied);
+            onChanged?.();
+          }
+        },
+      );
+    },
+    [onChanged],
+  );
+
   const startOver = useCallback(() => {
     historyRef.current = [];
     setLines([]);
@@ -793,6 +969,9 @@ export function useVoiceSession(options: {
     toggle,
     send,
     chooseTime,
+    chooseCard,
+    checkItem,
+    settleDebt,
     undoLast,
     startOver,
     restart,

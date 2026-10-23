@@ -6,6 +6,22 @@ import {
   scheduleEventReminder,
   scheduleTaskReminder,
 } from './notifications';
+import { guessCategory, HISTORY_CAP, normalizeName, type ShoppingHistory } from './shopping';
+import { missingRecurring, type Budgets } from './finance';
+import { getVoiceLanguage } from './i18n';
+
+let geofenceRefresh: (() => void) | null = null;
+function triggerGeofenceRefresh() {
+  if (!geofenceRefresh) {
+    try {
+      const mod = require('./geofencing') as { refreshGeofences: () => Promise<void> };
+      geofenceRefresh = () => void mod.refreshGeofences();
+    } catch {
+      geofenceRefresh = () => {};
+    }
+  }
+  geofenceRefresh();
+}
 
 // Local-only data layer. Everything lives in AsyncStorage on the device —
 // there is no server, no network, and no account.
@@ -24,9 +40,13 @@ const KEYS = {
   shopping: '@pa/shopping',
   money: '@pa/money',
   debts: '@pa/debts',
+  shopHistory: '@pa/shopHistory',
+  priceFactor: '@pa/priceFactor',
+  budgets: '@pa/budgets',
   chat: '@pa/chat',
   user: '@pa/user',
   seeded: '@pa/seeded',
+  seededWeek: '@pa/seededWeek',
 } as const;
 
 async function readList<T>(key: string): Promise<T[]> {
@@ -92,6 +112,8 @@ export type Event = {
   location: string | null;
   startsAt: string;
   endsAt: string;
+  /** When the user marked the event as finished, if before the planned end. */
+  endedAt: string | null;
   reminderMinutesBefore: number | null;
   createdAt: string;
   updatedAt: string;
@@ -167,6 +189,12 @@ export type MoneyEntry = {
   /** Local YYYY-MM-DD, matching how the rest of the app writes plain dates. */
   date: string;
   category: IncomeCategory | ExpenseCategory | null;
+  /** Repeats on the same day every month (rent, salary, subscriptions). */
+  recurring?: boolean;
+  /** Set on a copy made from a repeating entry: the original's id. */
+  recurringFrom?: string | null;
+  /** On an original: months (YYYY-MM) whose copy the user deleted. */
+  skipMonths?: string[];
   createdAt: string;
   updatedAt: string;
   deletedAt: string | null;
@@ -239,7 +267,7 @@ function localDay(iso: string): string {
 }
 
 const live = <T extends { deletedAt: string | null }>(rows: T[]) =>
-  rows.filter((r) => r.deletedAt === null);
+  rows.filter((r) => !r.deletedAt);
 
 /**
  * Bumped whenever the sample set changes.
@@ -248,7 +276,7 @@ const live = <T extends { deletedAt: string | null }>(rows: T[]) =>
  * never saw a new set. Storing the version instead lets a changed sample reach
  * an install that is already running.
  */
-const SEED_VERSION = '4';
+const SEED_VERSION = '5';
 
 /** Work and life, mixed the way a real month is. */
 const TASK_POOL: [title: string, notes: string, hour: number][] = [
@@ -392,7 +420,154 @@ function dayStr(year: number, month: number, day: number): string {
   return `${year}-${p(month + 1)}-${p(day)}`;
 }
 
+/**
+ * A week of made-up plans, from today to six days on — the same seven days
+ * Home's weather rail shows — added once, on top of whatever is already there.
+ *
+ * It exists for looking at the app with something in it: every day has a few
+ * tasks and a meeting or two, today's still-open ones sit later than now so
+ * "Suggested next" and the foot have something to say, and a couple of today's
+ * are already ticked so the progress card is not at zero. The titles follow
+ * the interface language at the moment it runs, Hebrew or English.
+ *
+ * Bump `WEEK_SEED_VERSION` to add another week.
+ */
+const WEEK_SEED_VERSION = '1';
+
+/** [title, note, hour, minute]; tasks first, meetings after. */
+const WEEK_POOL: Record<'he' | 'en', { tasks: [string, string, number, number][]; events: [string, string, number, number][] }> = {
+  he: {
+    tasks: [
+      ['לתכנן את המשימות של מחר', '[Medium] שלוש העיקריות', 21, 0],
+      ['ללכת להליכה', '[Low] חצי שעה בפארק', 19, 0],
+      ['לקרוא ספר', '[Low] פרק אחד לפחות', 22, 0],
+      ['לקנות מצרכים לשבוע', '[Medium] הרשימה בקניות', 18, 30],
+      ['להתקשר לאמא', '[Medium] לשאול מה שלומה', 20, 0],
+      ['לשלם חשבון חשמל', '[High] לפני סוף החודש', 10, 0],
+      ['להכין מצגת ללקוח', '[High] עשר שקופיות', 14, 0],
+      ['אימון כושר', '[Medium] רגליים וגב', 7, 30],
+      ['לבשל ארוחת ערב', '[Low] משהו קל', 19, 30],
+      ['לשלוח דוח שבועי', '[Medium] עד סוף היום', 16, 0],
+      ['לסדר את הארון', '[Low] בגדי חורף למעלה', 17, 0],
+      ['לקבוע תור לרופא שיניים', '[Medium] בדיקה תקופתית', 11, 0],
+    ],
+    events: [
+      ['פגישת צוות', '[Medium] עדכונים שבועיים', 9, 30],
+      ['שיחה עם לקוח', '[High] סגירת פרויקט', 12, 0],
+      ['ארוחת צהריים עם דנה', '[Low] בבית הקפה', 13, 0],
+      ['סקירת עיצוב', '[Medium] מסכי ההרשמה', 15, 30],
+    ],
+  },
+  en: {
+    tasks: [
+      ['Plan tomorrow’s top 3', '[Medium] Pick three, no more', 21, 0],
+      ['Go for a walk', '[Low] Half an hour, the long loop', 19, 0],
+      ['Read a book', '[Low] One chapter at least', 22, 0],
+      ['Pick up groceries', '[Medium] The list is in Shopping', 18, 30],
+      ['Call mum', '[Medium] Just to check in', 20, 0],
+      ['Pay the phone bill', '[High] Before the end of the month', 10, 0],
+      ['Prepare the client presentation', '[High] Ten slides', 14, 0],
+      ['Gym workout', '[Medium] Legs and back', 7, 30],
+      ['Cook dinner', '[Low] Something light', 19, 30],
+      ['Send the weekly report', '[Medium] By end of day', 16, 0],
+      ['Sort out the wardrobe', '[Low] Winter things up top', 17, 0],
+      ['Book the dentist', '[Medium] Routine check-up', 11, 0],
+    ],
+    events: [
+      ['Team sync', '[Medium] Weekly updates', 9, 30],
+      ['Client call', '[High] Wrapping up the project', 12, 0],
+      ['Lunch with Dana', '[Low] At the café', 13, 0],
+      ['Design review', '[Medium] Sign-up screens', 15, 30],
+    ],
+  },
+};
+
+let weekSeeding: Promise<void> | null = null;
+
+/** Adds the sample week once. Concurrent callers share one run. */
+function seedWeekOnce(): Promise<void> {
+  weekSeeding ??= (async () => {
+    if ((await AsyncStorage.getItem(KEYS.seededWeek)) === WEEK_SEED_VERSION) return;
+    await AsyncStorage.setItem(KEYS.seededWeek, WEEK_SEED_VERSION);
+
+    const pool = WEEK_POOL[getVoiceLanguage() === 'he' ? 'he' : 'en'];
+    const stamp = nowIso();
+    const now = new Date();
+    const base = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+    const at = (offset: number, h: number, m: number) =>
+      new Date(base.getFullYear(), base.getMonth(), base.getDate() + offset, h, m, 0, 0);
+
+    const tasks: Task[] = [];
+    const events: Event[] = [];
+    for (let offset = 0; offset < 7; offset++) {
+      // Today gets the most; the rest three or four each.
+      const taskCount = offset === 0 ? 6 : 3 + (offset % 2);
+      for (let k = 0; k < taskCount; k++) {
+        const [title, notes, hour, minute] = pool.tasks[(offset * 5 + k) % pool.tasks.length];
+        let due = at(offset, hour, minute);
+        // Today: the first two are done and behind us; the rest are still
+        // ahead, spread over the rest of the evening, so none is already late.
+        if (offset === 0 && k >= 2) {
+          const later = new Date(now.getTime() + (k - 1) * 60 * 60 * 1000);
+          later.setMinutes(0, 0, 0);
+          const lastSlot = at(0, 23, 30);
+          due = later > lastSlot ? lastSlot : later;
+        }
+        if (offset === 0 && k < 2) {
+          due = new Date(Math.min(due.getTime(), now.getTime() - (k + 1) * 60 * 60 * 1000));
+        }
+        tasks.push({
+          id: uuid(),
+          title,
+          notes,
+          startAt: null,
+          dueAt: due.toISOString(),
+          isDone: offset === 0 && k < 2,
+          createdAt: stamp,
+          updatedAt: stamp,
+          deletedAt: null,
+        });
+      }
+
+      const eventCount = offset % 3 === 2 ? 1 : 2;
+      for (let k = 0; k < eventCount; k++) {
+        const [title, note, hour, minute] = pool.events[(offset + k) % pool.events.length];
+        const starts = at(offset, hour, minute);
+        events.push({
+          id: uuid(),
+          title,
+          note,
+          location: null,
+          startsAt: starts.toISOString(),
+          endsAt: new Date(starts.getTime() + 60 * 60 * 1000).toISOString(),
+          endedAt: null,
+          reminderMinutesBefore: 15,
+          createdAt: stamp,
+          updatedAt: stamp,
+          deletedAt: null,
+        });
+      }
+    }
+
+    const [haveTasks, haveEvents] = await Promise.all([
+      readList<Task>(KEYS.tasks),
+      readList<Event>(KEYS.events),
+    ]);
+    await Promise.all([
+      writeList(KEYS.tasks, [...haveTasks, ...tasks]),
+      writeList(KEYS.events, [...haveEvents, ...events]),
+    ]);
+  })();
+  return weekSeeding;
+}
+
 async function seedOnce(): Promise<void> {
+  // The sample month first, so on a fresh install the week lands on top of it.
+  await seedMonthOnce();
+  await seedWeekOnce();
+}
+
+async function seedMonthOnce(): Promise<void> {
   if ((await AsyncStorage.getItem(KEYS.seeded)) === SEED_VERSION) return;
   await AsyncStorage.setItem(KEYS.seeded, SEED_VERSION);
 
@@ -468,6 +643,7 @@ async function seedOnce(): Promise<void> {
         location: null,
         startsAt: on(day, hour, minute),
         endsAt: on(day, hour + 1, minute),
+        endedAt: null,
         reminderMinutesBefore: 15,
         createdAt: stamp,
         updatedAt: stamp,
@@ -534,13 +710,77 @@ async function seedOnce(): Promise<void> {
     }),
   );
 
-  const [haveEvents, haveTasks, haveShopping, haveMoney, haveDebts] = await Promise.all([
+  // ── Shopping history ──
+  // Half a year of ticks so the shopping stats page reads as a real household
+  // rather than an empty grid. Each entry has (name, category, roughly-every
+  // days). The timestamps are jittered so no two ticks land at the same time
+  // and the "buy again" rhythm reads as human rather than mechanical.
+  const shopHistorySeed: [string, ShoppingCategory, number][] = [
+    ['Milk', 'dairy', 5],
+    ['Bread', 'bakery', 4],
+    ['Eggs', 'dairy', 7],
+    ['Tomatoes', 'produce', 6],
+    ['Cucumbers', 'produce', 6],
+    ['Chicken breast', 'meat', 10],
+    ['Salmon', 'meat', 21],
+    ['Yoghurt', 'dairy', 6],
+    ['Bananas', 'produce', 5],
+    ['Avocado', 'produce', 8],
+    ['Olive oil', 'other', 45],
+    ['Coffee', 'other', 18],
+    ['Washing-up liquid', 'cleaning', 30],
+    ['Laundry powder', 'cleaning', 40],
+    ['Toilet paper', 'cleaning', 12],
+    ['Shampoo', 'pharmacy', 45],
+    ['Toothpaste', 'pharmacy', 60],
+    ['Pasta', 'other', 14],
+    ['Rice', 'other', 30],
+    ['Cheese', 'dairy', 9],
+    ['Apples', 'produce', 7],
+    ['Onions', 'produce', 14],
+    ['Chocolate', 'other', 10],
+    ['Cereal', 'other', 20],
+  ];
+
+  const HORIZON_DAYS = 180;
+  const history: Record<string, { name: string; category: ShoppingCategory; times: string[] }> = {};
+  for (const [name, category, everyDays] of shopHistorySeed) {
+    const times: string[] = [];
+    // Walk back from today, laying a tick every ~everyDays with ±30% jitter,
+    // and cap to HISTORY_CAP so the store never grows unbounded.
+    let offset = Math.floor(everyDays * (0.5 + Math.random() * 0.4));
+    while (offset < HORIZON_DAYS && times.length < HISTORY_CAP) {
+      const jitter = (Math.random() - 0.5) * everyDays * 0.5;
+      const when = new Date(today.getTime() - (offset + jitter) * 86_400_000);
+      // Ticks land mid-morning to mid-evening, when a shop actually happens.
+      when.setHours(9 + Math.floor(Math.random() * 11), Math.floor(Math.random() * 60), 0, 0);
+      times.push(when.toISOString());
+      offset += Math.max(1, Math.round(everyDays + jitter));
+    }
+    // Oldest first inside a single entry — how `rememberPurchase` writes.
+    times.reverse();
+    history[normalizeName(name)] = { name, category, times };
+  }
+
+  const [haveEvents, haveTasks, haveShopping, haveMoney, haveDebts, haveShopHistory] = await Promise.all([
     readList<Event>(KEYS.events),
     readList<Task>(KEYS.tasks),
     readList<ShoppingItem>(KEYS.shopping),
     readList<MoneyEntry>(KEYS.money),
     readList<Debt>(KEYS.debts),
+    AsyncStorage.getItem(KEYS.shopHistory),
   ]);
+
+  // Merge, don't clobber: an install that already had a real history keeps
+  // it, and only the entries this seed introduces are added.
+  const mergedHistory: Record<string, { name: string; category: ShoppingCategory | null; times: string[] }> = (() => {
+    try {
+      const parsed = haveShopHistory ? JSON.parse(haveShopHistory) : {};
+      return parsed && typeof parsed === 'object' ? { ...history, ...parsed } : { ...history };
+    } catch {
+      return { ...history };
+    }
+  })();
 
   await Promise.all([
     writeList(KEYS.events, [...haveEvents, ...events]),
@@ -548,7 +788,35 @@ async function seedOnce(): Promise<void> {
     writeList(KEYS.shopping, [...haveShopping, ...shopping]),
     writeList(KEYS.money, [...haveMoney, ...money]),
     writeList(KEYS.debts, [...haveDebts, ...debts]),
+    AsyncStorage.setItem(KEYS.shopHistory, JSON.stringify(mergedHistory)),
   ]);
+}
+
+/** Adds a tick to a thing's history. */
+async function rememberPurchase(item: ShoppingItem): Promise<void> {
+  const history = await api.shoppingHistory();
+  const key = normalizeName(item.name);
+  const prev = history[key];
+  history[key] = {
+    name: item.name,
+    category: item.category ?? prev?.category ?? null,
+    times: [...(prev?.times ?? []), nowIso()].slice(-HISTORY_CAP),
+  };
+  await AsyncStorage.setItem(KEYS.shopHistory, JSON.stringify(history));
+}
+
+/** Takes back a tick made by mistake: the last one, if it is still fresh. */
+async function forgetPurchase(item: ShoppingItem): Promise<void> {
+  const history = await api.shoppingHistory();
+  const key = normalizeName(item.name);
+  const prev = history[key];
+  if (!prev?.times.length) return;
+  const last = new Date(prev.times[prev.times.length - 1]).getTime();
+  if (Date.now() - last > 10 * 60 * 1000) return;
+  const times = prev.times.slice(0, -1);
+  if (times.length) history[key] = { ...prev, times };
+  else delete history[key];
+  await AsyncStorage.setItem(KEYS.shopHistory, JSON.stringify(history));
 }
 
 export const api = {
@@ -654,6 +922,7 @@ export const api = {
       startsAt: e.startsAt,
       // Default duration matches what the old backend applied.
       endsAt: e.endsAt ?? new Date(new Date(e.startsAt).getTime() + 60 * 60 * 1000).toISOString(),
+      endedAt: null,
       reminderMinutesBefore: e.reminderMinutesBefore ?? null,
       createdAt: nowIso(),
       updatedAt: e.updatedAt,
@@ -661,6 +930,7 @@ export const api = {
     };
     await writeList(KEYS.events, [event, ...rows]);
     void scheduleEventReminder(event);
+    triggerGeofenceRefresh();
     return event;
   },
 
@@ -676,6 +946,17 @@ export const api = {
     rows[i] = { ...rows[i], ...patch, updatedAt: patch.updatedAt ?? nowIso() };
     await writeList(KEYS.events, rows);
     void scheduleEventReminder(rows[i]);
+    triggerGeofenceRefresh();
+    return rows[i];
+  },
+
+  endEvent: async (id: string) => {
+    const rows = await readList<Event>(KEYS.events);
+    const i = rows.findIndex((r) => r.id === id);
+    if (i === -1) return null;
+    rows[i] = { ...rows[i], endedAt: nowIso(), updatedAt: nowIso() };
+    await writeList(KEYS.events, rows);
+    void cancelReminder(id);
     return rows[i];
   },
 
@@ -741,7 +1022,9 @@ export const api = {
       name: i.name,
       quantity: i.quantity ?? null,
       note: i.note ?? null,
-      category: i.category ?? null,
+      // Whoever added it without an aisle — the quick add, the assistant —
+      // still gets it shelved when the name says where.
+      category: i.category ?? guessCategory(i.name),
       isBought: false,
       createdAt: nowIso(),
       updatedAt: i.updatedAt,
@@ -760,9 +1043,54 @@ export const api = {
     const rows = await readList<ShoppingItem>(KEYS.shopping);
     const i = rows.findIndex((r) => r.id === id);
     if (i === -1) throw new ApiError(404, 'NOT_FOUND', 'Item not found');
+    const wasBought = rows[i].isBought;
     rows[i] = { ...rows[i], ...patch, updatedAt: patch.updatedAt ?? nowIso() };
     await writeList(KEYS.shopping, rows);
+    // Every tick is remembered, whoever made it, so the list can learn what
+    // runs out and when. Unticking straight after takes the tick back.
+    if (patch.isBought === true && !wasBought) await rememberPurchase(rows[i]);
+    if (patch.isBought === false && wasBought) await forgetPurchase(rows[i]);
     return rows[i];
+  },
+
+  /** What has been bought before, and when — see `suggestionsFrom`. */
+  shoppingHistory: async (): Promise<ShoppingHistory> => {
+    try {
+      const raw = await AsyncStorage.getItem(KEYS.shopHistory);
+      const parsed = raw ? JSON.parse(raw) : null;
+      if (parsed && typeof parsed === 'object') return parsed as ShoppingHistory;
+    } catch {
+      /* start again below */
+    }
+    // First read: what is already in the trolley is the first history there is.
+    const history: ShoppingHistory = {};
+    for (const r of live(await readList<ShoppingItem>(KEYS.shopping))) {
+      if (!r.isBought) continue;
+      history[normalizeName(r.name)] = { name: r.name, category: r.category, times: [r.updatedAt] };
+    }
+    await AsyncStorage.setItem(KEYS.shopHistory, JSON.stringify(history));
+    return history;
+  },
+
+  /**
+   * How far the price table is from what shops actually cost this user — 1
+   * until a till receipt says otherwise. See `estimateCart`.
+   */
+  getPriceFactor: async (): Promise<number> => {
+    const raw = await AsyncStorage.getItem(KEYS.priceFactor);
+    const n = Number(raw);
+    return Number.isFinite(n) && n > 0 ? n : 1;
+  },
+
+  setPriceFactor: async (factor: number) => {
+    await AsyncStorage.setItem(KEYS.priceFactor, String(factor));
+  },
+
+  /** Stops offering something the user no longer buys. */
+  forgetShoppingSuggestion: async (name: string) => {
+    const history = await api.shoppingHistory();
+    delete history[normalizeName(name)];
+    await AsyncStorage.setItem(KEYS.shopHistory, JSON.stringify(history));
   },
 
   deleteShoppingItem: async (id: string) => {
@@ -783,9 +1111,30 @@ export const api = {
   },
 
   // ── Money: income and expenses ──
-  listMoney: async () => ({
-    entries: (await seedOnce(), live(await readList<MoneyEntry>(KEYS.money))),
-  }),
+  listMoney: async () => {
+    await seedOnce();
+    let rows = await readList<MoneyEntry>(KEYS.money);
+    // Repeating entries are copied into the months they have reached since the
+    // last look — on reading, so there is no background job to miss a month.
+    const stamp = nowIso();
+    const made = missingRecurring(live(rows), new Date(), (t, date) => ({
+      id: uuid(),
+      kind: t.kind,
+      description: t.description,
+      amount: t.amount,
+      date,
+      category: t.category,
+      recurringFrom: t.id,
+      createdAt: stamp,
+      updatedAt: stamp,
+      deletedAt: null,
+    }));
+    if (made.length) {
+      rows = [...made, ...rows];
+      await writeList(KEYS.money, rows);
+    }
+    return { entries: live(rows) };
+  },
 
   createMoneyEntry: async (e: {
     id: string;
@@ -794,6 +1143,7 @@ export const api = {
     amount: number;
     date: string;
     category?: IncomeCategory | ExpenseCategory | null;
+    recurring?: boolean;
     updatedAt: string;
   }) => {
     const rows = await readList<MoneyEntry>(KEYS.money);
@@ -809,6 +1159,8 @@ export const api = {
       amount: Math.abs(e.amount),
       date: e.date,
       category: e.category ?? null,
+      recurring: e.recurring ?? false,
+      recurringFrom: null,
       createdAt: nowIso(),
       updatedAt: e.updatedAt,
       deletedAt: null,
@@ -819,7 +1171,9 @@ export const api = {
 
   updateMoneyEntry: async (
     id: string,
-    patch: Partial<Pick<MoneyEntry, 'description' | 'amount' | 'date' | 'category' | 'kind'>> & {
+    patch: Partial<
+      Pick<MoneyEntry, 'description' | 'amount' | 'date' | 'category' | 'kind' | 'recurring'>
+    > & {
       updatedAt?: string;
     },
   ) => {
@@ -835,10 +1189,55 @@ export const api = {
 
   deleteMoneyEntry: async (id: string) => {
     const rows = await readList<MoneyEntry>(KEYS.money);
-    await writeList(
-      KEYS.money,
-      rows.filter((r) => r.id !== id),
-    );
+    const gone = rows.find((r) => r.id === id);
+    let next = rows.filter((r) => r.id !== id);
+    // A deleted copy of a repeating entry must stay deleted: its month is
+    // marked on the original, or the next read would make it again.
+    if (gone?.recurringFrom) {
+      const month = gone.date.slice(0, 7);
+      next = next.map((r) =>
+        r.id === gone.recurringFrom
+          ? { ...r, skipMonths: [...new Set([...(r.skipMonths ?? []), month])] }
+          : r,
+      );
+    }
+    await writeList(KEYS.money, next);
+  },
+
+  /** Puts a deleted row back exactly as it was — the undo for a delete. */
+  restoreMoneyEntry: async (entry: MoneyEntry) => {
+    const rows = await readList<MoneyEntry>(KEYS.money);
+    if (rows.some((r) => r.id === entry.id)) return;
+    let next = [entry, ...rows];
+    if (entry.recurringFrom) {
+      const month = entry.date.slice(0, 7);
+      next = next.map((r) =>
+        r.id === entry.recurringFrom
+          ? { ...r, skipMonths: (r.skipMonths ?? []).filter((m) => m !== month) }
+          : r,
+      );
+    }
+    await writeList(KEYS.money, next);
+  },
+
+  // ── Budgets: a monthly limit per expense category ──
+  getBudgets: async (): Promise<Budgets> => {
+    try {
+      const raw = await AsyncStorage.getItem(KEYS.budgets);
+      const parsed = raw ? JSON.parse(raw) : {};
+      return parsed && typeof parsed === 'object' ? (parsed as Budgets) : {};
+    } catch {
+      return {};
+    }
+  },
+
+  /** A limit of 0 or less clears it. */
+  setBudget: async (category: ExpenseCategory, limit: number) => {
+    const budgets = await api.getBudgets();
+    if (limit > 0) budgets[category] = limit;
+    else delete budgets[category];
+    await AsyncStorage.setItem(KEYS.budgets, JSON.stringify(budgets));
+    return budgets;
   },
 
   // ── Debts ──
@@ -948,6 +1347,9 @@ export const api = {
       KEYS.shopping,
       KEYS.money,
       KEYS.debts,
+      KEYS.shopHistory,
+      KEYS.priceFactor,
+      KEYS.budgets,
       KEYS.chat,
     ]);
     // Rows are gone, so their alarms must go with them.

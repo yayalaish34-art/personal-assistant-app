@@ -879,3 +879,42 @@ tsc clean. availability 21 passed; voice 51 passed / 2 skipped.
 Not verified: an end-to-end turn through the live model choosing to call the
 tool. The tool description and prompt rules push hard toward it, but whether
 she calls it every time is model behaviour, not something these tests pin down.
+
+### T12 — Hebrew voice quality, app language, onboarding and time statistics
+DONE (local, uncommitted)
+
+Explicit user request, 2026-10-19: improve Hebrew speech/transcription within a
+modest budget; remove the English-only interface restriction; restore day/night
+switching; add five personalization questions and sleep guidance; explain where
+scheduled time goes; stop showing invented shopping prices as actual prices.
+
+Backend: shared transcription helper used by both routes, configurable
+`gpt-4o-mini-transcribe` default, explicit Hebrew TTS language, natural-language
+prompt improvements, five optional profile fields, and API contract updates.
+Frontend: shared language/RTL preference, modal/navigation/time formatting fixes,
+header appearance toggle, persisted/editable questions, opt-in shopping estimates
+without unknown-item default pricing, empty checkout payment field, and correct
+clipping/overlap/hour allocation in calendar statistics. Existing project
+components, theme tokens and unrelated working-tree changes were preserved.
+
+Validation: both TypeScript checks passed; eight focused suites passed (179 tests,
+2 skipped); Expo production web export passed; `git diff --check` passed. New
+coverage is in `tests/transcription.test.ts` and `tests/client-regressions.test.ts`.
+The existing slot tests now use a fixture clock rather than depending on August
+2026 still being in the future. No database or live paid API tests were run.
+
+Deployment requested separately by the user: Railway production deployment
+`5293a13e-dfe4-4185-bd8c-f9c18ddd7412` succeeded on 2026-10-19. Live health,
+empty Hebrew turn/profile acceptance, and a grape-juice shopping action passed.
+iOS 1.0.0 (4), build `c757f0d6-70c9-47c0-9eef-9a443c2a0d1a`, was submitted
+successfully and verified in internal TestFlight on 2026-10-20. Added upload
+ignore files and persisted the existing App Store Connect app ID in eas.json.
+
+The initial ElevenLabs `quota_exceeded` blocker was resolved on 2026-10-20 by
+installing the user-provided replacement key in local `.env` and Railway.
+Deployment `797f3b52-0c70-49e7-9514-b8c95dd8dbe5` succeeded; health passed and
+live Hebrew TTS returned HTTP 200 / audio/mpeg / 9,553 bytes. No subscription
+purchase or mobile rebuild was needed. Physical-device layout/listening
+verification remains. Sources, cost estimates and release details are recorded
+in `../docs/hebrew-voice-qa.md`. Code is still uncommitted. UI language changes
+do not rewrite stored user data.

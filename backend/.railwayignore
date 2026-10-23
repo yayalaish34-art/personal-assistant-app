@@ -1,0 +1,16 @@
+# Only application sources and build inputs belong in the production image.
+.env
+.env.*
+!.env.example
+node_modules/
+dist/
+data/
+*.log
+*.m4a
+tests/
+*.test.ts
+create-user.ts
+clear-deletion.ts
+sign-token.ts
+issue-refresh.ts
+test-purge.ts

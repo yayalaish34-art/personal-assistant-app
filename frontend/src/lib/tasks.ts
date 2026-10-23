@@ -1,5 +1,6 @@
 import type { Priority } from '../theme';
 import type { Event, Task } from './api';
+import { locale } from './i18n';
 
 // Task helpers shared by the Today / Calendar / Add Task screens.
 //
@@ -21,15 +22,15 @@ export function withPriority(notes: string, priority: Priority | null): string {
   return priority ? `[${priority}]${clean ? ` ${clean}` : ''}` : clean;
 }
 
-// '14:30' -> '2:30 PM'
+// Legacy name; display times using the selected language's clock convention.
 export function to12h(t?: string | null): string {
   if (!t) return '';
   const [hs, ms] = t.split(':');
-  let h = parseInt(hs, 10);
-  if (Number.isNaN(h)) return t;
-  const suffix = h >= 12 ? 'PM' : 'AM';
-  h = h % 12 || 12;
-  return `${h}:${(ms ?? '00').padStart(2, '0')} ${suffix}`;
+  const h = Number(hs);
+  const m = Number(ms ?? '0');
+  if (!Number.isInteger(h) || h < 0 || h > 23 || !Number.isInteger(m) || m < 0 || m > 59) return t;
+  return new Intl.DateTimeFormat(locale(), { hour: 'numeric', minute: '2-digit' })
+    .format(new Date(2000, 0, 1, h, m));
 }
 
 export function plusHour(t: string): string {
@@ -86,6 +87,8 @@ export type AgendaItem = {
   /** Tasks carry explicit completion; events derive it from the clock. */
   isDone?: boolean;
   endsAt?: string;
+  /** Events only: how far ahead it rings, or null for no reminder. */
+  reminderMinutesBefore?: number | null;
 };
 
 /** Wire event → local-time agenda item. */
@@ -98,7 +101,8 @@ export function eventToItem(e: Event): AgendaItem {
     date: toDateStr(start),
     time: toTimeStr(start),
     notes: e.note ?? '',
-    endsAt: e.endsAt,
+    endsAt: e.endedAt ?? e.endsAt,
+    reminderMinutesBefore: e.reminderMinutesBefore,
   };
 }
 
@@ -118,7 +122,7 @@ export function taskToItem(t: Task): AgendaItem {
 
 /** Drops soft-deleted rows, which sync endpoints deliberately return. */
 export function isLive<T extends { deletedAt: string | null }>(row: T): boolean {
-  return row.deletedAt === null;
+  return !row.deletedAt;
 }
 
 export type TaskStatus = 'todo' | 'inprogress' | 'done';

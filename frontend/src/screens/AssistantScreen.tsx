@@ -1,8 +1,7 @@
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import {
   View,
   Text,
-  Pressable,
   ScrollView,
   TextInput,
   StyleSheet,
@@ -14,18 +13,20 @@ import {
   type StyleProp,
   type TextStyle,
 } from 'react-native';
+import { Entrance, PopIn, Pressable, animateLayout } from '../components/motion';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useNavigation } from '@react-navigation/native';
 import type { NativeStackNavigationProp } from '@react-navigation/native-stack';
 import * as Haptics from 'expo-haptics';
 import { LinearGradient } from 'expo-linear-gradient';
 import Svg, { Circle, Path } from 'react-native-svg';
-import { X, Mic, Undo2, RotateCcw, Send, Sparkles, CheckCheck } from 'lucide-react-native';
+import { X, Mic, Undo2, RotateCcw, Send, Sparkles, CheckCheck, Check, Clock, ArrowUpRight, ArrowDownLeft, Sun, Cloud, CloudRain, CloudLightning, Snowflake, CloudSun, Wind, CloudFog, TrendingUp, TrendingDown, Minus, Star } from 'lucide-react-native';
 
+import { Glow, LitDisc } from '../components/ui';
 import { api } from '../lib/api';
 import { useVoiceSession, type Line } from '../lib/useVoiceSession';
 import type { RootStackParamList } from '../navigation';
-import { spacing, font, VOICE } from '../theme';
+import { colors, spacing, font, NIGHT, VOICE, themed } from '../theme';
 import { t, locale, alignStart, isRTL } from '../lib/i18n';
 
 type Nav = NativeStackNavigationProp<RootStackParamList, 'Assistant'>;
@@ -97,6 +98,37 @@ function Said({ text, style }: { text: string; style: StyleProp<TextStyle> }) {
   );
 }
 
+// ── Lines arriving ──────────────────────────────────────────────────────────
+
+/** The beat between lines that land together, like a thread restored on open. */
+const ARRIVAL_STEP_MS = 60;
+/**
+ * How many lines of a batch take a beat each. The thread scrolls to its end,
+ * so these are the ones in view; the rest land at once above them, out of
+ * sight, rather than holding the newest back for a second or more.
+ */
+const ARRIVAL_STAGGERED = 6;
+
+/**
+ * A line of the thread, rising in as it is added.
+ *
+ * Keyed by the line's id where it is used, so it mounts once per line: a time
+ * being taken, a drawing turning into its picture, the screen re-rendering
+ * several times a second while she listens — none of that plays it again.
+ *
+ * The delay is kept from the first render. The screen passes a fresh one every
+ * render, and a delay that changed under a running spring would stop it and
+ * start it over.
+ */
+function Arrival({ delay, children }: { delay: number; children: ReactNode }) {
+  const [wait] = useState(delay);
+  return (
+    <Entrance delay={wait} from={16}>
+      {children}
+    </Entrance>
+  );
+}
+
 // ── The sound of her listening ──────────────────────────────────────────────
 
 /** One line of the waveform: a sine, fattest at the middle, gone at the edges. */
@@ -114,17 +146,17 @@ function wavePath(width: number, height: number, freq: number, amp: number, phas
   return out.join(' ');
 }
 
-const WAVE_HEIGHT = 190;
+const WAVE_HEIGHT = 120;
 
 /** The layers, near ones first. Near follows the mic; far only breathes. */
 const NEAR_LAYERS = [
-  { freq: 26, amp: 34, phase: 0, opacity: 0.55, width: 1.6 },
-  { freq: 17, amp: 24, phase: 1.1, opacity: 0.38, width: 1.2 },
-  { freq: 35, amp: 46, phase: 2.2, opacity: 0.24, width: 1.1 },
+  { freq: 26, amp: 22, phase: 0, opacity: 0.55, width: 1.6 },
+  { freq: 17, amp: 16, phase: 1.1, opacity: 0.38, width: 1.2 },
+  { freq: 35, amp: 28, phase: 2.2, opacity: 0.24, width: 1.1 },
 ];
 const FAR_LAYERS = [
-  { freq: 12, amp: 15, phase: 0.6, opacity: 0.22, width: 1 },
-  { freq: 46, amp: 58, phase: 3.4, opacity: 0.13, width: 1 },
+  { freq: 12, amp: 10, phase: 0.6, opacity: 0.22, width: 1 },
+  { freq: 46, amp: 34, phase: 3.4, opacity: 0.13, width: 1 },
 ];
 
 /**
@@ -178,8 +210,8 @@ function Waveform({ near, far, width }: { near: Animated.AnimatedInterpolation<n
   );
 }
 
-const ORBIT_BOX = 258;
-const ORBIT_R = 104;
+const ORBIT_BOX = 172;
+const ORBIT_R = 70;
 
 /** The dotted ring around the orb, and the motes riding it. */
 function Orbit({ spin }: { spin: Animated.AnimatedInterpolation<string> }) {
@@ -188,9 +220,9 @@ function Orbit({ spin }: { spin: Animated.AnimatedInterpolation<string> }) {
       [0.1, 0.32, 0.55, 0.78, 0.93].map((turn) => {
         const angle = turn * Math.PI * 2;
         return {
-          cx: ORBIT_BOX / 2 + Math.cos(angle) * (ORBIT_R + 16),
-          cy: ORBIT_BOX / 2 + Math.sin(angle) * (ORBIT_R + 16),
-          r: 1.6 + (turn % 0.3) * 6,
+          cx: ORBIT_BOX / 2 + Math.cos(angle) * (ORBIT_R + 10),
+          cy: ORBIT_BOX / 2 + Math.sin(angle) * (ORBIT_R + 10),
+          r: 1.4 + (turn % 0.3) * 4,
         };
       }),
     [],
@@ -247,7 +279,7 @@ export default function AssistantScreen() {
 
   const {
     state, lines, level, error, undoable,
-    toggle, send, chooseTime, undoLast, startOver, restart, end,
+    toggle, send, chooseTime, chooseCard, checkItem, settleDebt, undoLast, startOver, restart, end,
   } =
     useVoiceSession({ userName: name || undefined });
   const [draft, setDraft] = useState('');
@@ -314,6 +346,22 @@ export default function AssistantScreen() {
     return () => clearTimeout(timer);
   }, [lines.length]);
 
+  // The lines already on screen. Anything not in here is arriving in this
+  // render; it is recorded once it has been committed, so a render that is
+  // thrown away does not count a line as seen.
+  const shown = useRef(new Set<string>());
+  useEffect(() => {
+    lines.forEach((l) => shown.current.add(l.id));
+  }, [lines]);
+  const arriving = lines.reduce((n, l) => (shown.current.has(l.id) ? n : n + 1), 0);
+  let nth = 0;
+  /** A line's wait: its place among the last few of the lines landing with it. */
+  const arrivalDelay = (id: string) => {
+    if (shown.current.has(id)) return 0;
+    const i = nth++;
+    return Math.max(0, i - Math.max(0, arriving - ARRIVAL_STAGGERED)) * ARRIVAL_STEP_MS;
+  };
+
   const close = () => {
     Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
     end();
@@ -370,16 +418,429 @@ export default function AssistantScreen() {
   const herRow = rtl ? ('row-reverse' as const) : ('row' as const);
   const start = { textAlign: alignStart() } as const;
 
-  /** The clock, and — on your own lines — the two ticks that say it landed. */
-  const meta = (line: Line) =>
-    line.at ? (
+  const weatherIcon = (icon: string, size = 20) => {
+    const c = VOICE.accent;
+    switch (icon) {
+      case 'sun': return <Sun color={c} size={size} />;
+      case 'cloud': return <Cloud color={c} size={size} />;
+      case 'rain': return <CloudRain color={c} size={size} />;
+      case 'storm': return <CloudLightning color={c} size={size} />;
+      case 'snow': return <Snowflake color={c} size={size} />;
+      case 'partly_cloudy': return <CloudSun color={c} size={size} />;
+      case 'wind': return <Wind color={c} size={size} />;
+      case 'fog': return <CloudFog color={c} size={size} />;
+      default: return <Sun color={c} size={size} />;
+    }
+  };
+
+  const trendIcon = (trend?: string) => {
+    const size = 14;
+    switch (trend) {
+      case 'up': return <TrendingUp color="#4ade80" size={size} />;
+      case 'down': return <TrendingDown color="#f87171" size={size} />;
+      default: return <Minus color={VOICE.meta} size={size} />;
+    }
+  };
+
+  /**
+   * The clock, and — on your own lines — the two ticks that say it landed.
+   *
+   * On your blue both are plain white. Size already says the clock is the
+   * lesser line, and anything dimmer than white falls under 4.5:1 there.
+   */
+  const meta = (line: Line) => {
+    if (!line.at) return null;
+    const own = line.role === 'user';
+    return (
       <View style={styles.metaRow}>
-        <Text style={styles.metaTime}>{stamp(line.at)}</Text>
-        {line.role === 'user' ? (
-          <CheckCheck color={VOICE.accent} size={14} strokeWidth={2.6} />
-        ) : null}
+        <Text style={[styles.metaTime, own && styles.metaTimeOwn]}>{stamp(line.at)}</Text>
+        {own ? <CheckCheck color={colors.primaryText} size={14} strokeWidth={2.6} /> : null}
       </View>
-    ) : null;
+    );
+  };
+
+  /**
+   * Her mark beside a line. It pops as the line rises, so each thing she says
+   * is visibly signed as it lands rather than arriving already stamped.
+   */
+  const spark = (
+    <PopIn from={0.5}>
+      <LitDisc colors={VOICE.accentGradient} style={styles.spark}>
+        <Sparkles color={NIGHT.glyph} size={17} strokeWidth={2.2} />
+      </LitDisc>
+    </PopIn>
+  );
+
+  /** One line of the thread, without its arrival. */
+  const bubble = (line: Line) => {
+    // A picture is its own bubble: the frame is the message, so the
+    // padding and the background that carry text would only box it in.
+    // It springs in where the placeholder was: the line has long since
+    // arrived, and the picture turning up is the news.
+    if (line.imageUri) {
+      return (
+        <PopIn from={0.9} style={[styles.imageBubble, { alignSelf: hers }]}>
+          <Image
+            source={{ uri: line.imageUri }}
+            style={styles.image}
+            resizeMode="cover"
+            accessibilityRole="image"
+            accessibilityLabel={t('voice.drawing')}
+          />
+        </PopIn>
+      );
+    }
+
+    if (line.drawing) {
+      return (
+        <View style={[styles.herRow, { alignSelf: hers, flexDirection: herRow }]}>
+          {spark}
+          <View style={[styles.herBubble, styles.drawingBubble]}>
+            <ActivityIndicator size="small" color={VOICE.accent} />
+            <Text style={styles.herText}>{t('voice.drawing')}</Text>
+          </View>
+        </View>
+      );
+    }
+
+    const offer = line.offer;
+    const showOffer = offer && offer.options.length > 0;
+    const showCards = line.cards && line.cards.items.length > 0;
+    const hasVisual = showOffer || showCards || line.checklist || line.confirmation || line.budget || line.timeline || line.debtSummary || line.weather || line.summary;
+
+    if (line.role === 'user') {
+      return (
+        <View style={[styles.meBubble, { alignSelf: mine }]}>
+          <Text style={[styles.meText, start]}>{line.text}</Text>
+          {meta(line)}
+        </View>
+      );
+    }
+
+    return (
+      <View
+        style={[
+          styles.herRow,
+          { alignSelf: hers, flexDirection: herRow },
+          hasVisual && styles.herRowWide,
+        ]}
+      >
+        {spark}
+        <View style={[styles.herBubble, hasVisual && styles.herBubbleWide]}>
+          {line.text ? <Said text={line.text} style={[styles.herText, start]} /> : null}
+
+          {showOffer ? (
+            <View style={[styles.offerStack, line.text ? styles.offerStackSpaced : null]}>
+              {offer.options.map((iso, i) => {
+                const taken = line.chosen === iso;
+                const spent = Boolean(line.chosen) && !taken;
+                return (
+                  <Entrance key={iso} delay={140 + i * 45} from={12}>
+                    <Pressable
+                      onPress={() => chooseTime(line.id, iso)}
+                      disabled={Boolean(line.chosen)}
+                      style={({ pressed }) => [
+                        styles.offerRow,
+                        spent && styles.offerRowSpent,
+                        pressed && styles.offerRowPressed,
+                      ]}
+                      accessibilityRole="button"
+                      accessibilityState={{ selected: taken, disabled: Boolean(line.chosen) }}
+                      accessibilityLabel={`${offer.title} — ${clockRange(iso, offer.durationMinutes)}, ${whenLabel(iso)}`}
+                    >
+                      {taken ? <PopIn from={0.9} style={[StyleSheet.absoluteFill, styles.offerTakenFill]} /> : null}
+                      <Text
+                        style={[styles.offerTime, taken && styles.offerTimeTaken]}
+                        numberOfLines={1}
+                      >
+                        {clockRange(iso, offer.durationMinutes)}
+                      </Text>
+                      <Text
+                        style={[
+                          styles.offerWhen,
+                          { textAlign: rtl ? 'left' : 'right' },
+                          taken && styles.offerWhenTaken,
+                        ]}
+                        numberOfLines={1}
+                      >
+                        {whenLabel(iso)}
+                      </Text>
+                    </Pressable>
+                  </Entrance>
+                );
+              })}
+            </View>
+          ) : null}
+
+          {showCards ? (
+            <View style={[styles.offerStack, line.text ? styles.offerStackSpaced : null]}>
+              {line.cards!.title ? (
+                <Text style={[styles.cardTitle, start]}>{line.cards!.title}</Text>
+              ) : null}
+              {line.cards!.items.map((card, i) => {
+                const taken = line.chosenCard === card.label;
+                const spent = Boolean(line.chosenCard) && !taken;
+                const selectable = line.cards!.selectable;
+                return (
+                  <Entrance key={card.label} delay={140 + i * 55} from={12}>
+                    <Pressable
+                      onPress={() => selectable && chooseCard(line.id, card.label)}
+                      disabled={!selectable || Boolean(line.chosenCard)}
+                      style={({ pressed }) => [
+                        styles.cardRow,
+                        spent && styles.offerRowSpent,
+                        pressed && selectable && styles.offerRowPressed,
+                      ]}
+                      accessibilityRole={selectable ? 'button' : 'text'}
+                      accessibilityState={selectable ? { selected: taken, disabled: Boolean(line.chosenCard) } : undefined}
+                      accessibilityLabel={card.detail ? `${card.label}: ${card.detail}` : card.label}
+                    >
+                      {taken ? <PopIn from={0.9} style={[StyleSheet.absoluteFill, styles.cardTakenFill]} /> : null}
+                      <Text
+                        style={[styles.cardLabel, start, taken && styles.offerTimeTaken]}
+                        numberOfLines={2}
+                      >
+                        {card.label}
+                      </Text>
+                      {card.detail ? (
+                        <Text
+                          style={[styles.cardDetail, start, taken && styles.cardDetailTaken]}
+                          numberOfLines={3}
+                        >
+                          {card.detail}
+                        </Text>
+                      ) : null}
+                    </Pressable>
+                  </Entrance>
+                );
+              })}
+            </View>
+          ) : null}
+
+          {line.checklist ? (
+            <View style={[styles.offerStack, line.text ? styles.offerStackSpaced : null]}>
+              {line.checklist.title ? (
+                <Text style={[styles.cardTitle, start]}>{line.checklist.title}</Text>
+              ) : null}
+              {line.checklist.items.map((item, i) => (
+                <Entrance key={item.id} delay={140 + i * 40} from={12}>
+                  <Pressable
+                    onPress={() => !item.checked && checkItem(line.id, item.id)}
+                    disabled={item.checked}
+                    style={({ pressed }) => [
+                      styles.checkRow,
+                      pressed && !item.checked && styles.offerRowPressed,
+                    ]}
+                    accessibilityRole="checkbox"
+                    accessibilityState={{ checked: item.checked }}
+                    accessibilityLabel={item.label}
+                  >
+                    <View style={[styles.checkBox, item.checked && styles.checkBoxDone]}>
+                      {item.checked ? <Check color={VOICE.ink} size={14} strokeWidth={2.5} /> : null}
+                    </View>
+                    <View style={styles.checkContent}>
+                      <Text
+                        style={[styles.cardLabel, start, item.checked && styles.checkLabelDone]}
+                        numberOfLines={2}
+                      >
+                        {item.label}
+                      </Text>
+                      {item.detail ? (
+                        <Text style={[styles.cardDetail, start]} numberOfLines={1}>
+                          {item.detail}
+                        </Text>
+                      ) : null}
+                    </View>
+                  </Pressable>
+                </Entrance>
+              ))}
+            </View>
+          ) : null}
+
+          {line.confirmation ? (
+            <Entrance delay={100} from={12}>
+              <View style={[styles.confirmCard, line.text ? styles.offerStackSpaced : null]}>
+                <View style={styles.confirmHeader}>
+                  <View style={styles.confirmIcon}>
+                    <Check color={VOICE.ink} size={16} strokeWidth={2.5} />
+                  </View>
+                  <Text style={[styles.confirmTitle, start]}>{line.confirmation.title}</Text>
+                </View>
+                {line.confirmation.fields.map((f) => (
+                  <View key={f.label} style={styles.confirmField}>
+                    <Text style={[styles.confirmFieldLabel, start]}>{f.label}</Text>
+                    <Text style={[styles.confirmFieldValue, start]}>{f.value}</Text>
+                  </View>
+                ))}
+              </View>
+            </Entrance>
+          ) : null}
+
+          {line.budget ? (
+            <View style={[styles.offerStack, line.text ? styles.offerStackSpaced : null]}>
+              {line.budget.title ? (
+                <Text style={[styles.cardTitle, start]}>{line.budget.title}</Text>
+              ) : null}
+              {line.budget.categories.map((cat, i) => {
+                const pct = Math.min(cat.spent / cat.limit, 1);
+                const over = cat.spent > cat.limit;
+                return (
+                  <Entrance key={cat.name} delay={140 + i * 50} from={12}>
+                    <View style={styles.budgetRow}>
+                      <View style={styles.budgetHeader}>
+                        <Text style={[styles.budgetCat, start]} numberOfLines={1}>{cat.name}</Text>
+                        <Text style={[styles.budgetAmounts, over && styles.budgetOver]}>
+                          {Math.round(cat.spent)} / {Math.round(cat.limit)}
+                        </Text>
+                      </View>
+                      <View style={styles.budgetTrack}>
+                        <View
+                          style={[
+                            styles.budgetFill,
+                            { width: `${pct * 100}%` },
+                            over && styles.budgetFillOver,
+                          ]}
+                        />
+                      </View>
+                    </View>
+                  </Entrance>
+                );
+              })}
+            </View>
+          ) : null}
+
+          {line.timeline ? (
+            <View style={[styles.offerStack, line.text ? styles.offerStackSpaced : null]}>
+              {line.timeline.title ? (
+                <Text style={[styles.cardTitle, start]}>{line.timeline.title}</Text>
+              ) : null}
+              {line.timeline.events.map((ev, i) => (
+                <Entrance key={`${ev.start}-${i}`} delay={140 + i * 50} from={12}>
+                  <View style={styles.timelineRow}>
+                    <View style={styles.timelineDot} />
+                    <Text style={styles.timelineTime}>{ev.start}{ev.end ? `–${ev.end}` : ''}</Text>
+                    <Text style={[styles.timelineTitle, start]} numberOfLines={2}>{ev.title}</Text>
+                  </View>
+                </Entrance>
+              ))}
+            </View>
+          ) : null}
+
+          {line.debtSummary && line.debtSummary.debts.length > 0 ? (
+            <View style={[styles.offerStack, line.text ? styles.offerStackSpaced : null]}>
+              {line.debtSummary.title ? (
+                <Text style={[styles.cardTitle, start]}>{line.debtSummary.title}</Text>
+              ) : null}
+              {line.debtSummary.debts.map((debt, i) => (
+                <Entrance key={debt.id} delay={140 + i * 55} from={12}>
+                  <View style={styles.debtRow}>
+                    <View style={styles.debtInfo}>
+                      <View style={styles.debtDirection}>
+                        {debt.direction === 'owed' ? (
+                          <ArrowDownLeft color={VOICE.accent} size={16} strokeWidth={2.2} />
+                        ) : (
+                          <ArrowUpRight color="#e67e73" size={16} strokeWidth={2.2} />
+                        )}
+                      </View>
+                      <View style={styles.debtText}>
+                        <Text style={[styles.cardLabel, start]} numberOfLines={1}>{debt.person}</Text>
+                        <Text style={[styles.debtAmount, start]}>
+                          {Math.round(debt.amount)}
+                          {debt.description ? ` · ${debt.description}` : ''}
+                        </Text>
+                      </View>
+                    </View>
+                    <Pressable
+                      onPress={() => settleDebt(line.id, debt.id)}
+                      style={({ pressed }) => [styles.debtSettle, pressed && styles.offerRowPressed]}
+                      accessibilityRole="button"
+                      accessibilityLabel={`Settle ${debt.person}`}
+                    >
+                      <CheckCheck color={VOICE.accent} size={16} strokeWidth={2.2} />
+                    </Pressable>
+                  </View>
+                </Entrance>
+              ))}
+            </View>
+          ) : null}
+
+          {line.weather && line.weather.days.length > 0 ? (
+            <View style={[styles.visualBlock, line.text ? styles.offerStackSpaced : null]}>
+              {line.weather.location ? (
+                <Text style={[styles.cardTitle, start]}>{line.weather.location}</Text>
+              ) : null}
+              {line.weather.days.map((day, i) => (
+                <Entrance key={day.day} delay={120 + i * 60} from={8}>
+                  <View style={styles.weatherRow}>
+                    {weatherIcon(day.icon, 24)}
+                    <View style={styles.weatherInfo}>
+                      <Text style={styles.weatherDay}>{day.day}</Text>
+                      {day.description ? (
+                        <Text style={styles.weatherDesc}>{day.description}</Text>
+                      ) : null}
+                    </View>
+                    <Text style={styles.weatherTemp}>{Math.round(day.high)}° / {Math.round(day.low)}°</Text>
+                  </View>
+                </Entrance>
+              ))}
+            </View>
+          ) : null}
+
+          {line.summary ? (
+            <View style={[styles.visualBlock, line.text ? styles.offerStackSpaced : null]}>
+              <Text style={[styles.cardTitle, start]}>{line.summary.title}</Text>
+              {line.summary.stats && line.summary.stats.length > 0 ? (
+                <View style={styles.statsGrid}>
+                  {line.summary.stats.map((s, i) => (
+                    <Entrance key={s.label} delay={120 + i * 60} from={8}>
+                      <View style={styles.statCard}>
+                        <View style={styles.statHeader}>
+                          <Text style={styles.statLabel}>{s.label}</Text>
+                          {s.trend ? trendIcon(s.trend) : null}
+                        </View>
+                        <Text style={styles.statValue}>{s.value}</Text>
+                      </View>
+                    </Entrance>
+                  ))}
+                </View>
+              ) : null}
+              {line.summary.highlights && line.summary.highlights.length > 0 ? (
+                <View style={styles.highlightList}>
+                  {line.summary.highlights.map((h, i) => (
+                    <Entrance key={i} delay={200 + i * 60} from={8}>
+                      <View style={styles.highlightRow}>
+                        <Star color={VOICE.accent} size={14} fill={VOICE.accent} />
+                        <Text style={styles.highlightText}>{h}</Text>
+                      </View>
+                    </Entrance>
+                  ))}
+                </View>
+              ) : null}
+            </View>
+          ) : null}
+
+          {line.quickActions ? (
+            <View style={[styles.chipRow, line.text ? styles.offerStackSpaced : null]}>
+              {line.quickActions.actions.map((a, i) => (
+                <Entrance key={a.label} delay={200 + i * 60} from={8}>
+                  <Pressable
+                    onPress={() => send(a.label)}
+                    style={({ pressed }) => [styles.chip, pressed && styles.offerRowPressed]}
+                    accessibilityRole="button"
+                    accessibilityLabel={a.label}
+                  >
+                    <Text style={styles.chipText}>{a.label}</Text>
+                  </Pressable>
+                </Entrance>
+              ))}
+            </View>
+          ) : null}
+
+          {meta(line)}
+        </View>
+      </View>
+    );
+  };
 
   return (
     <View
@@ -393,8 +854,14 @@ export default function AssistantScreen() {
       ]}
     >
       <LinearGradient colors={VOICE.page} style={StyleSheet.absoluteFill} />
+      <Glow />
 
-      <View style={styles.headerRow}>
+      {/* The page builds top to bottom as the sheet comes up: the header, the
+          orb, what she is doing, the composer. Not with `PageReveal`, as the
+          form has: that plays every entrance inside it again when the page
+          comes back into view, and here that would be the whole thread. The
+          lines rise in on their own, as they arrive. */}
+      <Entrance delay={0} from={12} style={styles.headerRow}>
         <Pressable
           onPress={close}
           style={styles.iconBtn}
@@ -405,7 +872,9 @@ export default function AssistantScreen() {
         </Pressable>
         <Text style={styles.title}>{t('voice.title')}</Text>
         {/* The thread carries across visits, so there has to be a way to drop
-            it and begin again. */}
+            it and begin again. No layout animation on the clear: the screen
+            is replaced, and one configured here would also fade in every view
+            of the new one under its own entrances. */}
         <Pressable
           onPress={() => {
             Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
@@ -418,7 +887,7 @@ export default function AssistantScreen() {
         >
           <RotateCcw color={VOICE.ink} size={19} strokeWidth={2.2} />
         </Pressable>
-      </View>
+      </Entrance>
 
       <ScrollView
         ref={scrollRef}
@@ -426,139 +895,37 @@ export default function AssistantScreen() {
         contentContainerStyle={styles.transcriptContent}
         showsVerticalScrollIndicator={false}
       >
-        {lines.map((line) => {
-          // A picture is its own bubble: the frame is the message, so the
-          // padding and the background that carry text would only box it in.
-          if (line.imageUri) {
-            return (
-              <View key={line.id} style={[styles.imageBubble, { alignSelf: hers }]}>
-                <Image
-                  source={{ uri: line.imageUri }}
-                  style={styles.image}
-                  resizeMode="cover"
-                  accessibilityRole="image"
-                  accessibilityLabel={t('voice.drawing')}
-                />
-              </View>
-            );
-          }
-
-          if (line.drawing) {
-            return (
-              <View
-                key={line.id}
-                style={[styles.herRow, { alignSelf: hers, flexDirection: herRow }]}
-              >
-                <View style={styles.spark}>
-                  <Sparkles color={VOICE.accent} size={17} strokeWidth={2.2} />
-                </View>
-                <View style={[styles.herBubble, styles.drawingBubble]}>
-                  <ActivityIndicator size="small" color={VOICE.accent} />
-                  <Text style={styles.herText}>{t('voice.drawing')}</Text>
-                </View>
-              </View>
-            );
-          }
-
-          const offer = line.offer;
-          const showOffer = offer && offer.options.length > 0;
-
-          if (line.role === 'user') {
-            return (
-              <View key={line.id} style={[styles.meBubble, { alignSelf: mine }]}>
-                <Text style={[styles.meText, start]}>{line.text}</Text>
-                {meta(line)}
-              </View>
-            );
-          }
-
-          return (
-            <View
-              key={line.id}
-              style={[
-                styles.herRow,
-                { alignSelf: hers, flexDirection: herRow },
-                showOffer && styles.herRowWide,
-              ]}
-            >
-              <View style={styles.spark}>
-                <Sparkles color={VOICE.accent} size={17} strokeWidth={2.2} />
-              </View>
-              <View style={[styles.herBubble, showOffer && styles.herBubbleWide]}>
-                {line.text ? <Said text={line.text} style={[styles.herText, start]} /> : null}
-
-                {/* The times sit inside her own bubble rather than in a card of
-                    their own: this is the end of what she said, not a form the
-                    app put in the way. */}
-                {showOffer ? (
-                  <View style={[styles.offerStack, line.text ? styles.offerStackSpaced : null]}>
-                    {offer.options.map((iso) => {
-                      const taken = line.chosen === iso;
-                      const spent = Boolean(line.chosen) && !taken;
-                      return (
-                        <Pressable
-                          key={iso}
-                          onPress={() => chooseTime(line.id, iso)}
-                          disabled={Boolean(line.chosen)}
-                          style={({ pressed }) => [
-                            styles.offerRow,
-                            taken && styles.offerRowTaken,
-                            spent && styles.offerRowSpent,
-                            pressed && styles.offerRowPressed,
-                          ]}
-                          accessibilityRole="button"
-                          accessibilityState={{ selected: taken, disabled: Boolean(line.chosen) }}
-                          accessibilityLabel={`${offer.title} — ${clockRange(iso, offer.durationMinutes)}, ${whenLabel(iso)}`}
-                        >
-                          <Text
-                            style={[styles.offerTime, taken && styles.offerTimeTaken]}
-                            numberOfLines={1}
-                          >
-                            {clockRange(iso, offer.durationMinutes)}
-                          </Text>
-                          <Text
-                            style={[
-                              styles.offerWhen,
-                              // The far end of the row from the time, whichever
-                              // end that is.
-                              { textAlign: rtl ? 'left' : 'right' },
-                              taken && styles.offerWhenTaken,
-                            ]}
-                            numberOfLines={1}
-                          >
-                            {whenLabel(iso)}
-                          </Text>
-                        </Pressable>
-                      );
-                    })}
-                  </View>
-                ) : null}
-
-                {meta(line)}
-              </View>
-            </View>
-          );
-        })}
+        {lines.map((line) => (
+          // Full width, so the bubble inside still sits to its side and its
+          // percentage widths still measure the column.
+          <Arrival key={line.id} delay={arrivalDelay(line.id)}>
+            {bubble(line)}
+          </Arrival>
+        ))}
       </ScrollView>
 
       {deleted.length > 0 ? (
-        <Pressable
-          onPress={() => {
-            Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
-            undoLast();
-          }}
-          style={styles.undoBar}
-          accessibilityRole="button"
-        >
-          <Undo2 color={VOICE.accent} size={16} strokeWidth={2.4} />
-          <Text style={styles.undoText} numberOfLines={1}>
-            {t('voice.undo')} · {deleted.map((c) => c.title).join(', ')}
-          </Text>
-        </Pressable>
+        <PopIn from={0.85}>
+          <Pressable
+            onPress={() => {
+              Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
+              // The bar goes, and the thread closes over the room it took.
+              animateLayout();
+              undoLast();
+            }}
+            style={styles.undoBar}
+            accessibilityRole="button"
+          >
+            <Undo2 color={VOICE.accent} size={16} strokeWidth={2.4} />
+            <Text style={styles.undoText} numberOfLines={1}>
+              {t('voice.undo')} · {deleted.map((c) => c.title).join(', ')}
+            </Text>
+          </Pressable>
+        </PopIn>
       ) : null}
 
       {/* ── The orb, in its own weather ── */}
-      <View style={styles.stage}>
+      <Entrance delay={70} from={20} style={styles.stage}>
         <Waveform near={nearWave} far={farWave} width={width} />
         <Orbit spin={turn} />
 
@@ -569,9 +936,9 @@ export default function AssistantScreen() {
             style={[
               styles.halo,
               {
-                width: 236 - i * 26,
-                height: 236 - i * 26,
-                borderRadius: (236 - i * 26) / 2,
+                width: 160 - i * 22,
+                height: 160 - i * 22,
+                borderRadius: (160 - i * 22) / 2,
                 backgroundColor: tint,
                 transform: [{ scale: haloScale }],
               },
@@ -589,59 +956,88 @@ export default function AssistantScreen() {
           accessibilityLabel={caption}
         >
           <Animated.View style={[styles.orbGlow, { transform: [{ scale: orbScale }] }]}>
-            <View style={styles.orb}>
-              <Mic color={VOICE.accent} size={44} strokeWidth={2.1} />
-            </View>
+            {/* The mic button from the bar, grown: the same sweep at the same
+                angle, with the same dark ink on it. */}
+            <LinearGradient
+              colors={VOICE.accentGradient}
+              start={{ x: 0.1, y: 0.1 }}
+              end={{ x: 0.9, y: 0.95 }}
+              style={styles.orb}
+            >
+              <Mic color={NIGHT.glyph} size={32} strokeWidth={2.2} />
+            </LinearGradient>
           </Animated.View>
         </Pressable>
-      </View>
+      </Entrance>
 
-      <Text style={styles.caption}>{caption}</Text>
-      {hint ? <Text style={styles.hint}>{hint}</Text> : null}
+      <Entrance delay={105} from={14}>
+        {/* Keyed by what it says, so a change of state rises in rather than
+            swapping in place: the words move when she does. */}
+        <Entrance key={caption} from={8}>
+          <Text style={styles.caption}>{caption}</Text>
+          {hint ? <Text style={styles.hint}>{hint}</Text> : null}
+        </Entrance>
+      </Entrance>
 
       {/* Talking is the point, but typing has to be there too — for a noisy
           room, a long title, or a name she keeps mishearing. Same thread. */}
-      <View style={styles.composer}>
-        <TextInput
-          value={draft}
-          onChangeText={setDraft}
-          placeholder={t('assistant.placeholder')}
-          placeholderTextColor={VOICE.meta}
-          style={[styles.composerInput, start]}
-          returnKeyType="send"
-          onSubmitEditing={submitDraft}
-          editable={state !== 'unavailable' || error === 'microphone'}
-        />
-        <Pressable
-          onPress={submitDraft}
-          disabled={!draft.trim()}
-          style={[styles.sendBtn, !draft.trim() && styles.sendBtnIdle]}
-          accessibilityRole="button"
-          accessibilityLabel={t('assistant.send')}
-        >
-          {/* The plane points along the line of writing, whichever way that
-              runs. The flip is on this View and not on the glyph itself: on
-              web the transform lands on the <svg> element, whose origin is its
-              top-left corner, and the plane flies out of the button. */}
-          <View style={rtl ? styles.sendGlyphRTL : undefined}>
-            <Send color={draft.trim() ? '#FFFFFF' : VOICE.accent} size={18} strokeWidth={2.2} />
-          </View>
-        </Pressable>
-      </View>
+      <Entrance delay={140} from={16}>
+        <View style={styles.composer}>
+          <TextInput
+            value={draft}
+            onChangeText={setDraft}
+            placeholder={t('assistant.placeholder')}
+            placeholderTextColor={VOICE.meta}
+            selectionColor={NIGHT.blue[0]}
+            style={[styles.composerInput, start]}
+            returnKeyType="send"
+            onSubmitEditing={submitDraft}
+            editable={state !== 'unavailable' || error === 'microphone'}
+          />
+          <Pressable
+            onPress={submitDraft}
+            disabled={!draft.trim()}
+            style={styles.sendBtn}
+            accessibilityRole="button"
+            accessibilityLabel={t('assistant.send')}
+          >
+            {/* Lights up as the first letter goes in: the blue springs in under
+                the plane rather than switching on. */}
+            {draft.trim() ? <PopIn from={0.5} style={[StyleSheet.absoluteFill, styles.sendFill]} /> : null}
+            {/* The plane points along the line of writing, whichever way that
+                runs. The flip is on this View and not on the glyph itself: on
+                web the transform lands on the <svg> element, whose origin is its
+                top-left corner, and the plane flies out of the button. The View
+                also keeps the plane over the fill there — a positioned fill
+                paints over a bare svg that follows it. */}
+            <View style={rtl ? styles.sendGlyphRTL : undefined}>
+              <Send
+                color={draft.trim() ? colors.primaryText : VOICE.accent}
+                size={18}
+                strokeWidth={2.2}
+              />
+            </View>
+          </Pressable>
+        </View>
+      </Entrance>
 
       {state === 'stopped' ? (
-        <Pressable
-          onPress={() => {
-            Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
-            // Restarts the loop in place. This used to remount the screen,
-            // which threw away the thread on screen and was the same motion
-            // the user was already making by hand — leaving and coming back.
-            restart();
-          }}
-          style={styles.restartBtn}
-        >
-          <Text style={styles.restartText}>{t('voice.restart')}</Text>
-        </Pressable>
+        <PopIn from={0.8}>
+          <Pressable
+            onPress={() => {
+              Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
+              // The button goes and the page settles down over where it was.
+              animateLayout();
+              // Restarts the loop in place. This used to remount the screen,
+              // which threw away the thread on screen and was the same motion
+              // the user was already making by hand — leaving and coming back.
+              restart();
+            }}
+            style={styles.restartBtn}
+          >
+            <Text style={styles.restartText}>{t('voice.restart')}</Text>
+          </Pressable>
+        </PopIn>
       ) : null}
     </View>
   );
@@ -650,218 +1046,415 @@ export default function AssistantScreen() {
 /** The page's own margin. The waveform is the one thing allowed past it. */
 const GUTTER = spacing.md + 4;
 
-const styles = StyleSheet.create({
-  root: { flex: 1, backgroundColor: VOICE.page[0] },
+/**
+ * The edge of a glass shape, as on Home. Glass takes no shadow — on the dark
+ * there is nothing for one to fall on — so the hairline is what holds it.
+ */
+const edge = {
+  borderWidth: StyleSheet.hairlineWidth,
+  // A getter, so a sheet rebuilt for the other scheme reads the line in force.
+  get borderColor() {
+    return NIGHT.line;
+  },
+};
 
-  headerRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    paddingHorizontal: GUTTER,
-    marginBottom: spacing.xs,
-  },
-  iconBtn: {
-    width: 48,
-    height: 48,
-    borderRadius: 24,
-    alignItems: 'center',
-    justifyContent: 'center',
-    backgroundColor: VOICE.chrome,
-    shadowColor: '#3A2A6B',
-    shadowOpacity: 0.1,
-    shadowRadius: 14,
-    shadowOffset: { width: 0, height: 6 },
-    elevation: 3,
-  },
-  title: { fontSize: 23, ...font(700), color: VOICE.ink, letterSpacing: -0.3 },
+const styles = themed(() =>
+  StyleSheet.create({
+    root: { flex: 1, backgroundColor: VOICE.page[0] },
 
-  transcript: { flex: 1 },
-  transcriptContent: { paddingHorizontal: GUTTER, paddingVertical: spacing.md, gap: 12 },
+    headerRow: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      justifyContent: 'space-between',
+      paddingHorizontal: GUTTER,
+      marginBottom: spacing.xs,
+    },
+    /** The same glass disc as the bell on Home. */
+    iconBtn: {
+      ...edge,
+      backgroundColor: VOICE.chrome,
+      width: 48,
+      height: 48,
+      borderRadius: 24,
+      alignItems: 'center',
+      justifyContent: 'center',
+    },
+    title: { fontSize: 23, ...font(700), color: VOICE.ink, letterSpacing: -0.3 },
 
-  // ── What she said ──
-  herRow: { flexDirection: 'row', alignItems: 'flex-end', gap: 8, maxWidth: '92%' },
-  /** An offer needs the full column: four rows want one shared edge. */
-  herRowWide: { width: '92%' },
-  spark: {
-    width: 34,
-    height: 34,
-    borderRadius: 17,
-    backgroundColor: VOICE.chrome,
-    alignItems: 'center',
-    justifyContent: 'center',
-    shadowColor: '#3A2A6B',
-    shadowOpacity: 0.09,
-    shadowRadius: 10,
-    shadowOffset: { width: 0, height: 4 },
-    elevation: 2,
-  },
-  herBubble: {
-    flexShrink: 1,
-    backgroundColor: VOICE.her,
-    borderRadius: 24,
-    borderBottomLeftRadius: 8,
-    paddingHorizontal: 16,
-    paddingVertical: 12,
-  },
-  herBubbleWide: { flex: 1 },
-  herText: { fontSize: 16, ...font(500), color: VOICE.ink, lineHeight: 24 },
-  saidStrong: { ...font(700) },
-  drawingBubble: { flexDirection: 'row', alignItems: 'center', gap: 10 },
+    transcript: { flex: 1 },
+    transcriptContent: { paddingHorizontal: GUTTER, paddingVertical: spacing.md, gap: 12 },
 
-  // ── What you said ──
-  meBubble: {
-    maxWidth: '86%',
-    backgroundColor: VOICE.me,
-    borderRadius: 24,
-    borderBottomRightRadius: 8,
-    paddingHorizontal: 16,
-    paddingVertical: 12,
-    shadowColor: '#3A2A6B',
-    shadowOpacity: 0.08,
-    shadowRadius: 16,
-    shadowOffset: { width: 0, height: 6 },
-    elevation: 2,
-  },
-  meText: { fontSize: 16, ...font(500), color: VOICE.ink, lineHeight: 24 },
+    // ── What she said ──
+    herRow: { flexDirection: 'row', alignItems: 'flex-end', gap: 8, maxWidth: '92%' },
+    /** An offer needs the full column: four rows want one shared edge. */
+    herRowWide: { width: '92%' },
+    /**
+     * Her mark beside each line: the orb in small, glowing the orb's blue rather
+     * than the disc's own last stop, so every line of hers is signed by the thing
+     * you talk to.
+     */
+    spark: { shadowColor: VOICE.accentGradient[1] },
+    herBubble: {
+      ...edge,
+      backgroundColor: VOICE.her,
+      flexShrink: 1,
+      borderRadius: 24,
+      borderBottomLeftRadius: 8,
+      paddingHorizontal: 16,
+      paddingVertical: 12,
+    },
+    herBubbleWide: { flex: 1 },
+    herText: { fontSize: 16, ...font(500), color: VOICE.ink, lineHeight: 24 },
+    saidStrong: { ...font(700) },
+    drawingBubble: { flexDirection: 'row', alignItems: 'center', gap: 10 },
 
-  metaRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    alignSelf: 'flex-end',
-    gap: 4,
-    marginTop: 4,
-  },
-  metaTime: { fontSize: 11, ...font(500), color: VOICE.meta, letterSpacing: 0.2 },
+    // ── What you said ──
+    // The app's blue, flat rather than the lit gradient: white body text on the
+    // gradient's top stop is under 3:1, and this is text you read, not a label.
+    meBubble: {
+      maxWidth: '86%',
+      backgroundColor: VOICE.me,
+      borderRadius: 24,
+      borderBottomRightRadius: 8,
+      paddingHorizontal: 16,
+      paddingVertical: 12,
+    },
+    meText: { fontSize: 16, ...font(500), color: colors.primaryText, lineHeight: 24 },
 
-  imageBubble: {
-    maxWidth: '88%',
-    borderRadius: 24,
-    overflow: 'hidden',
-    backgroundColor: VOICE.her,
-  },
-  // Square, because that is the shape asked for unless the user says otherwise,
-  // and a fixed aspect keeps the thread from jumping as pictures load.
-  image: { width: 240, aspectRatio: 1 },
+    metaRow: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      alignSelf: 'flex-end',
+      gap: 4,
+      marginTop: 4,
+    },
+    metaTime: { fontSize: 11, ...font(500), color: VOICE.meta, letterSpacing: 0.2 },
+    metaTimeOwn: { color: colors.primaryText },
 
-  // ── Times to choose from ──
-  offerStack: { gap: 8, alignSelf: 'stretch' },
-  offerStackSpaced: { marginTop: 10 },
-  offerRow: {
-    height: 52,
-    borderRadius: 16,
-    backgroundColor: VOICE.chrome,
-    flexDirection: 'row',
-    alignItems: 'center',
-    paddingHorizontal: 14,
-    gap: 10,
-  },
-  offerRowPressed: { opacity: 0.72 },
-  offerRowTaken: { backgroundColor: VOICE.accent },
-  offerRowSpent: { opacity: 0.4 },
-  offerTime: {
-    fontSize: 20,
-    ...font(700),
-    color: VOICE.ink,
-    letterSpacing: -0.3,
-    flexShrink: 0,
-  },
-  offerTimeTaken: { color: '#FFFFFF' },
-  offerWhen: { flex: 1, fontSize: 14, ...font(600), color: VOICE.accent },
-  offerWhenTaken: { color: 'rgba(255,255,255,0.78)' },
+    imageBubble: {
+      maxWidth: '88%',
+      borderRadius: 24,
+      overflow: 'hidden',
+      backgroundColor: VOICE.her,
+    },
+    // Square, because that is the shape asked for unless the user says otherwise,
+    // and a fixed aspect keeps the thread from jumping as pictures load.
+    image: { width: 240, aspectRatio: 1 },
 
-  undoBar: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 8,
-    alignSelf: 'center',
-    backgroundColor: VOICE.chrome,
-    borderRadius: 100,
-    paddingHorizontal: 16,
-    paddingVertical: 10,
-    marginBottom: spacing.sm,
-    shadowColor: '#3A2A6B',
-    shadowOpacity: 0.1,
-    shadowRadius: 14,
-    shadowOffset: { width: 0, height: 6 },
-    elevation: 3,
-  },
-  undoText: { fontSize: 14, ...font(600), color: VOICE.ink, flexShrink: 1 },
+    // ── Times to choose from ──
+    offerStack: { gap: 8, alignSelf: 'stretch' },
+    offerStackSpaced: { marginTop: 10 },
+    visualBlock: { gap: 4, alignSelf: 'stretch' },
+    /** The quieter fill inside a card, since these sit inside her bubble. */
+    offerRow: {
+      height: 52,
+      borderRadius: 16,
+      backgroundColor: VOICE.chrome,
+      flexDirection: 'row',
+      alignItems: 'center',
+      paddingHorizontal: 14,
+      gap: 10,
+    },
+    offerRowPressed: { opacity: 0.72 },
+    /** The one you took is in your own blue: picking it was your side of the talk. */
+    offerTakenFill: { borderRadius: 16, backgroundColor: VOICE.me },
+    offerRowSpent: { opacity: 0.4 },
+    offerTime: {
+      fontSize: 20,
+      ...font(700),
+      color: VOICE.ink,
+      letterSpacing: -0.3,
+      flexShrink: 0,
+    },
+    offerTimeTaken: { color: colors.primaryText },
+    offerWhen: { flex: 1, fontSize: 14, ...font(600), color: VOICE.accent },
+    // Full white, not a dimmed one: on the blue, anything less is under 4.5:1,
+    // and the size step to the time already makes this the quieter of the two.
+    offerWhenTaken: { color: colors.primaryText },
 
-  // ── The orb ──
-  stage: { height: 258, alignItems: 'center', justifyContent: 'center' },
-  wave: { position: 'absolute', alignItems: 'center', justifyContent: 'center' },
-  waveLayer: { position: 'absolute' },
-  orbit: { position: 'absolute', width: ORBIT_BOX, height: ORBIT_BOX, alignItems: 'center', justifyContent: 'center' },
-  halo: { position: 'absolute' },
-  orbGlow: {
-    // Her own light, in her own colour — the glow is the thing that says she
-    // is awake, so it is a violet cast rather than the grey a neutral shadow
-    // would put under the orb.
-    shadowColor: VOICE.accent,
-    shadowOpacity: 0.42,
-    shadowRadius: 30,
-    shadowOffset: { width: 0, height: 12 },
-    elevation: 12,
-    borderRadius: 66,
-  },
-  orb: {
-    width: 132,
-    height: 132,
-    borderRadius: 66,
-    backgroundColor: '#FFFFFF',
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
+    // ── Structured cards ──
+    cardTitle: {
+      fontSize: 14,
+      ...font(700),
+      color: VOICE.accent,
+      marginBottom: 2,
+    },
+    cardRow: {
+      borderRadius: 16,
+      backgroundColor: VOICE.chrome,
+      paddingHorizontal: 14,
+      paddingVertical: 12,
+      gap: 2,
+    },
+    cardLabel: { fontSize: 16, ...font(700), color: VOICE.ink, lineHeight: 22 },
+    cardDetail: { fontSize: 14, ...font(500), color: VOICE.meta, lineHeight: 20 },
+    cardTakenFill: { borderRadius: 16, backgroundColor: VOICE.me },
+    cardDetailTaken: { color: colors.primaryText, opacity: 0.8 },
 
-  caption: { marginTop: spacing.sm, fontSize: 17, ...font(700), color: VOICE.ink, textAlign: 'center' },
-  hint: { fontSize: 14, ...font(500), color: VOICE.meta, textAlign: 'center', marginTop: 2 },
+    // ── Checklist ──
+    checkRow: {
+      borderRadius: 16,
+      backgroundColor: VOICE.chrome,
+      paddingHorizontal: 14,
+      paddingVertical: 10,
+      flexDirection: 'row',
+      alignItems: 'center',
+      gap: 10,
+    },
+    checkBox: {
+      width: 22,
+      height: 22,
+      borderRadius: 6,
+      borderWidth: 2,
+      borderColor: VOICE.meta,
+      alignItems: 'center',
+      justifyContent: 'center',
+    },
+    checkBoxDone: {
+      borderColor: VOICE.accent,
+      backgroundColor: VOICE.accent,
+    },
+    checkContent: { flex: 1, gap: 1 },
+    checkLabelDone: { textDecorationLine: 'line-through', opacity: 0.5 },
 
-  composer: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 8,
-    marginHorizontal: GUTTER,
-    marginTop: spacing.md,
-    backgroundColor: VOICE.chrome,
-    borderRadius: 100,
-    padding: 6,
-    shadowColor: '#3A2A6B',
-    shadowOpacity: 0.09,
-    shadowRadius: 18,
-    shadowOffset: { width: 0, height: 8 },
-    elevation: 3,
-  },
-  composerInput: {
-    flex: 1,
-    // The browser's own focus ring is a hard black rectangle inside the pill.
-    // Dropping it is normally a sin; here the field *is* the whole pill, which
-    // carries its own shadow, and the caret says where the typing goes.
-    outlineWidth: 0,
-    paddingHorizontal: 14,
-    paddingVertical: 12,
-    fontSize: 15,
-    ...font(500),
-    color: VOICE.ink,
-  },
-  sendBtn: {
-    width: 44,
-    height: 44,
-    borderRadius: 22,
-    backgroundColor: VOICE.accent,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  /** Nothing to send yet: the tint of the button rather than a greyed copy. */
-  sendBtnIdle: { backgroundColor: VOICE.her },
-  sendGlyphRTL: { transform: [{ scaleX: -1 }] },
+    // ── Confirmation card ──
+    confirmCard: {
+      borderRadius: 16,
+      backgroundColor: VOICE.chrome,
+      paddingHorizontal: 14,
+      paddingVertical: 12,
+      gap: 8,
+      borderLeftWidth: 3,
+      borderLeftColor: VOICE.accent,
+    },
+    confirmHeader: { flexDirection: 'row', alignItems: 'center', gap: 8 },
+    confirmIcon: {
+      width: 24,
+      height: 24,
+      borderRadius: 12,
+      backgroundColor: VOICE.accent,
+      alignItems: 'center',
+      justifyContent: 'center',
+    },
+    confirmTitle: { fontSize: 16, ...font(700), color: VOICE.ink, flex: 1, lineHeight: 22 },
+    confirmField: { flexDirection: 'row', gap: 8, paddingLeft: 32 },
+    confirmFieldLabel: { fontSize: 14, ...font(600), color: VOICE.meta, minWidth: 60 },
+    confirmFieldValue: { fontSize: 14, ...font(500), color: VOICE.ink, flex: 1 },
 
-  restartBtn: {
-    alignSelf: 'center',
-    marginTop: spacing.sm,
-    backgroundColor: VOICE.chrome,
-    borderRadius: 100,
-    paddingHorizontal: 22,
-    paddingVertical: 12,
-  },
-  restartText: { fontSize: 15, ...font(700), color: VOICE.accent },
-});
+    // ── Budget gauges ──
+    budgetRow: {
+      borderRadius: 16,
+      backgroundColor: VOICE.chrome,
+      paddingHorizontal: 14,
+      paddingVertical: 10,
+      gap: 6,
+    },
+    budgetHeader: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' },
+    budgetCat: { fontSize: 15, ...font(600), color: VOICE.ink, flex: 1 },
+    budgetAmounts: { fontSize: 13, ...font(600), color: VOICE.meta },
+    budgetOver: { color: '#e67e73' },
+    budgetTrack: {
+      height: 6,
+      borderRadius: 3,
+      backgroundColor: `${VOICE.meta}30`,
+      overflow: 'hidden' as const,
+    },
+    budgetFill: {
+      height: 6,
+      borderRadius: 3,
+      backgroundColor: VOICE.accent,
+    },
+    budgetFillOver: { backgroundColor: '#e67e73' },
+
+    // ── Day timeline ──
+    timelineRow: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      gap: 10,
+      paddingVertical: 6,
+      paddingHorizontal: 4,
+    },
+    timelineDot: {
+      width: 8,
+      height: 8,
+      borderRadius: 4,
+      backgroundColor: VOICE.accent,
+    },
+    timelineTime: { fontSize: 14, ...font(700), color: VOICE.meta, minWidth: 76 },
+    timelineTitle: { fontSize: 15, ...font(500), color: VOICE.ink, flex: 1 },
+
+    // ── Debt cards ──
+    debtRow: {
+      borderRadius: 16,
+      backgroundColor: VOICE.chrome,
+      paddingHorizontal: 14,
+      paddingVertical: 10,
+      flexDirection: 'row',
+      alignItems: 'center',
+      justifyContent: 'space-between',
+    },
+    debtInfo: { flexDirection: 'row', alignItems: 'center', gap: 10, flex: 1 },
+    debtDirection: {
+      width: 28,
+      height: 28,
+      borderRadius: 14,
+      backgroundColor: `${VOICE.meta}20`,
+      alignItems: 'center',
+      justifyContent: 'center',
+    },
+    debtText: { flex: 1, gap: 1 },
+    debtAmount: { fontSize: 13, ...font(600), color: VOICE.meta },
+    debtSettle: {
+      width: 36,
+      height: 36,
+      borderRadius: 18,
+      backgroundColor: `${VOICE.accent}20`,
+      alignItems: 'center',
+      justifyContent: 'center',
+    },
+
+    // ── Quick action chips ──
+    chipRow: {
+      flexDirection: 'row',
+      flexWrap: 'wrap',
+      gap: 8,
+      alignSelf: 'stretch',
+    },
+    chip: {
+      ...edge,
+      backgroundColor: VOICE.chrome,
+      borderRadius: 100,
+      paddingHorizontal: 14,
+      paddingVertical: 8,
+    },
+    chipText: { fontSize: 14, ...font(600), color: VOICE.accent },
+
+    // ── Weather ──
+    weatherRow: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      gap: 12,
+      paddingVertical: 8,
+      paddingHorizontal: 4,
+      borderBottomWidth: StyleSheet.hairlineWidth,
+      borderBottomColor: 'rgba(255,255,255,0.08)',
+    },
+    weatherInfo: { flex: 1 },
+    weatherDay: { fontSize: 15, ...font(600), color: VOICE.ink },
+    weatherDesc: { fontSize: 12, ...font(400), color: VOICE.meta, marginTop: 1 },
+    weatherTemp: { fontSize: 16, ...font(700), color: VOICE.ink },
+
+    // ── Summary ──
+    statsGrid: { flexDirection: 'row', flexWrap: 'wrap', gap: 8, marginTop: 8 },
+    statCard: {
+      ...edge,
+      backgroundColor: 'rgba(255,255,255,0.06)',
+      borderRadius: 12,
+      padding: 12,
+      minWidth: 100,
+      flex: 1,
+    },
+    statHeader: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' },
+    statLabel: { fontSize: 12, ...font(500), color: VOICE.meta },
+    statValue: { fontSize: 20, ...font(700), color: VOICE.ink, marginTop: 4 },
+    highlightList: { marginTop: 10, gap: 6 },
+    highlightRow: { flexDirection: 'row', alignItems: 'flex-start', gap: 8 },
+    highlightText: { fontSize: 14, ...font(400), color: VOICE.ink, flex: 1 },
+
+    undoBar: {
+      ...edge,
+      backgroundColor: VOICE.chrome,
+      flexDirection: 'row',
+      alignItems: 'center',
+      gap: 8,
+      alignSelf: 'center',
+      borderRadius: 100,
+      paddingHorizontal: 16,
+      paddingVertical: 10,
+      marginBottom: spacing.sm,
+    },
+    undoText: { fontSize: 14, ...font(600), color: VOICE.ink, flexShrink: 1 },
+
+    // ── The orb ──
+    stage: { height: 172, alignItems: 'center', justifyContent: 'center' },
+    wave: { position: 'absolute', alignItems: 'center', justifyContent: 'center' },
+    waveLayer: { position: 'absolute' },
+    orbit: { position: 'absolute', width: ORBIT_BOX, height: ORBIT_BOX, alignItems: 'center', justifyContent: 'center' },
+    halo: { position: 'absolute' },
+    orbGlow: {
+      // Her own light — the glow is the thing that says she is awake. It is the
+      // blue the mic button in the bar glows, and on the dark it is light rather
+      // than shadow, so it pools close around the orb instead of dropping below.
+      shadowColor: VOICE.accentGradient[1],
+      shadowOpacity: 0.5,
+      shadowRadius: 30,
+      shadowOffset: { width: 0, height: 6 },
+      elevation: 12,
+      borderRadius: 44,
+      backgroundColor: VOICE.accentGradient[1],
+    },
+    orb: {
+      width: 88,
+      height: 88,
+      borderRadius: 44,
+      alignItems: 'center',
+      justifyContent: 'center',
+    },
+
+    caption: { marginTop: spacing.xs, fontSize: 16, ...font(700), color: VOICE.ink, textAlign: 'center' },
+    hint: { fontSize: 14, ...font(500), color: VOICE.meta, textAlign: 'center', marginTop: 2 },
+
+    /** A field as `Field` draws one — the quiet opaque fill and a hairline — in a pill. */
+    composer: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      gap: 8,
+      marginHorizontal: GUTTER,
+      marginTop: spacing.md,
+      backgroundColor: colors.surfaceAlt,
+      borderWidth: StyleSheet.hairlineWidth,
+      borderColor: colors.border,
+      borderRadius: 100,
+      padding: 6,
+    },
+    composerInput: {
+      flex: 1,
+      // The browser's own focus ring is a hard rectangle inside the pill.
+      // Dropping it is normally a sin; here the field *is* the whole pill, which
+      // carries its own edge, and the caret says where the typing goes.
+      outlineWidth: 0,
+      paddingHorizontal: 14,
+      paddingVertical: 12,
+      fontSize: 15,
+      ...font(500),
+      color: VOICE.ink,
+    },
+    /** Nothing to send yet: a glass disc with the glyph lit, rather than a greyed copy. */
+    sendBtn: {
+      width: 44,
+      height: 44,
+      borderRadius: 22,
+      backgroundColor: VOICE.chrome,
+      alignItems: 'center',
+      justifyContent: 'center',
+    },
+    /**
+     * Something to send: your blue, as what it sends lands in a bubble of the
+     * same colour. A fill of its own so it can spring in; opaque, so the glass
+     * under it changes nothing once it has.
+     */
+    sendFill: { borderRadius: 22, backgroundColor: VOICE.me },
+    sendGlyphRTL: { transform: [{ scaleX: -1 }] },
+
+    restartBtn: {
+      ...edge,
+      backgroundColor: VOICE.chrome,
+      alignSelf: 'center',
+      marginTop: spacing.sm,
+      borderRadius: 100,
+      paddingHorizontal: 22,
+      paddingVertical: 12,
+    },
+    restartText: { fontSize: 15, ...font(700), color: VOICE.accent },
+  }),
+);

@@ -6,7 +6,7 @@ import { voiceTurnLimiter, voiceMediaLimiter } from '../../middleware/rateLimit.
 import { ValidationError } from '../../lib/errors.js';
 import { config } from '../../config.js';
 import { runVoiceTurn, snapshotSchema, profileSchema, didNotCatchThat } from './agent.js';
-import { synthesize, isSpeechConfigured, MAX_SPEECH_CHARS } from './tts.js';
+import { synthesizeStream, prewarmSpeech, servePrewarmed, isSpeechConfigured, MAX_SPEECH_CHARS } from './tts.js';
 
 /**
  * The voice assistant (stateless).
@@ -69,13 +69,27 @@ const turnBody = z.object({
     )
     .max(40)
     .default([]),
-  snapshot: snapshotSchema.default({ tasks: [], events: [] }),
+  snapshot: snapshotSchema.default({
+    tasks: [],
+    events: [],
+    shopping: [],
+    money: [],
+    debts: [],
+    budgets: {},
+  }),
   /**
    * What the opening questionnaire learned. Optional on purpose: an install
    * from before it existed, or someone who skipped it, still gets a full turn
    * — just one tuned to nobody in particular.
    */
   profile: profileSchema.optional(),
+  /** The phone's current GPS position, when the user granted permission. */
+  location: z.object({
+    latitude: z.number().finite(),
+    longitude: z.number().finite(),
+    city: z.string().max(120).optional(),
+    country: z.string().max(120).optional(),
+  }).optional(),
 });
 
 // ── POST /voice/turn ────────────────────────────────────────────────────────
@@ -85,10 +99,6 @@ voiceRouter.post(
   voiceTurnLimiter,
   asyncHandler(async (req, res) => {
     const body = parseBody(turnBody, req);
-
-    if (!config.OPENAI_API_KEY) {
-      throw new ValidationError('The assistant is not configured on this server');
-    }
 
     // Nothing was made out. Answered here rather than by the model: there is
     // no sentence to reason about, the reply is the same every time, and
@@ -104,6 +114,10 @@ voiceRouter.post(
       return;
     }
 
+    if (!config.OPENAI_API_KEY) {
+      throw new ValidationError('The assistant is not configured on this server');
+    }
+
     const { reply, actions, consultedFreeTime } = await runVoiceTurn({
       text: body.text,
       language: body.language,
@@ -113,22 +127,20 @@ voiceRouter.post(
       history: body.history,
       snapshot: body.snapshot,
       profile: body.profile,
+      location: body.location,
     });
+
+    // Start TTS immediately so audio is mid-stream by the time the client
+    // receives this JSON and opens /voice/speak with the token.
+    const speakToken = reply && isSpeechConfigured() ? prewarmSpeech(reply) : null;
 
     res.json({
       reply,
       actions,
-      // Diagnostic, and deliberately not part of the contract the client reads.
       consultedFreeTime,
-      /**
-       * Whether there were words to answer. Always true here; the empty-audio
-       * path above is the only place it is false. A client that ignores it
-       * loses nothing — the reply reads correctly either way — but one that
-       * reads it can keep listening without speaking the prompt aloud.
-       */
       heard: true,
-      // The device only asks for audio when there is a voice to ask for.
       canSpeak: isSpeechConfigured(),
+      ...(speakToken ? { speakToken } : {}),
     });
   }),
 );
@@ -151,14 +163,9 @@ voiceRouter.get(
   '/voice/speak',
   voiceMediaLimiter,
   asyncHandler(async (req, res) => {
+    const token = typeof req.query.token === 'string' ? req.query.token : undefined;
+    if (token && servePrewarmed(token, res)) return;
     const { text } = parseQuery(speakQuery, req);
-
-    const audio = await synthesize(text);
-
-    res.setHeader('Content-Type', 'audio/mpeg');
-    res.setHeader('Content-Length', String(audio.length));
-    // Same sentence, same bytes — let the player and any proxy keep it briefly.
-    res.setHeader('Cache-Control', 'private, max-age=300');
-    res.status(200).end(audio);
+    await synthesizeStream(text, res);
   }),
 );

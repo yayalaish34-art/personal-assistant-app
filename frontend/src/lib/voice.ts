@@ -10,8 +10,11 @@ import {
   type IncomeCategory,
   type ExpenseCategory,
 } from './api';
-import { getLanguage } from './i18n';
+import { getVoiceLanguage } from './i18n';
+import { getLocation } from './location';
 import { storage } from './storage';
+import { monthKey, shiftMonth } from './finance';
+import { sameItem } from './shopping';
 
 // The voice assistant's side of the wire.
 //
@@ -21,17 +24,15 @@ import { storage } from './storage';
 // the changes to make. Those changes are applied here, locally, by
 // `applyActions`.
 
-const API_BASE = 'https://personal-assistant-api-production-618a.up.railway.app';
+const API_BASE = (process.env.EXPO_PUBLIC_API_URL || 'https://personal-assistant-api-production-618a.up.railway.app').replace(/\/$/, '');
 const TRANSCRIBE_URL = `${API_BASE}/transcribe`;
 const TURN_URL = `${API_BASE}/voice/turn`;
 const SPEAK_URL = `${API_BASE}/voice/speak`;
 const IMAGE_URL = `${API_BASE}/image`;
 
-// She speaks every language the user does. The recording goes up with no
-// language hint so the transcriber detects what was actually spoken, the model
-// answers in the language of what it heard, and the voice model is chosen
-// server-side from the reply text itself. The interface language only decides
-// one thing any more: the opening greeting, which has no user words to mirror.
+// The user picks their language in onboarding. That language is sent as a hint
+// to the transcriber to avoid wrong-language guesses from room
+// echo, and to the model so it always answers in the right language.
 
 // ── Speech in ───────────────────────────────────────────────────────────────
 
@@ -46,25 +47,14 @@ const IMAGE_URL = `${API_BASE}/image`;
 export async function transcribe(uri: string): Promise<string> {
   const form = new FormData();
 
-  if (uri.startsWith('blob:') || uri.startsWith('data:')) {
-    // Web: MediaRecorder hands back a blob URL.
-    const blob = await (await fetch(uri)).blob();
-    form.append('audio', blob, blob.type.includes('webm') ? 'recording.webm' : 'recording.m4a');
-  } else {
-    // Native: React Native's FormData takes a file descriptor object.
-    const name = uri.split('/').pop() || 'recording.m4a';
-    const ext = name.split('.').pop()?.toLowerCase() || 'm4a';
-    form.append('audio', {
-      uri,
-      name,
-      type: ext === 'webm' ? 'audio/webm' : 'audio/m4a',
-    } as unknown as Blob);
-  }
+  const blob = await (await fetch(uri)).blob();
+  const name = uri.split('/').pop() || 'recording.m4a';
+  const ext = name.split('.').pop()?.toLowerCase() || 'm4a';
+  form.append('audio', blob, ext === 'webm' ? 'recording.webm' : 'recording.m4a');
 
-  // No language hint: a hint forces the transcription into that language, and
-  // she now takes whatever language the user speaks. The trade this makes is
-  // known — a very short utterance is occasionally detected as the wrong
-  // language — but a hint made every language except the hinted one impossible.
+  // Send the user's chosen language to avoid guessing random
+  // languages from room echo or short utterances.
+  form.append('language', getVoiceLanguage());
 
   const res = await fetch(TRANSCRIBE_URL, { method: 'POST', body: form });
   if (!res.ok) {
@@ -86,11 +76,9 @@ export async function transcribe(uri: string): Promise<string> {
  * A URL rather than downloaded bytes: the audio player takes a source it can
  * stream, and the device has nowhere useful to put an mp3 anyway.
  */
-export function speechUrl(text: string): string {
-  // Hand-encoded rather than URLSearchParams: React Native ships an incomplete
-  // implementation, and this string is mostly non-ASCII. No language parameter:
-  // the server reads the language off the text itself.
-  return `${SPEAK_URL}?text=${encodeURIComponent(text)}`;
+export function speechUrl(text: string, token?: string): string {
+  const base = `${SPEAK_URL}?text=${encodeURIComponent(text)}`;
+  return token ? `${base}&token=${encodeURIComponent(token)}` : base;
 }
 
 // ── The turn ────────────────────────────────────────────────────────────────
@@ -228,6 +216,279 @@ export function parseOffer(args: Record<string, unknown>): TimeOffer | null {
   };
 }
 
+// ── Cards for structured content ───────────────────────────────────────────
+
+export interface CardSet {
+  title?: string;
+  items: Array<{ label: string; detail?: string }>;
+  selectable?: boolean;
+}
+
+export function parseCards(args: Record<string, unknown>): CardSet | null {
+  const raw = Array.isArray(args.cards) ? args.cards : [];
+  const items = raw
+    .filter(
+      (c): c is Record<string, unknown> =>
+        typeof c === 'object' && c !== null && typeof (c as Record<string, unknown>).label === 'string',
+    )
+    .map((c) => ({
+      label: c.label as string,
+      ...(typeof c.detail === 'string' ? { detail: c.detail } : {}),
+    }));
+  if (items.length < 2) return null;
+  return {
+    ...(typeof args.title === 'string' ? { title: args.title } : {}),
+    items,
+    selectable: args.selectable === true,
+  };
+}
+
+// ── Checklist for tasks / shopping ─────────────────────────────────────────
+
+export interface ChecklistData {
+  title?: string;
+  kind: 'tasks' | 'shopping';
+  items: Array<{ id: string; label: string; checked: boolean; detail?: string }>;
+}
+
+export function parseChecklist(args: Record<string, unknown>): ChecklistData | null {
+  const kind = args.kind === 'shopping' ? 'shopping' : 'tasks';
+  const raw = Array.isArray(args.items) ? args.items : [];
+  const items = raw
+    .filter(
+      (i): i is Record<string, unknown> =>
+        typeof i === 'object' && i !== null &&
+        typeof (i as Record<string, unknown>).id === 'string' &&
+        typeof (i as Record<string, unknown>).label === 'string',
+    )
+    .map((i) => ({
+      id: i.id as string,
+      label: i.label as string,
+      checked: i.checked === true,
+      ...(typeof i.detail === 'string' ? { detail: i.detail } : {}),
+    }));
+  if (items.length === 0) return null;
+  return {
+    ...(typeof args.title === 'string' ? { title: args.title } : {}),
+    kind,
+    items,
+  };
+}
+
+// ── Confirmation card ─────────────────────────────────────────────────────
+
+export interface ConfirmationData {
+  title: string;
+  fields: Array<{ label: string; value: string }>;
+}
+
+export function parseConfirmation(args: Record<string, unknown>): ConfirmationData | null {
+  const title = typeof args.title === 'string' ? args.title.trim() : '';
+  if (!title) return null;
+  const raw = Array.isArray(args.fields) ? args.fields : [];
+  const fields = raw
+    .filter(
+      (f): f is Record<string, unknown> =>
+        typeof f === 'object' && f !== null &&
+        typeof (f as Record<string, unknown>).label === 'string' &&
+        typeof (f as Record<string, unknown>).value === 'string',
+    )
+    .map((f) => ({ label: f.label as string, value: f.value as string }));
+  if (fields.length === 0) return null;
+  return { title, fields };
+}
+
+// ── Budget gauges ─────────────────────────────────────────────────────────
+
+export interface BudgetData {
+  title?: string;
+  categories: Array<{ name: string; spent: number; limit: number }>;
+}
+
+export function parseBudget(args: Record<string, unknown>): BudgetData | null {
+  const raw = Array.isArray(args.categories) ? args.categories : [];
+  const categories = raw
+    .filter(
+      (c): c is Record<string, unknown> =>
+        typeof c === 'object' && c !== null &&
+        typeof (c as Record<string, unknown>).name === 'string' &&
+        typeof (c as Record<string, unknown>).spent === 'number' &&
+        typeof (c as Record<string, unknown>).limit === 'number',
+    )
+    .map((c) => ({
+      name: c.name as string,
+      spent: c.spent as number,
+      limit: c.limit as number,
+    }));
+  if (categories.length === 0) return null;
+  return {
+    ...(typeof args.title === 'string' ? { title: args.title } : {}),
+    categories,
+  };
+}
+
+// ── Day timeline ──────────────────────────────────────────────────────────
+
+export interface TimelineData {
+  title?: string;
+  events: Array<{ title: string; start: string; end?: string }>;
+}
+
+export function parseTimeline(args: Record<string, unknown>): TimelineData | null {
+  const raw = Array.isArray(args.events) ? args.events : [];
+  const events = raw
+    .filter(
+      (e): e is Record<string, unknown> =>
+        typeof e === 'object' && e !== null &&
+        typeof (e as Record<string, unknown>).title === 'string' &&
+        typeof (e as Record<string, unknown>).start === 'string',
+    )
+    .map((e) => ({
+      title: e.title as string,
+      start: e.start as string,
+      ...(typeof e.end === 'string' ? { end: e.end } : {}),
+    }));
+  if (events.length === 0) return null;
+  return {
+    ...(typeof args.title === 'string' ? { title: args.title } : {}),
+    events,
+  };
+}
+
+// ── Quick action chips ────────────────────────────────────────────────────
+
+export interface QuickActionsData {
+  actions: Array<{ label: string }>;
+}
+
+export function parseActions(args: Record<string, unknown>): QuickActionsData | null {
+  const raw = Array.isArray(args.actions) ? args.actions : [];
+  const actions = raw
+    .filter(
+      (a): a is Record<string, unknown> =>
+        typeof a === 'object' && a !== null &&
+        typeof (a as Record<string, unknown>).label === 'string',
+    )
+    .map((a) => ({ label: a.label as string }));
+  if (actions.length < 2) return null;
+  return { actions };
+}
+
+// ── Debt cards ────────────────────────────────────────────────────────────
+
+export interface DebtData {
+  title?: string;
+  debts: Array<{
+    id: string;
+    person: string;
+    amount: number;
+    direction: 'owe' | 'owed';
+    description?: string;
+  }>;
+}
+
+export function parseDebt(args: Record<string, unknown>): DebtData | null {
+  const raw = Array.isArray(args.debts) ? args.debts : [];
+  const debts = raw
+    .filter(
+      (d): d is Record<string, unknown> =>
+        typeof d === 'object' && d !== null &&
+        typeof (d as Record<string, unknown>).id === 'string' &&
+        typeof (d as Record<string, unknown>).person === 'string' &&
+        typeof (d as Record<string, unknown>).amount === 'number' &&
+        typeof (d as Record<string, unknown>).direction === 'string',
+    )
+    .map((d) => ({
+      id: d.id as string,
+      person: d.person as string,
+      amount: d.amount as number,
+      direction: (d.direction === 'owe' ? 'owe' : 'owed') as 'owe' | 'owed',
+      ...(typeof d.description === 'string' ? { description: d.description } : {}),
+    }));
+  if (debts.length === 0) return null;
+  return {
+    ...(typeof args.title === 'string' ? { title: args.title } : {}),
+    debts,
+  };
+}
+
+// ── Weather cards ──────────────────────────────────────────────────────────
+
+export interface WeatherData {
+  location?: string;
+  days: Array<{
+    day: string;
+    icon: 'sun' | 'cloud' | 'rain' | 'storm' | 'snow' | 'partly_cloudy' | 'wind' | 'fog';
+    high: number;
+    low: number;
+    description?: string;
+  }>;
+}
+
+export function parseWeather(args: Record<string, unknown>): WeatherData | null {
+  const raw = Array.isArray(args.days) ? args.days : [];
+  const days = raw
+    .filter(
+      (d): d is Record<string, unknown> =>
+        typeof d === 'object' && d !== null &&
+        typeof (d as Record<string, unknown>).day === 'string' &&
+        typeof (d as Record<string, unknown>).icon === 'string' &&
+        typeof (d as Record<string, unknown>).high === 'number' &&
+        typeof (d as Record<string, unknown>).low === 'number',
+    )
+    .map((d) => ({
+      day: d.day as string,
+      icon: d.icon as WeatherData['days'][number]['icon'],
+      high: d.high as number,
+      low: d.low as number,
+      ...(typeof d.description === 'string' ? { description: d.description } : {}),
+    }));
+  if (days.length === 0) return null;
+  return {
+    ...(typeof args.location === 'string' ? { location: args.location } : {}),
+    days,
+  };
+}
+
+// ── Summary cards ──────────────────────────────────────────────────────────
+
+export interface SummaryData {
+  title: string;
+  stats?: Array<{
+    label: string;
+    value: string;
+    trend?: 'up' | 'down' | 'neutral';
+  }>;
+  highlights?: string[];
+}
+
+export function parseSummary(args: Record<string, unknown>): SummaryData | null {
+  if (typeof args.title !== 'string') return null;
+  const stats = Array.isArray(args.stats)
+    ? (args.stats as Record<string, unknown>[])
+        .filter(
+          (s) =>
+            typeof s === 'object' && s !== null &&
+            typeof (s as Record<string, unknown>).label === 'string' &&
+            typeof (s as Record<string, unknown>).value === 'string',
+        )
+        .map((s) => ({
+          label: s.label as string,
+          value: s.value as string,
+          ...(typeof s.trend === 'string' ? { trend: s.trend as 'up' | 'down' | 'neutral' } : {}),
+        }))
+    : undefined;
+  const highlights = Array.isArray(args.highlights)
+    ? (args.highlights as unknown[]).filter((h): h is string => typeof h === 'string')
+    : undefined;
+  if (!stats?.length && !highlights?.length) return null;
+  return {
+    title: args.title,
+    ...(stats?.length ? { stats } : {}),
+    ...(highlights?.length ? { highlights } : {}),
+  };
+}
+
 export type TurnMessage = { role: 'user' | 'assistant'; content: string };
 
 // ── The conversation, kept across visits ────────────────────────────────────
@@ -299,24 +560,41 @@ export interface TurnResult {
    * and a turn with words in it is the safe assumption.
    */
   heard?: boolean;
+  speakToken?: string;
 }
 
-/** Everything she is allowed to know: this device's live tasks and events. */
-export async function buildSnapshot(): Promise<{
-  tasks: { id: string; title: string; notes: string | null; dueAt: string | null; isDone: boolean }[];
-  events: {
-    id: string;
-    title: string;
-    note: string | null;
-    location: string | null;
-    startsAt: string;
-    endsAt: string;
-  }[];
-}> {
-  const [{ tasks }, { events }] = await Promise.all([api.listTasks(), api.listEvents()]);
+/**
+ * Builds the snapshot and profile together in one parallel fetch, so the
+ * profile is not fetched a second time in voiceTurn.
+ */
+export async function buildSnapshotWithProfile() {
+  const [snapshot, profile] = await Promise.all([
+    buildSnapshot(),
+    storage.getProfile(),
+  ]);
+  return { snapshot, profile };
+}
+
+/**
+ * Everything she is allowed to know: this device's live tasks and events, the
+ * shopping list, this month's and last month's money, the debts and budgets.
+ */
+export async function buildSnapshot() {
+  const [{ tasks }, { events }, { items }, { entries }, { debts }, budgets, profile] =
+    await Promise.all([
+      api.listTasks(),
+      api.listEvents(),
+      api.listShopping(),
+      api.listMoney(),
+      api.listDebts(),
+      api.getBudgets(),
+      storage.getProfile(),
+    ]);
+  // Two months is enough for "how much this month" and "compared to last".
+  const since = shiftMonth(monthKey(), -1);
 
   const live = <T extends { deletedAt: string | null }>(rows: T[]) =>
-    rows.filter((r) => r.deletedAt === null);
+    rows.filter((r) => !r.deletedAt);
 
   // A whole year of history would crowd out the conversation; recent past and
   // the month ahead is what anyone actually asks about.
@@ -352,6 +630,33 @@ export async function buildSnapshot(): Promise<{
         startsAt: e.startsAt,
         endsAt: e.endsAt,
       })),
+    shopping: items.slice(0, 200).map((i) => ({
+      id: i.id,
+      name: i.name,
+      quantity: i.quantity,
+      isBought: i.isBought,
+    })),
+    money: entries
+      .filter((e) => e.date.slice(0, 7) >= since)
+      .slice(0, 400)
+      .map((e) => ({
+        id: e.id,
+        kind: e.kind,
+        description: e.description,
+        amount: e.amount,
+        date: e.date,
+        category: e.category,
+      })),
+    debts: debts.slice(0, 100).map((d) => ({
+      id: d.id,
+      direction: d.direction,
+      person: d.person,
+      amount: d.amount,
+      description: d.description,
+      isSettled: d.isSettled,
+    })),
+    budgets,
+    currency: profile.currency,
   };
 }
 
@@ -360,29 +665,24 @@ export async function voiceTurn(
   text: string,
   history: TurnMessage[],
   userName?: string,
+  prebuiltSnapshot?: { snapshot: Awaited<ReturnType<typeof buildSnapshot>>; profile: unknown },
 ): Promise<TurnResult> {
-  const snapshot = await buildSnapshot();
-  // The questionnaire's answers, sent every turn: they are what keep her out
-  // of the middle of the night and honest about the gaps between things.
-  const profile = await storage.getProfile();
+  const { snapshot, profile } = prebuiltSnapshot ?? await buildSnapshotWithProfile();
+  const location = getLocation();
 
   const res = await fetch(TURN_URL, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({
       text,
-      // Only the opening greeting is spoken in the interface language; every
-      // real turn comes back in whatever language the user used.
-      language: getLanguage(),
+      language: getVoiceLanguage(),
       timezone: Intl.DateTimeFormat().resolvedOptions().timeZone || 'UTC',
       now: new Date().toISOString(),
       ...(userName ? { userName } : {}),
-      // The whole point of a running conversation: every turn carries what was
-      // said before it. The tail is sent rather than all of it so a long thread
-      // doesn't grow the request without bound.
       history: history.slice(-SEND_TURNS),
       snapshot,
       profile,
+      ...(location ? { location } : {}),
     }),
   });
 
@@ -529,6 +829,26 @@ export async function applyActions(actions: VoiceAction[]): Promise<AppliedChang
         case 'add_shopping_item': {
           const name = asString(args.name);
           if (!name) break;
+          // Already bought and asked for again: back onto the list, not a twin.
+          const { items } = await api.listShopping();
+          const existing = items.find((i) => sameItem(i.name, name));
+          if (existing?.isBought) {
+            await api.updateShoppingItem(existing.id, {
+              isBought: false,
+              ...(asString(args.quantity) ? { quantity: asString(args.quantity) } : {}),
+            });
+            applied.push({
+              title: name,
+              destructive: false,
+              undo: () =>
+                api.updateShoppingItem(existing.id, {
+                  isBought: true,
+                  quantity: existing.quantity,
+                }).then(() => undefined),
+            });
+            break;
+          }
+          if (existing) break;
           const id = uuid();
           await api.createShoppingItem({
             id,
@@ -568,6 +888,83 @@ export async function applyActions(actions: VoiceAction[]): Promise<AppliedChang
             title: description,
             destructive: false,
             undo: () => api.deleteMoneyEntry(id),
+          });
+          break;
+        }
+
+        case 'check_shopping_item':
+        case 'remove_shopping_item': {
+          const id = asString(args.id);
+          if (!id) break;
+          const { items } = await api.listShopping();
+          const before = items.find((i) => i.id === id);
+          if (!before) break;
+          if (action.tool === 'check_shopping_item') {
+            if (before.isBought) break;
+            await api.updateShoppingItem(id, { isBought: true });
+            applied.push({
+              title: before.name,
+              destructive: false,
+              undo: () => api.updateShoppingItem(id, { isBought: false }).then(() => undefined),
+            });
+          } else {
+            await api.deleteShoppingItem(id);
+            applied.push({
+              title: before.name,
+              destructive: true,
+              undo: async () => {
+                await api.createShoppingItem({ ...before, updatedAt: new Date().toISOString() });
+                if (before.isBought) await api.updateShoppingItem(id, { isBought: true });
+              },
+            });
+          }
+          break;
+        }
+
+        case 'delete_money_entry': {
+          const id = asString(args.id);
+          if (!id) break;
+          const { entries } = await api.listMoney();
+          const before = entries.find((e) => e.id === id);
+          if (!before) break;
+          await api.deleteMoneyEntry(id);
+          applied.push({
+            title: before.description,
+            destructive: true,
+            undo: () => api.restoreMoneyEntry(before),
+          });
+          break;
+        }
+
+        case 'add_debt': {
+          const person = asString(args.person);
+          const amount = Number(args.amount);
+          if (!person || !Number.isFinite(amount) || amount <= 0) break;
+          const id = uuid();
+          await api.createDebt({
+            id,
+            direction: args.direction === 'owe' ? 'owe' : 'owed',
+            person,
+            amount,
+            description: asString(args.description) ?? null,
+            date: localToday(),
+            updatedAt: new Date().toISOString(),
+          });
+          applied.push({ title: person, destructive: false, undo: () => api.deleteDebt(id) });
+          break;
+        }
+
+        case 'settle_debt': {
+          const id = asString(args.id);
+          if (!id) break;
+          const { debts } = await api.listDebts();
+          const before = debts.find((d) => d.id === id);
+          if (!before || before.isSettled) break;
+          await api.updateDebt(id, { isSettled: true });
+          applied.push({
+            title: before.person,
+            destructive: false,
+            undo: () => api.updateDebt(id, { isSettled: false }).then(() => undefined),
           });
           break;
         }
@@ -684,10 +1081,10 @@ function changesAnything(before: Record<string, unknown>, patch: Record<string, 
 
 async function findTask(id: string): Promise<Task | undefined> {
   const { tasks } = await api.listTasks();
-  return tasks.find((t) => t.id === id && t.deletedAt === null);
+  return tasks.find((t) => t.id === id && !t.deletedAt);
 }
 
 async function findEvent(id: string): Promise<Event | undefined> {
   const { events } = await api.listEvents();
-  return events.find((e) => e.id === id && e.deletedAt === null);
+  return events.find((e) => e.id === id && !e.deletedAt);
 }

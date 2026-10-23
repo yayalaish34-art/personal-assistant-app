@@ -1,0 +1,19 @@
+# EAS archives the repository root, including uncommitted application changes.
+node_modules/
+.expo/
+dist/
+web-build/
+.qa/
+*.log
+.DS_Store
+Thumbs.db
+.env
+.env.*
+!.env.example
+.claude/
+.codex/
+.agents/
+/backend/
+/docs/
+WhatsApp Image *.jpeg
+/frontend/Off-white P clock on navy square.png

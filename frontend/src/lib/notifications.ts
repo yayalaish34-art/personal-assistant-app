@@ -4,6 +4,7 @@ import { Platform } from 'react-native';
 
 import { t } from './i18n';
 import { REMINDER_CHANNEL, requestNotifications } from './permissions';
+import { storage } from './storage';
 
 // Reminders, scheduled on the device.
 //
@@ -21,7 +22,7 @@ type Handles = Record<string, string>;
 let configured = false;
 
 /** Foreground notifications are silent unless the app says otherwise. */
-function configureOnce(): void {
+export function configureOnce(): void {
   if (configured) return;
   configured = true;
   Notifications.setNotificationHandler({
@@ -83,6 +84,34 @@ export async function cancelReminder(rowId: string): Promise<void> {
 }
 
 /**
+ * If a notification would fire during the user's sleep window, push it to
+ * wake time instead. This respects the profile's sleepStartHour/sleepEndHour.
+ */
+async function respectSleepHours(at: Date): Promise<Date> {
+  try {
+    const profile = await storage.getProfile();
+    const { sleepStartHour, sleepEndHour } = profile;
+    const hour = at.getHours();
+    const crossesMidnight = sleepStartHour > sleepEndHour;
+
+    const isSleeping = crossesMidnight
+      ? hour >= sleepStartHour || hour < sleepEndHour
+      : hour >= sleepStartHour && hour < sleepEndHour;
+
+    if (!isSleeping) return at;
+
+    const wake = new Date(at);
+    if (crossesMidnight && hour >= sleepStartHour) {
+      wake.setDate(wake.getDate() + 1);
+    }
+    wake.setHours(sleepEndHour, 0, 0, 0);
+    return wake;
+  } catch {
+    return at;
+  }
+}
+
+/**
  * Schedules one reminder for a row, replacing any it already had.
  *
  * A time in the past schedules nothing — it would fire immediately, which
@@ -97,7 +126,8 @@ export async function scheduleReminder(input: {
 }): Promise<void> {
   await cancelReminder(input.rowId);
 
-  if (Number.isNaN(input.at.getTime()) || input.at.getTime() <= Date.now()) return;
+  const adjusted = await respectSleepHours(input.at);
+  if (Number.isNaN(adjusted.getTime()) || adjusted.getTime() <= Date.now()) return;
   if (!(await ensurePermission())) return;
 
   try {
@@ -109,7 +139,7 @@ export async function scheduleReminder(input: {
       },
       trigger: {
         type: Notifications.SchedulableTriggerInputTypes.DATE,
-        date: input.at,
+        date: adjusted,
         ...(Platform.OS === 'android' ? { channelId: REMINDER_CHANNEL } : {}),
       },
     });
@@ -134,17 +164,18 @@ export async function scheduleTaskReminder(task: {
   }
   await scheduleReminder({
     rowId: task.id,
-    title: t('notify.taskTitle'),
-    body: task.title,
+    title: t('notify.taskTitle', { title: task.title }),
+    body: t('notify.taskBody'),
     at: new Date(task.dueAt),
   });
 }
 
-/** An event rings `reminderMinutesBefore` ahead of its start. */
+/** An event rings ahead of its start with contextual, human text. */
 export async function scheduleEventReminder(event: {
   id: string;
   title: string;
   startsAt: string;
+  location?: string | null;
   reminderMinutesBefore: number | null;
 }): Promise<void> {
   if (event.reminderMinutesBefore === null || event.reminderMinutesBefore === undefined) {
@@ -154,11 +185,18 @@ export async function scheduleEventReminder(event: {
   const starts = new Date(event.startsAt).getTime();
   if (Number.isNaN(starts)) return;
 
+  const mins = event.reminderMinutesBefore;
+  const loc = event.location?.trim();
+
+  const body = loc
+    ? t('notify.eventBodyLocation', { title: event.title, location: loc, minutes: mins })
+    : t('notify.eventBody', { title: event.title, minutes: mins });
+
   await scheduleReminder({
     rowId: event.id,
-    title: t('notify.eventTitle', { minutes: event.reminderMinutesBefore }),
-    body: event.title,
-    at: new Date(starts - event.reminderMinutesBefore * 60 * 1000),
+    title: t('notify.eventTitle'),
+    body,
+    at: new Date(starts - mins * 60 * 1000),
   });
 }
 

@@ -1,6 +1,6 @@
 import { Router } from 'express';
 import multer from 'multer';
-import { toFile } from 'openai/uploads';
+import { transcribeAudio } from '../speech/transcribe.js';
 import { z } from 'zod';
 import { asyncHandler, parseBody } from '../../lib/http.js';
 import { config } from '../../config.js';
@@ -182,19 +182,6 @@ parseRouter.post(
     const hinted = typeof req.body?.language === 'string' ? req.body.language : undefined;
     const language = hinted && /^[a-z]{2}$/.test(hinted) ? hinted : undefined;
 
-    const client = getOpenAI();
-    const file = await toFile(req.file.buffer, req.file.originalname, {
-      type: req.file.mimetype,
-    });
-    const transcription = await client.audio.transcriptions.create({
-      model: 'whisper-1',
-      file,
-      ...(language ? { language } : {}),
-    });
-
-    // Release the buffer as soon as it has been sent.
-    req.file.buffer = Buffer.alloc(0);
-
-    res.json({ text: transcription.text });
+    res.json({ text: await transcribeAudio(req.file, language) });
   }),
 );

@@ -357,7 +357,14 @@ Request:
   "history": [{ "role": "user", "content": "…" }],
   "snapshot": {
     "tasks": [{ "id": "…", "title": "…", "notes": null, "dueAt": null, "isDone": false }],
-    "events": [{ "id": "…", "title": "…", "note": null, "startsAt": "…", "endsAt": "…" }]
+    "events": [{ "id": "…", "title": "…", "note": null, "startsAt": "…", "endsAt": "…" }],
+    "shopping": [{ "id": "…", "name": "Milk", "quantity": "2", "isBought": false }],
+    "money": [{ "id": "…", "kind": "expense", "description": "Lunch", "amount": 42,
+                "date": "2026-07-30", "category": "food" }],
+    "debts": [{ "id": "…", "direction": "owed", "person": "Dan", "amount": 200,
+                "description": null, "isSettled": false }],
+    "budgets": { "food": 2000 },
+    "currency": "ILS"
   },
   "profile": {
     "workStartHour": 9,
@@ -366,31 +373,51 @@ Request:
     "sleepEndHour": 7,
     "bufferMinutes": 15,
     "eventTypes": ["work", "family"],
-    "fixedCommitments": "Gym Mon & Wed at 6am"
+    "fixedCommitments": "Gym Mon & Wed at 6am",
+    "workDays": [0, 1, 2, 3, 4],
+    "focusPeriod": "morning",
+    "primaryGoal": "lessStress",
+    "sleepQuality": "rested",
+    "assistanceStyle": "brief"
   }
 }
 ```
-- `text` required, 1–2000 chars.
+- `text` required, 0–2000 chars. Empty/whitespace text returns `heard: false`
+  and a localized request to repeat, without a model call or API key requirement.
 - `language` — **any ISO-639-1 code** (two lowercase letters, default `he`).
-  It sets the language of the **opening greeting only**. Every other turn is
-  answered in whatever language `text` is in, and switching language
-  mid-conversation switches the answers with it.
+  It sets the language of the greeting and every reply. The app uses the same
+  preference for its interface, RTL direction and transcription hint.
   Only the shape is validated, not the particular language: a code the server
   has no name for greets in English rather than failing the turn, so a client
   may ship a new interface language ahead of a server deploy. Malformed codes
   (`zzz`, `EN`, `e1`, `""`) are still `400`.
 - `text` of exactly `"[SESSION START]"` means "the user just opened you":
   she greets them and summarises the day instead of answering anything.
-- `history` — up to 20 earlier turns, oldest first, `user`/`assistant` only.
-- `snapshot` — up to 200 tasks and 200 events. This is the whole of what she
-  can see; ids come from here.
-- `profile` — **optional**, the answers from the opening questionnaire. Every
-  field has a default and each is filled in independently, so a partial object
+- `history` — up to 40 earlier messages, oldest first, `user`/`assistant` only.
+- `snapshot` — up to 200 tasks and 200 events, plus up to 200 `shopping`
+  rows, 400 `money` rows (the client sends this month and last), 100 `debts`,
+  a `budgets` map (expense category → monthly limit) and the ISO-4217
+  `currency`. Every one of the newer fields is optional and defaults to empty,
+  so an older client is unaffected. This is the whole of what she can see; ids
+  come from here. Money totals are added up server-side and handed to the
+  model, which is told never to sum entries itself.
+- `profile` — **optional**, the answers from the opening questionnaire. Existing
+  fields have defaults and new preference fields are optional, so a partial object
   is valid and a missing one is fine (an install from before the questionnaire,
   or someone who skipped it). Hours are local wall-clock integers `0–23`;
   `bufferMinutes` is `0–120`; `eventTypes` is up to 20 short strings;
   `fixedCommitments` is free text up to 500 chars. Out-of-range values are a
   `400` rather than being clamped.
+
+  Five additional optional fields (older clients can omit all five):
+  - `workDays`: at most 7 integers, Sunday `0` through Saturday `6`.
+  - `focusPeriod`: `morning | afternoon | evening | flexible`.
+  - `primaryGoal`: `balance | productivity | lessStress | health | finances`.
+  - `sleepQuality`: `rested | tired | irregular | unspecified`.
+  - `assistanceStyle`: `brief | guided | proactive`.
+
+  These are planning/conversation preferences supplied to the model; they do
+  not create calendar entries or notification jobs automatically.
 
   Two of these change the times the server will offer in `offer_times`:
   **sleep hours** are never proposed, and **`bufferMinutes`** is kept clear
@@ -413,7 +440,9 @@ Response `200`:
 - `actions` — what the **client** must apply to its own storage, in order.
   Tools: `create_task` · `update_task` · `complete_task` · `delete_task` ·
   `create_event` · `update_event` · `delete_event` · `add_shopping_item` ·
-  `add_money_entry`. Times are ISO-8601 with an explicit offset.
+  `check_shopping_item` · `remove_shopping_item` · `add_money_entry` ·
+  `delete_money_entry` · `add_debt` · `settle_debt`. Times are ISO-8601 with an
+  explicit offset.
 - `find_free_time` is a **question, not a change**, and never appears in
   `actions`. The server answers it inside the turn and the client has nothing
   to apply. It exists because free time cannot be read off the agenda: an entry
@@ -434,10 +463,19 @@ Response `200`:
   user gave none — the client fills in its own local today. `category` is one
   of `salary` `business` `refund` `gift` (income) or `shopping` `food`
   `housing` `bills` `transport` `health` `fun` `other` (expense).
-- Both carry no `matchTitle` and no id: they name nothing in `snapshot`, so
-  neither the ownership gate nor the duplicate gate applies to them. There are
-  no update or delete tools for either, and no shopping or money arrays in
-  `snapshot` — the model only ever adds a row, it never reads or changes one.
+- Neither carries `matchTitle` or an id. `add_shopping_item` is refused when an
+  item of the same name (case and spacing aside) is still unbought in
+  `snapshot.shopping`; one already bought may be added again, and the client is
+  expected to move that row back onto the list rather than create a twin.
+- `check_shopping_item` / `remove_shopping_item` — `{ "id", "matchTitle" }`,
+  where `matchTitle` is the item's `name`. Tick it off / delete it.
+- `delete_money_entry` — `{ "id", "matchTitle" }`, `matchTitle` is the
+  entry's `description`.
+- `add_debt` — `{ "direction": "owe" | "owed", "person", "amount",
+  "description"? }`. `owe` means the user owes them. `amount` is positive. No
+  date is sent; the client uses its local today.
+- `settle_debt` — `{ "id", "matchTitle" }`, `matchTitle` is the `person`.
+  Marks the debt settled.
 - `create_image` also arrives in `actions`, and is the one that changes no
   storage: `{ "tool": "create_image", "arguments": { "prompt": "…",
   "shape": "square" } }`. The client is expected to call `POST /image` with
@@ -569,6 +607,24 @@ Response `200`:
 ---
 
 ## Change log
+
+- `2026-10-19` — Added the five optional personalization fields above. Both
+  transcription routes use `OPENAI_TRANSCRIBE_MODEL` (default
+  `gpt-4o-mini-transcribe`) with language hints; their `{ text }` response is
+  unchanged. Audio is released on success and failure, with no automatic
+  fallback to a more expensive model. Empty voice turns require no API key.
+  Reply language follows the selected app language, including after a switch.
+  Shopping actions still contain no price field; client price estimates are
+  opt-in and never prefill an actual expense.
+
+- `2026-09-17` — The voice assistant sees the shopping list, money and debts.
+  `snapshot` gains optional `shopping`, `money`, `debts`, `budgets` and
+  `currency` (all default to empty — not breaking). New actions:
+  `check_shopping_item`, `remove_shopping_item`, `delete_money_entry`,
+  `add_debt`, `settle_debt`; the id-bearing ones go through the same
+  id-and-`matchTitle` gate as tasks and events. `add_shopping_item` is now
+  refused for an item still unbought on the list. A client that does not know
+  the new tools must skip them, as it already does for unknown tools.
 
 - `2026-08-27` — Added `find_free_time` to the voice assistant. It is answered
   server-side and is **never** returned in `actions`, so no client change is

@@ -10,7 +10,7 @@
  * means nothing without a zone.
  */
 
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 
 import { findFreeSlots, findClash, toZonedIso } from '../src/modules/voice/slots.js';
 import {
@@ -25,6 +25,10 @@ const TZ = 'Asia/Jerusalem'; // +03:00 in August
 /** 2026-08-20 is a Thursday, well clear of any clock change. */
 const day = (hhmm: string) => `2026-08-20T${hhmm}:00+03:00`;
 const nextDay = (hhmm: string) => `2026-08-21T${hhmm}:00+03:00`;
+
+// Fixtures must stay in the future relative to the tested clock, even after August.
+beforeEach(() => { vi.spyOn(Date, 'now').mockReturnValue(new Date(day('06:00')).getTime()); });
+afterEach(() => { vi.restoreAllMocks(); });
 
 /** The local hour:minute of an ISO string, for readable assertions. */
 const at = (iso: string) =>

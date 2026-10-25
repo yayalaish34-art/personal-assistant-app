@@ -658,6 +658,127 @@ export const ACTION_TOOLS = [
   {
     type: 'function' as const,
     function: {
+      name: 'check_weather',
+      description:
+        "Fetch the current weather and the next-24h forecast for the user's area. Call this when the user asks about the weather, when an outdoor errand is on the schedule and conditions could matter, or whenever a plan would read differently in rain. Returns temperature, precipitation chance by hour, and a short condition code. Prefer present_weather to show the forecast; use the fetched facts to decide whether to suggest moving an outdoor plan.",
+      parameters: {
+        type: 'object',
+        properties: {
+          days: {
+            type: 'number',
+            description: 'How many days of forecast to pull. Default 2, max 7.',
+          },
+        },
+        required: [],
+      },
+    },
+  },
+  {
+    type: 'function' as const,
+    function: {
+      name: 'replan_remainder',
+      description:
+        "When the day has slipped — a meeting ran long, a task was missed, the user says they could not get to things — this computes where undone work can land next, in free windows across the next few days, respecting travel and sleep. Returns a proposed redistribution: which task moves to which window, with the reason. The user can accept with a simple yes, and you follow up with update_task calls carrying the new dueAt values. Do not call this unless there is actually something to redistribute.",
+      parameters: {
+        type: 'object',
+        properties: {
+          lookAheadDays: {
+            type: 'number',
+            description: 'How many days forward to search. Default 3, max 7.',
+          },
+        },
+        required: [],
+      },
+    },
+  },
+  {
+    type: 'function' as const,
+    function: {
+      name: 'budget_alert',
+      description:
+        "Look at each category budget against spending so far this month and the days remaining, and flag the categories at risk of overrun BEFORE it happens. Returns findings like 'food: 72% spent with 11 days left — on pace to overshoot by ~₪240'. Call this when the user asks how their budget is going, how much is left, or whether something they are about to spend fits. Also call it in the morning briefing when a category has already crossed a warning threshold. Say the risk plainly and give one concrete option — slow down, reallocate, or accept it.",
+      parameters: {
+        type: 'object',
+        properties: {},
+        required: [],
+      },
+    },
+  },
+  {
+    type: 'function' as const,
+    function: {
+      name: 'weekly_summary',
+      description:
+        "Produce the end-of-week recap: tasks finished, upcoming events for the next week, money in and out this week, biggest spending category, which days were packed. Use for an evening or weekend 'how did my week go' conversation, and when the user asks for a review. Return the raw numbers; present_summary is the right surface to render them.",
+      parameters: {
+        type: 'object',
+        properties: {
+          weeksBack: {
+            type: 'number',
+            description: '0 for the current week to date, 1 for last week finished. Default 0.',
+          },
+        },
+        required: [],
+      },
+    },
+  },
+  {
+    type: 'function' as const,
+    function: {
+      name: 'suggest_opportunity',
+      description:
+        "Find the one most-useful thing the user could do right now, by cross-referencing their current location, their next commitment, their free window after travel, and whatever is on their shopping list or task list. This is the 'you're near the mall, you have 45 minutes before Eliran, want to grab Nofar's gift?' moment: the server does the math, you turn it into one short, specific proposal. Call this when the user asks what they should do now, when they are checking in during a gap, at session start when the day has a clear window, or whenever a nearby place and an open window line up with something waiting. Returns null-like when nothing fits — in that case do NOT invent a suggestion.",
+      parameters: {
+        type: 'object',
+        properties: {
+          minWindowMinutes: {
+            type: 'number',
+            description: 'Shortest free window worth suggesting into. Default 20.',
+          },
+        },
+        required: [],
+      },
+    },
+  },
+  {
+    type: 'function' as const,
+    function: {
+      name: 'spending_trends',
+      description:
+        "Compare this month's spending to last month's, category by category, and surface the categories that climbed meaningfully. Returns findings with absolute and percentage change, so you can say things like 'deliveries up 28% versus last month — going back to the previous average saves roughly ₪450 per month'. Call this when the user asks how their spending is going, when they ask where their money went, when they ask what to cut, or whenever you are about to say 'you spent X' and want the comparison in the sentence.",
+      parameters: {
+        type: 'object',
+        properties: {
+          minPercent: {
+            type: 'number',
+            description: 'Minimum percentage increase to report. Default 15.',
+          },
+        },
+        required: [],
+      },
+    },
+  },
+  {
+    type: 'function' as const,
+    function: {
+      name: 'upcoming_debits',
+      description:
+        "Project recurring debits — subscriptions, rent, standing bills — forward from the user's history, so you can warn them about charges due in the next 30 days before the money is gone. Finds expense descriptions that repeated across months, estimates when the next hit lands, and totals it. Call this when the user asks what is coming up, whether they can afford something, how much is left, or when they ask you to help them plan the next couple of weeks.",
+      parameters: {
+        type: 'object',
+        properties: {
+          horizonDays: {
+            type: 'number',
+            description: 'How far forward to project. Default 30, max 90.',
+          },
+        },
+        required: [],
+      },
+    },
+  },
+  {
+    type: 'function' as const,
+    function: {
       name: 'find_nearby',
       description:
         "Find real places near the user's current location. Call this when the user asks what is nearby, where to shop, eat, get coffee, find a pharmacy, etc. Returns actual named places with distances.",
@@ -961,6 +1082,25 @@ const ARG_SCHEMAS = {
       .max(6)
       .optional(),
     highlights: z.array(z.string().max(200)).max(5).optional(),
+  }),
+  check_weather: z.object({
+    days: z.number().positive().max(7).optional(),
+  }),
+  replan_remainder: z.object({
+    lookAheadDays: z.number().positive().max(7).optional(),
+  }),
+  budget_alert: z.object({}),
+  weekly_summary: z.object({
+    weeksBack: z.number().int().min(0).max(4).optional(),
+  }),
+  suggest_opportunity: z.object({
+    minWindowMinutes: z.number().positive().max(24 * 60).optional(),
+  }),
+  spending_trends: z.object({
+    minPercent: z.number().positive().max(1000).optional(),
+  }),
+  upcoming_debits: z.object({
+    horizonDays: z.number().positive().max(90).optional(),
   }),
   find_nearby: z.object({
     category: z.enum(['shopping', 'supermarket', 'mall', 'restaurant', 'cafe', 'pharmacy', 'gas_station', 'gym', 'park', 'hospital', 'bank', 'hotel']),
@@ -1452,11 +1592,30 @@ export function buildSystemPrompt(input: {
     '- Questions about money — how much was spent, on what, against which',
     '  budget, how this month compares to last — are answered from the MONEY',
     '  section below, quoting its totals. Never sum the entries yourself.',
+    '  For a this-month-vs-last-month answer, call spending_trends to get the',
+    '  deltas computed and the recommendation written out. For "what\'s coming',
+    '  up" or "can I afford X", call upcoming_debits to pull the standing',
+    '  charges forward.',
     '- Calling the tool is the only thing that changes anything. Saying "I am',
     '  deleting it" or "I will add that" without a tool call in the same reply',
     '  changes nothing and is a broken promise — so when the user asks for a',
     '  change, call the tool right now, in this reply.',
     '- A request can need several tools at once. Call all of them.',
+    '- MULTI-DOMAIN DUMPS: when the user runs several things together in one',
+    '  breath — "tomorrow I need to call the doctor, buy dog food, send Or the',
+    '  deck, book the car, pick up a package, and fit three workouts this',
+    '  week" — do not pick one and ignore the rest, and do not ask them to',
+    '  break it up. Split it yourself and call one tool per item in the same',
+    '  reply: tasks go to create_task, things to buy to add_shopping_item,',
+    '  anything with a set time to create_event, money that moved to',
+    '  add_money_entry, debts to add_debt. A recurring goal like "three',
+    '  workouts this week" is three create_task calls or three create_event',
+    '  calls at times that fit, not a single vague note. After the calls,',
+    '  summarise what landed where in one sentence, e.g. "I\'ve put the doctor',
+    '  call, the car booking and the package pickup on tomorrow, dog food on',
+    '  the shopping list, the deck as a task, and three workout slots across',
+    '  the week." Use present_summary when the user clearly wants a',
+    '  side-by-side.',
     '- Touch only what was asked for. Never rewrite an entry the user did not',
     '  mention, and never "tidy up" times or titles on your own.',
     '- Answering a question about the schedule needs no tool: the agenda is',
@@ -1466,6 +1625,77 @@ export function buildSystemPrompt(input: {
     '- Act on an entry only when its title is clearly the one the user named.',
     '  If nothing in the agenda matches, say so — never fall back to the closest',
     '  entry, and never delete something they did not ask about.',
+    '',
+    'HOW YOU THINK (the Planzi standard):',
+    '- THE SIGNATURE MOMENT: when the user has a free window, a known location,',
+    '  and errands they could do nearby, make the connection out loud. Call',
+    '  suggest_opportunity when: the user asks what they should do now; the',
+    '  user opens a conversation with a clear gap on the schedule; a window is',
+    '  freshly opened by a cancelled or early-ended event; the day has started',
+    '  and errands remain. Shape the reply like this: "You have about 45 min',
+    '  before Eliran — Shufersal is 2 minutes away and five items are waiting.',
+    '  Want me to put it on the way?" Never read every item aloud; name one',
+    '  or two. If the tool returns fit:null, do not invent a suggestion;',
+    '  either stay quiet about this or say the day is clear.',
+    '- LOOKING FORWARD WITH MONEY: never say "you spent X" without',
+    '  context. Call spending_trends to show the direction of travel ("food',
+    '  up 28% versus last month"), and call upcoming_debits whenever the user',
+    '  asks about budget, affordability, how much is left, or what is coming',
+    '  up. Quote the totals the tools return — never add figures yourself. A',
+    '  real finance manager says "you have ₪2,300 showing, but ₪850 in standing',
+    '  debits is due in the next two weeks — treat ₪1,450 as the useful',
+    '  balance." You can and should say that kind of sentence.',
+    '- RECOMMENDATIONS, NOT JUST REPORTS: when a trend climbs, pair it with',
+    '  the saving the baseline implies ("going back to last month\'s average',
+    '  on deliveries saves roughly ₪450"). When a debit cluster lands in one',
+    '  week, name it ("three bills land the first week — keep more liquid'
+      + ' through then"). The vision calls this a personal finance manager',
+    '  rather than a tracker, so always finish with what the user can do.',
+    '- DAY RE-PLANNING: when a task is overdue, when the user says the day',
+    '  slipped ("I did not get to half of what I planned", "my day fell',
+    '  apart"), or when a long event just ended on them, call replan_remainder',
+    '  — it finds the next free windows across the coming days and returns a',
+    '  specific proposal (which task to which slot). Pitch it as one sentence',
+    '  ("I can move X to tomorrow at ten and Y to Wednesday — want me to?");',
+    '  on yes, apply each proposal with update_task. When several errands sit',
+    '  in the same area and the user is near there on a known day, offer to',
+    '  cluster them. Short, concrete, one proposal.',
+    '- BUDGET PRESSURE: before saying "you have N left in the budget", call',
+    '  budget_alert — it projects spending to end of month at the current pace',
+    '  and flags the category most at risk. The point is to warn the user',
+    '  BEFORE they overrun, so a Planzi sentence sounds like "food is 78%',
+    '  through with eleven days left — on pace to overshoot by about 240;',
+    '  roughly 65 a day keeps it in budget." After the warning, offer one',
+    '  option — slow down, reallocate, or accept it.',
+    '- WEATHER-DRIVEN SUGGESTIONS: when the schedule has anything outdoors,',
+    '  when the user asks about the weather, or when a plan would read',
+    '  differently in rain, call check_weather. If rain is coming and an',
+    '  outdoor errand is still on the list, offer to shift it earlier. Say',
+    '  conditions in human speech ("hot and clear until the evening, then a',
+    '  chance of rain"), never numbers only. Use present_weather for the',
+    '  rendering.',
+    '- BUNDLES, NOT ISOLATED ITEMS: hosting, lessons, courses, appointments',
+    '  and travel are rarely one thing. "I\'m hosting twelve people on Friday"',
+    '  is one event (create_event) plus a shopping list (one add_shopping_item',
+    '  per thing to buy) plus a couple of prep tasks (create_task). Treat it',
+    '  as a bundle in one reply.',
+    '- SAYING WHAT YOU SEE: when a pattern is obvious — a day with five',
+    '  back-to-back meetings, a category where spending doubled, a workout',
+    '  that keeps getting missed — say it, briefly, before the user has to',
+    '  ask. "Thursdays keep eating your workout — want to try Sunday instead?"',
+    '  is a Planzi sentence; "I have moved it" is not.',
+    '- EVENING CLOSE AND WEEKLY RECAP: when the user opens the app late (near',
+    '  their sleep window) or asks "how did today go" or "how was my week",',
+    '  that is a recap, not a to-do read. For a day: say what got done, what',
+    '  slipped (and offer replan_remainder on it), and what tomorrow holds in',
+    '  one line. For a week: call weekly_summary and lead with one win, one',
+    '  biggest spend, and one thing coming up. Never read a long list aloud —',
+    '  present_summary is the surface. Never shame the user for unfinished',
+    '  tasks; the vision calls this "no red to-do list of shame — just order',
+    '  and move on".',
+    '- FREE TIME IS NOT WORK TIME: when the user has blocked time for family,',
+    '  rest or themselves, respect it. Do not stuff an errand into dinner just',
+    '  because the clock is open.',
     '- VISUAL TOOLS — use a visual tool for lists, comparisons and structured data.',
     '  A simple action only needs a natural spoken confirmation of what changed.',
     '  present_cards: options, recommendations, comparisons (set selectable when',
@@ -1489,10 +1719,13 @@ export function buildSystemPrompt(input: {
     '  1. Greet them by name. Give a short, insightful daily briefing: what is',
     '     coming up, how busy the day looks, anything that needs attention.',
     '  2. If tasks are overdue or piling up, mention it gently with encouragement.',
-    '  3. If their location is known and the shopping list has unbought items,',
-    '     call find_nearby for supermarket or shopping and mention a nearby store.',
-    '  4. Suggest one small actionable thing based on their schedule — e.g. "you',
-    '     have a free hour before your 3pm, good time to knock out that errand".',
+    '  3. If a free window is open now and the day has unfinished errands,',
+    '     call suggest_opportunity and work the result into one sentence —',
+    '     one place, one window, one offer.',
+    '  4. If today has an outdoor-looking event (walk, outside meeting,',
+    '     market, kids park), or if the user has frequently asked about',
+    '     weather, call check_weather; if rain is coming and something is on,',
+    '     flag it in one line.',
     '  5. If they completed a lot yesterday, acknowledge it ("you crushed it',
     '     yesterday — 8 tasks done!").',
     '  Keep it to 2–3 spoken sentences. Call no mutation tools for session start.',
@@ -1679,6 +1912,69 @@ export async function runVoiceTurn(input: VoiceTurnInput): Promise<VoiceTurnResu
           role: 'tool',
           tool_call_id: call.id,
           content: await answerTravelCheck(outcome.action.arguments, input),
+        });
+        continue;
+      }
+
+      if (outcome.action?.tool === 'suggest_opportunity') {
+        messages.push({
+          role: 'tool',
+          tool_call_id: call.id,
+          content: await answerSuggestOpportunity(outcome.action.arguments, input),
+        });
+        continue;
+      }
+
+      if (outcome.action?.tool === 'check_weather') {
+        messages.push({
+          role: 'tool',
+          tool_call_id: call.id,
+          content: await answerCheckWeather(outcome.action.arguments, input),
+        });
+        continue;
+      }
+
+      if (outcome.action?.tool === 'replan_remainder') {
+        messages.push({
+          role: 'tool',
+          tool_call_id: call.id,
+          content: await answerReplanRemainder(outcome.action.arguments, input),
+        });
+        continue;
+      }
+
+      if (outcome.action?.tool === 'budget_alert') {
+        messages.push({
+          role: 'tool',
+          tool_call_id: call.id,
+          content: answerBudgetAlert(outcome.action.arguments, input),
+        });
+        continue;
+      }
+
+      if (outcome.action?.tool === 'weekly_summary') {
+        messages.push({
+          role: 'tool',
+          tool_call_id: call.id,
+          content: answerWeeklySummary(outcome.action.arguments, input),
+        });
+        continue;
+      }
+
+      if (outcome.action?.tool === 'spending_trends') {
+        messages.push({
+          role: 'tool',
+          tool_call_id: call.id,
+          content: answerSpendingTrends(outcome.action.arguments, input),
+        });
+        continue;
+      }
+
+      if (outcome.action?.tool === 'upcoming_debits') {
+        messages.push({
+          role: 'tool',
+          tool_call_id: call.id,
+          content: answerUpcomingDebits(outcome.action.arguments, input),
         });
         continue;
       }
@@ -1899,6 +2195,840 @@ async function answerTravelCheck(
     distanceKm: Math.round(km),
     estimatedMinutes: mins,
     instruction: 'This is a minimum estimate (straight-line distance + fixed overhead). Real driving may take longer in traffic. Say the estimate naturally, e.g. "about 40 minutes from where you are".',
+  });
+}
+
+/**
+ * The signature moment: "you're near X, you have Y free, grab Z".
+ *
+ * Cross-references three sources the model has access to but never reliably
+ * joins on its own: the live GPS position, today's actual free windows (via
+ * findTime, which already subtracts travel and sleep), and the shopping list.
+ *
+ * Returns one candidate suggestion or null. Returning two gives the model room
+ * to pick the less-useful one; returning none is better than inventing one.
+ */
+async function answerSuggestOpportunity(
+  args: Record<string, unknown>,
+  input: VoiceTurnInput,
+): Promise<string> {
+  const minWindow =
+    typeof args.minWindowMinutes === 'number' && args.minWindowMinutes > 0
+      ? Math.round(args.minWindowMinutes)
+      : 20;
+
+  if (!input.location) {
+    return JSON.stringify({
+      ok: true,
+      fit: null,
+      note: 'No GPS yet, so a nearby-plus-free-window suggestion cannot be made. Say so in passing if the user asked what to do now.',
+    });
+  }
+
+  const zone = input.timezone;
+  const nowMs = input.now.getTime();
+  const fromDate = today(zone, nowMs);
+
+  const events: AvailabilityEvent[] = input.snapshot.events.map((e) => ({
+    title: e.title,
+    startsAt: e.startsAt,
+    endsAt: e.endsAt ?? null,
+    location: e.location ?? null,
+  }));
+
+  const { days } = await findTime({
+    fromDate,
+    events,
+    timeZone: zone,
+    now: nowMs,
+    prefs: input.profile
+      ? {
+          sleepStartHour: input.profile.sleepStartHour,
+          sleepEndHour: input.profile.sleepEndHour,
+          bufferMinutes: input.profile.bufferMinutes,
+        }
+      : undefined,
+    wantDays: 1,
+    searchDays: 1,
+    currentPosition: { latitude: input.location.latitude, longitude: input.location.longitude },
+  });
+
+  const todayWindows = days[0]?.windows ?? [];
+  // The "current" window is the first one whose end is still ahead of us.
+  const currentWindow = todayWindows.find(
+    (w) => new Date(w.endsAt).getTime() > nowMs && w.minutes >= minWindow,
+  );
+
+  if (!currentWindow) {
+    return JSON.stringify({
+      ok: true,
+      fit: null,
+      note:
+        todayWindows.length === 0
+          ? 'The day has no free window left. Say the day is packed and offer to look at tomorrow.'
+          : `No window of at least ${minWindow} min is open right now. Mention the next one if asked.`,
+    });
+  }
+
+  const clock = new Intl.DateTimeFormat('en-GB', {
+    timeZone: zone,
+    hour: '2-digit',
+    minute: '2-digit',
+    hour12: false,
+  });
+  const windowText = `until ${clock.format(new Date(currentWindow.endsAt))}, about ${currentWindow.minutes} minutes`;
+
+  // Shopping that's a short detour from where they stand is the strongest fit:
+  // one place, many items, no scheduling.
+  const openShopping = input.snapshot.shopping.filter((s) => !s.isBought);
+  if (openShopping.length > 0 && currentWindow.minutes >= 25) {
+    const here = { latitude: input.location.latitude, longitude: input.location.longitude };
+    // Grocery first, then general shopping — matches how the list is written.
+    const market = (await searchNearby(here, 'supermarket', 2500))[0]
+      ?? (await searchNearby(here, 'shopping', 2500))[0];
+    if (market) {
+      const roundTripMin = travelMinutes(market.distanceKm) * 2;
+      const buffer = input.profile?.bufferMinutes ?? 15;
+      // In-store time: a few minutes per item, floored and capped — a 2-item
+      // run isn't 6 minutes and a 20-item run isn't 60.
+      const inStoreMin = Math.max(10, Math.min(35, openShopping.length * 3));
+      const totalMin = roundTripMin + inStoreMin;
+      if (totalMin + buffer <= currentWindow.minutes) {
+        return JSON.stringify({
+          ok: true,
+          fit: {
+            kind: 'shopping_detour',
+            window: windowText,
+            windowMinutes: currentWindow.minutes,
+            nextEvent: currentWindow.nextTitle ?? null,
+            place: { name: market.name, distanceKm: Math.round(market.distanceKm * 10) / 10 },
+            items: openShopping.slice(0, 5).map((s) => s.name),
+            itemCount: openShopping.length,
+            estimatedMinutes: totalMin,
+          },
+          instruction:
+            'Make one short, specific offer. Name the place, say roughly how long it will take, and name one or two items from the list. Example shape: "You have about 45 min before Eliran; Shufersal is 2 minutes away and you have 5 things on the list — want to go now?" Do not list every item.',
+        });
+      }
+    }
+  }
+
+  // Overdue tasks: use the free window to clear something that was due before now.
+  const overdue = input.snapshot.tasks.filter((t) => {
+    if (t.isDone) return false;
+    if (!t.dueAt) return false;
+    const due = new Date(t.dueAt).getTime();
+    return Number.isFinite(due) && due < nowMs;
+  });
+  if (overdue.length > 0) {
+    return JSON.stringify({
+      ok: true,
+      fit: {
+        kind: 'clear_overdue',
+        window: windowText,
+        windowMinutes: currentWindow.minutes,
+        nextEvent: currentWindow.nextTitle ?? null,
+        tasks: overdue.slice(0, 3).map((t) => ({ id: t.id, title: t.title })),
+        overdueCount: overdue.length,
+      },
+      instruction:
+        'Suggest clearing one specific overdue task in this window — name it. Keep it one sentence; do not read the full list.',
+    });
+  }
+
+  // Fallback: real quiet. Offer a focus block or a breather.
+  return JSON.stringify({
+    ok: true,
+    fit: {
+      kind: 'quiet_window',
+      window: windowText,
+      windowMinutes: currentWindow.minutes,
+      nextEvent: currentWindow.nextTitle ?? null,
+    },
+    instruction:
+      'No concrete errand fits. Say the window is clear and offer two options briefly: get ahead on something, or just take a breather. Do not invent an errand.',
+  });
+}
+
+/**
+ * "Deliveries up 28% versus last month" — spending trends, computed, so the
+ * model never sums figures itself.
+ */
+function answerSpendingTrends(
+  args: Record<string, unknown>,
+  input: VoiceTurnInput,
+): string {
+  const minPct =
+    typeof args.minPercent === 'number' && args.minPercent > 0 ? args.minPercent : 15;
+  const cur = input.snapshot.currency ? ` ${input.snapshot.currency}` : '';
+  const amt = (n: number) => `${Math.round(n * 100) / 100}${cur}`;
+
+  const thisMonth = monthOf(input.now, input.timezone);
+  const lastMonth = monthOf(input.now, input.timezone, 1);
+
+  const byCat = (month: string) => {
+    const totals = new Map<string, number>();
+    for (const r of input.snapshot.money) {
+      if (r.kind !== 'expense') continue;
+      if (!r.date.startsWith(month)) continue;
+      const key = r.category ?? 'uncategorised';
+      totals.set(key, (totals.get(key) ?? 0) + r.amount);
+    }
+    return totals;
+  };
+
+  const now = byCat(thisMonth);
+  const prev = byCat(lastMonth);
+
+  if (now.size === 0 && prev.size === 0) {
+    return JSON.stringify({
+      ok: true,
+      findings: [],
+      note: 'No spending recorded for either month yet. Say so plainly.',
+    });
+  }
+
+  // Only categories where the climb is meaningful both in percent AND money:
+  // a 50% jump from ₪10 to ₪15 is noise.
+  const findings: Array<{
+    category: string;
+    thisMonth: number;
+    lastMonth: number;
+    delta: number;
+    deltaPct: number;
+  }> = [];
+
+  const categories = new Set([...now.keys(), ...prev.keys()]);
+  for (const cat of categories) {
+    const nowAmt = now.get(cat) ?? 0;
+    const prevAmt = prev.get(cat) ?? 0;
+    const delta = nowAmt - prevAmt;
+    if (prevAmt === 0) {
+      // New category this month: worth mentioning once it crosses a floor.
+      if (nowAmt >= 100) {
+        findings.push({ category: cat, thisMonth: nowAmt, lastMonth: 0, delta, deltaPct: Infinity });
+      }
+      continue;
+    }
+    const deltaPct = (delta / prevAmt) * 100;
+    if (deltaPct >= minPct && delta >= 50) {
+      findings.push({ category: cat, thisMonth: nowAmt, lastMonth: prevAmt, delta, deltaPct });
+    }
+  }
+
+  findings.sort((a, b) => b.delta - a.delta);
+
+  // Also compute the biggest savings: categories where spending dropped — the
+  // vision also wants the assistant to acknowledge wins, not only warn.
+  const savings: typeof findings = [];
+  for (const cat of categories) {
+    const nowAmt = now.get(cat) ?? 0;
+    const prevAmt = prev.get(cat) ?? 0;
+    if (prevAmt === 0) continue;
+    const delta = nowAmt - prevAmt;
+    const deltaPct = (delta / prevAmt) * 100;
+    if (deltaPct <= -minPct && -delta >= 50) {
+      savings.push({ category: cat, thisMonth: nowAmt, lastMonth: prevAmt, delta, deltaPct });
+    }
+  }
+  savings.sort((a, b) => a.delta - b.delta);
+
+  return JSON.stringify({
+    ok: true,
+    thisMonth: { month: thisMonth, total: [...now.values()].reduce((s, v) => s + v, 0) },
+    lastMonth: { month: lastMonth, total: [...prev.values()].reduce((s, v) => s + v, 0) },
+    climbing: findings.slice(0, 3).map((f) => ({
+      category: f.category,
+      thisMonth: amt(f.thisMonth),
+      lastMonth: f.lastMonth === 0 ? 'none' : amt(f.lastMonth),
+      change: `${f.deltaPct === Infinity ? 'new' : `+${Math.round(f.deltaPct)}%`}`,
+      extraSpend: amt(f.delta),
+      recommendation:
+        f.lastMonth > 0
+          ? `Returning to the ${amt(f.lastMonth)} baseline saves roughly ${amt(f.delta)} per month.`
+          : null,
+    })),
+    improving: savings.slice(0, 2).map((f) => ({
+      category: f.category,
+      thisMonth: amt(f.thisMonth),
+      lastMonth: amt(f.lastMonth),
+      change: `${Math.round(f.deltaPct)}%`,
+      saved: amt(-f.delta),
+    })),
+    instruction:
+      findings.length === 0 && savings.length === 0
+        ? 'Nothing climbed meaningfully. Say spending looks steady and leave it at that.'
+        : 'Pick the single most useful line. Name the category, say the change in plain speech ("deliveries, up by about a third"), and give the saving the recommendation points to. One sentence. Prefer present_budget to show the detail, do not read all numbers aloud.',
+  });
+}
+
+/**
+ * Project recurring debits forward: "₪850 of standing charges in the next 30
+ * days". Finds expense descriptions that repeated across months, estimates the
+ * next hit from the day-of-month pattern, and totals them.
+ */
+function answerUpcomingDebits(
+  args: Record<string, unknown>,
+  input: VoiceTurnInput,
+): string {
+  const horizon =
+    typeof args.horizonDays === 'number' && args.horizonDays > 0
+      ? Math.min(90, Math.round(args.horizonDays))
+      : 30;
+  const cur = input.snapshot.currency ? ` ${input.snapshot.currency}` : '';
+  const amt = (n: number) => `${Math.round(n * 100) / 100}${cur}`;
+
+  const expenses = input.snapshot.money
+    .filter((m) => m.kind === 'expense')
+    .filter((m) => /^\d{4}-\d{2}-\d{2}$/.test(m.date));
+
+  if (expenses.length === 0) {
+    return JSON.stringify({
+      ok: true,
+      upcoming: [],
+      note: 'No expense history to project from. Say so briefly if the user asked.',
+    });
+  }
+
+  // Group by normalized description (and category when present): "Spotify" and
+  // "spotify" are the same subscription, but "Spotify" and "Netflix" are not.
+  type Row = typeof expenses[number];
+  const key = (r: Row) => `${(r.category ?? '').toLowerCase()}|${normalizeTitle(r.description)}`;
+  const groups = new Map<string, Row[]>();
+  for (const r of expenses) {
+    const k = key(r);
+    const existing = groups.get(k);
+    if (existing) existing.push(r);
+    else groups.set(k, [r]);
+  }
+
+  const nowMs = input.now.getTime();
+  const horizonMs = nowMs + horizon * 24 * 60 * 60 * 1000;
+
+  const upcoming: Array<{
+    description: string;
+    amount: number;
+    expectedDate: string;
+    seenMonths: number;
+    category: string | null;
+  }> = [];
+
+  for (const rows of groups.values()) {
+    if (rows.length < 2) continue;
+
+    // Distinct months seen — a monthly charge appears in distinct months, a
+    // single-month flurry does not.
+    const months = new Set(rows.map((r) => r.date.slice(0, 7)));
+    if (months.size < 2) continue;
+
+    // Average amount, rounded to the nearest shekel: a subscription varies a
+    // little from month to month (currency rounding), but not wildly.
+    const avg = rows.reduce((s, r) => s + r.amount, 0) / rows.length;
+
+    // Typical day of month — use the latest sample as the forecast anchor.
+    const latest = rows.reduce((a, b) => (a.date > b.date ? a : b));
+    const [, , dayStr] = latest.date.split('-');
+    const day = Number(dayStr);
+
+    // Project the next due date: this month's same day if still ahead, else
+    // next month's same day. Repeat until we leave the horizon.
+    const [nowY, nowM, nowD] = (today(input.timezone, nowMs)).split('-').map(Number);
+    let y = nowY!;
+    let m = nowM!;
+    // If the day has already passed this month, start from next month.
+    if (day < nowD!) {
+      m += 1;
+      if (m > 12) {
+        m = 1;
+        y += 1;
+      }
+    }
+    const expectedDate = `${y}-${String(m).padStart(2, '0')}-${String(day).padStart(2, '0')}`;
+    const expectedMs = new Date(`${expectedDate}T12:00:00Z`).getTime();
+    if (expectedMs > horizonMs) continue;
+
+    upcoming.push({
+      description: latest.description,
+      amount: Math.round(avg * 100) / 100,
+      expectedDate,
+      seenMonths: months.size,
+      category: latest.category ?? null,
+    });
+  }
+
+  upcoming.sort((a, b) => a.expectedDate.localeCompare(b.expectedDate));
+
+  const total = upcoming.reduce((s, u) => s + u.amount, 0);
+
+  return JSON.stringify({
+    ok: true,
+    horizonDays: horizon,
+    upcoming: upcoming.map((u) => ({ ...u, amount: amt(u.amount) })),
+    totalExpected: amt(total),
+    note:
+      upcoming.length === 0
+        ? 'No recurring charges detected in the horizon. Say so plainly.'
+        : `Over the next ${horizon} days, roughly ${amt(total)} of standing charges are expected. Say the total and name the biggest one or two. Do not read every entry — use present_summary or present_cards if more detail is useful.`,
+  });
+}
+
+/**
+ * Fetch weather from Open-Meteo. No API key, no account, free for the volumes
+ * this app will ever see. The result is deliberately small: current reading
+ * plus a next-24h precipitation picture, so the model can decide whether an
+ * outdoor plan needs moving without wading through a full forecast.
+ */
+async function answerCheckWeather(
+  args: Record<string, unknown>,
+  input: VoiceTurnInput,
+): Promise<string> {
+  if (!input.location) {
+    return JSON.stringify({
+      ok: false,
+      error: 'No location yet. Ask the user to enable location services, or ask for the city.',
+    });
+  }
+
+  const days = Math.max(
+    1,
+    Math.min(7, typeof args.days === 'number' && args.days > 0 ? Math.round(args.days) : 2),
+  );
+  const { latitude, longitude } = input.location;
+
+  const url =
+    `https://api.open-meteo.com/v1/forecast?latitude=${latitude.toFixed(4)}&longitude=${longitude.toFixed(4)}` +
+    `&current=temperature_2m,precipitation,weather_code,wind_speed_10m` +
+    `&hourly=temperature_2m,precipitation_probability,weather_code` +
+    `&daily=weather_code,temperature_2m_max,temperature_2m_min,precipitation_sum,precipitation_probability_max` +
+    `&forecast_days=${days}&timezone=auto`;
+
+  try {
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), 6000);
+    const res = await fetch(url, { signal: controller.signal });
+    clearTimeout(timer);
+
+    if (!res.ok) {
+      return JSON.stringify({
+        ok: false,
+        error: 'Weather lookup failed. Carry on without it; do not invent conditions.',
+      });
+    }
+
+    const data = (await res.json()) as {
+      current?: { temperature_2m: number; precipitation: number; weather_code: number; wind_speed_10m: number };
+      hourly?: {
+        time: string[];
+        temperature_2m: number[];
+        precipitation_probability: number[];
+        weather_code: number[];
+      };
+      daily?: {
+        time: string[];
+        weather_code: number[];
+        temperature_2m_max: number[];
+        temperature_2m_min: number[];
+        precipitation_sum: number[];
+        precipitation_probability_max: number[];
+      };
+    };
+
+    // Peek the next 12 hours' precipitation probability — if any slot is high,
+    // the model should know when to warn the user.
+    const nowMs = input.now.getTime();
+    const next12 = (data.hourly?.time ?? [])
+      .map((t, i) => ({
+        hour: t,
+        ms: new Date(t).getTime(),
+        tempC: data.hourly!.temperature_2m[i],
+        pop: data.hourly!.precipitation_probability[i] ?? 0,
+        code: data.hourly!.weather_code[i] ?? 0,
+      }))
+      .filter((h) => h.ms >= nowMs && h.ms <= nowMs + 12 * 60 * 60 * 1000);
+
+    const peakPop = next12.reduce((max, h) => (h.pop > max.pop ? h : max), { pop: -1 } as typeof next12[number]);
+    const willRain = peakPop && peakPop.pop >= 50;
+
+    return JSON.stringify({
+      ok: true,
+      now: data.current
+        ? {
+            tempC: Math.round(data.current.temperature_2m),
+            precipitation: data.current.precipitation,
+            windKmh: Math.round(data.current.wind_speed_10m),
+            code: data.current.weather_code,
+            summary: weatherCodeLabel(data.current.weather_code),
+          }
+        : null,
+      next12h: next12.slice(0, 6).map((h) => ({
+        hour: h.hour.slice(11, 16),
+        tempC: Math.round(h.tempC ?? 0),
+        rainPct: h.pop,
+        summary: weatherCodeLabel(h.code),
+      })),
+      days: (data.daily?.time ?? []).map((d, i) => ({
+        date: d,
+        high: Math.round(data.daily!.temperature_2m_max[i] ?? 0),
+        low: Math.round(data.daily!.temperature_2m_min[i] ?? 0),
+        rainPct: data.daily!.precipitation_probability_max[i] ?? 0,
+        summary: weatherCodeLabel(data.daily!.weather_code[i] ?? 0),
+      })),
+      ...(willRain
+        ? {
+            rainWindow: {
+              startsAtHour: peakPop.hour.slice(11, 16),
+              peakRainPct: peakPop.pop,
+              instruction:
+                'Rain is likely in the next few hours. If an outdoor errand is on the schedule, offer to move it earlier.',
+            },
+          }
+        : {}),
+      instruction:
+        'Use present_weather for the forecast rendering. Say conditions naturally ("hot and clear until the evening, then a chance of rain"), not with raw numbers.',
+    });
+  } catch (err) {
+    logger.warn({ err: String(err) }, 'open-meteo lookup failed');
+    return JSON.stringify({
+      ok: false,
+      error: 'Weather lookup failed. Carry on without it.',
+    });
+  }
+}
+
+/**
+ * Map an Open-Meteo WMO code to one of the eight visual icons present_weather
+ * already uses. Not a full weather report — the point is a label the model can
+ * echo in plain speech.
+ */
+function weatherCodeLabel(code: number): string {
+  if (code === 0) return 'sun';
+  if (code <= 2) return 'partly_cloudy';
+  if (code === 3) return 'cloud';
+  if (code >= 45 && code <= 48) return 'fog';
+  if (code >= 51 && code <= 67) return 'rain';
+  if (code >= 71 && code <= 77) return 'snow';
+  if (code >= 80 && code <= 82) return 'rain';
+  if (code >= 85 && code <= 86) return 'snow';
+  if (code >= 95) return 'storm';
+  return 'cloud';
+}
+
+/**
+ * Day fell apart — redistribute what did not get done.
+ *
+ * Finds overdue tasks (dueAt in the past, isDone false) and tasks dated for
+ * today that are still open as the day runs out. For each, searches the next
+ * few days' free windows and proposes a specific new slot. The model turns
+ * the plan into one short pitch; a yes from the user becomes update_task calls.
+ */
+async function answerReplanRemainder(
+  args: Record<string, unknown>,
+  input: VoiceTurnInput,
+): Promise<string> {
+  const lookAhead = Math.max(
+    1,
+    Math.min(
+      7,
+      typeof args.lookAheadDays === 'number' && args.lookAheadDays > 0
+        ? Math.round(args.lookAheadDays)
+        : 3,
+    ),
+  );
+
+  const nowMs = input.now.getTime();
+  const zone = input.timezone;
+  const todayStr = today(zone, nowMs);
+
+  const stranded = input.snapshot.tasks.filter((t) => {
+    if (t.isDone) return false;
+    if (!t.dueAt) return false;
+    const due = new Date(t.dueAt).getTime();
+    if (!Number.isFinite(due)) return false;
+    // Overdue, OR due today and the day is more than 60% through.
+    if (due < nowMs) return true;
+    const dueDay = dayOf(t.dueAt, zone);
+    if (dueDay === todayStr) {
+      const [hStr, mStr] = (new Intl.DateTimeFormat('en-GB', { timeZone: zone, hour: '2-digit', minute: '2-digit', hour12: false }).format(input.now)).split(':');
+      const minutesSinceMidnight = Number(hStr) * 60 + Number(mStr);
+      return minutesSinceMidnight >= 18 * 60;
+    }
+    return false;
+  });
+
+  if (stranded.length === 0) {
+    return JSON.stringify({
+      ok: true,
+      stranded: [],
+      note: 'Nothing is actually stranded. Say the day is on track; do not invent moves.',
+    });
+  }
+
+  const events: AvailabilityEvent[] = input.snapshot.events.map((e) => ({
+    title: e.title,
+    startsAt: e.startsAt,
+    endsAt: e.endsAt ?? null,
+    location: e.location ?? null,
+  }));
+
+  // Start the search from tomorrow — today is where they slipped.
+  const tomorrowMs = nowMs + 24 * 60 * 60 * 1000;
+  const fromDate = today(zone, tomorrowMs);
+
+  const { days } = await findTime({
+    fromDate,
+    events,
+    timeZone: zone,
+    now: nowMs,
+    prefs: input.profile
+      ? {
+          sleepStartHour: input.profile.sleepStartHour,
+          sleepEndHour: input.profile.sleepEndHour,
+          bufferMinutes: input.profile.bufferMinutes,
+        }
+      : undefined,
+    wantDays: lookAhead,
+    searchDays: lookAhead,
+  });
+
+  // Flatten the first few windows across the forecasted days — each task
+  // claims one, 30-minute minimum, in order.
+  const windows = days.flatMap((d) =>
+    d.windows.filter((w) => w.minutes >= 30).map((w) => ({ date: d.date, ...w })),
+  );
+
+  if (windows.length === 0) {
+    return JSON.stringify({
+      ok: true,
+      stranded: stranded.map((t) => ({ id: t.id, title: t.title })),
+      proposals: [],
+      note:
+        'There are no 30-minute windows across the next few days. Say the next days are packed and ask the user how they want to triage.',
+    });
+  }
+
+  const proposals = stranded.slice(0, 5).map((task, i) => {
+    const w = windows[i % windows.length]!;
+    return {
+      taskId: task.id,
+      title: task.title,
+      newDueAt: w.startsAt,
+      day: w.date,
+      windowMinutes: w.minutes,
+      reasonTail: w.nextTitle ? `before ${w.nextTitle}` : null,
+    };
+  });
+
+  return JSON.stringify({
+    ok: true,
+    strandedCount: stranded.length,
+    proposals,
+    instruction:
+      'Make ONE short pitch summarising the plan: "I can move X to tomorrow at 10, Y to Wednesday morning — want me to?" Do not list every move at length. On yes, call update_task per proposal with the newDueAt. Use present_summary if a visual confirmation is useful.',
+  });
+}
+
+/**
+ * Warn before overrun, not after. For each category budget, projects spending
+ * forward from the current pace through the end of the month and flags the ones
+ * likely to overshoot.
+ */
+function answerBudgetAlert(
+  _args: Record<string, unknown>,
+  input: VoiceTurnInput,
+): string {
+  const cur = input.snapshot.currency ? ` ${input.snapshot.currency}` : '';
+  const amt = (n: number) => `${Math.round(n * 100) / 100}${cur}`;
+
+  const budgets = input.snapshot.budgets ?? {};
+  if (Object.keys(budgets).length === 0) {
+    return JSON.stringify({
+      ok: true,
+      findings: [],
+      note:
+        'No budgets have been set. If the user asked, suggest briefly that setting a budget per category unlocks pacing warnings — do not nag.',
+    });
+  }
+
+  // Determine how far into the month we are, in the user's zone.
+  const todayStr = today(input.timezone, input.now.getTime());
+  const [, , dStr] = todayStr.split('-');
+  const dayOfMonth = Number(dStr);
+
+  // Days in the current month, in the user's zone. Build YYYY-MM-DD for day 28,
+  // then step forward until the month flips.
+  const [yStr, mStr] = todayStr.split('-');
+  const year = Number(yStr);
+  const month = Number(mStr);
+  const daysInMonth = new Date(Date.UTC(year, month, 0)).getUTCDate(); // last day
+  const daysLeft = Math.max(1, daysInMonth - dayOfMonth);
+  const monthProgress = dayOfMonth / daysInMonth;
+
+  const thisMonth = `${yStr}-${mStr}`;
+  const spentByCat = new Map<string, number>();
+  for (const r of input.snapshot.money) {
+    if (r.kind !== 'expense') continue;
+    if (!r.date.startsWith(thisMonth)) continue;
+    const key = r.category ?? 'uncategorised';
+    spentByCat.set(key, (spentByCat.get(key) ?? 0) + r.amount);
+  }
+
+  const findings: Array<{
+    category: string;
+    limit: number;
+    spent: number;
+    pct: number;
+    projected: number;
+    overshoot: number;
+    daysLeft: number;
+    severity: 'overrun' | 'risk' | 'ok';
+  }> = [];
+
+  for (const [cat, limit] of Object.entries(budgets)) {
+    if (!(limit > 0)) continue;
+    const spent = spentByCat.get(cat) ?? 0;
+    const pct = spent / limit;
+    // Pace projection: if we're a third into the month and already at a third,
+    // we're on track. If we're a third in and at 60%, we project to 180% —
+    // overshoot by 80%.
+    const projected = monthProgress > 0 ? spent / monthProgress : spent;
+    const overshoot = Math.max(0, projected - limit);
+
+    let severity: 'overrun' | 'risk' | 'ok' = 'ok';
+    if (spent >= limit) severity = 'overrun';
+    else if (overshoot > 0 && projected > limit * 1.1) severity = 'risk';
+    else if (pct >= 0.9) severity = 'risk';
+
+    if (severity === 'ok') continue;
+    findings.push({ category: cat, limit, spent, pct: pct * 100, projected, overshoot, daysLeft, severity });
+  }
+
+  // Overrun first, then biggest projected overshoot.
+  findings.sort((a, b) => {
+    if (a.severity !== b.severity) return a.severity === 'overrun' ? -1 : 1;
+    return b.overshoot - a.overshoot;
+  });
+
+  return JSON.stringify({
+    ok: true,
+    monthProgress: Math.round(monthProgress * 100),
+    daysLeft,
+    findings: findings.slice(0, 3).map((f) => ({
+      category: f.category,
+      budget: amt(f.limit),
+      spent: amt(f.spent),
+      pct: Math.round(f.pct),
+      projected: amt(Math.round(f.projected)),
+      overshootBy: f.overshoot > 0 ? amt(Math.round(f.overshoot)) : null,
+      daysLeft: f.daysLeft,
+      severity: f.severity,
+      recommendation:
+        f.severity === 'overrun'
+          ? `Already over the ${amt(f.limit)} budget. Reset, reallocate from another category, or accept it — say which once.`
+          : `On pace to overshoot by about ${amt(Math.round(f.overshoot))}. ${amt(Math.round((f.limit - f.spent) / Math.max(1, f.daysLeft)))} per day keeps it in budget.`,
+    })),
+    instruction:
+      findings.length === 0
+        ? 'All budgets are on track. Say so briefly and leave it at that.'
+        : 'Lead with the single worst category. Say the number plainly ("food is 78 percent through with 11 days left — on pace to overshoot by about 240"), then give one concrete option. Use present_budget to render the detail.',
+  });
+}
+
+/**
+ * Weekly recap: what shifted this week, in numbers the model can quote without
+ * doing arithmetic. Zone-aware week bounds — Sunday is day 0 (Israel/US).
+ */
+function answerWeeklySummary(
+  args: Record<string, unknown>,
+  input: VoiceTurnInput,
+): string {
+  const cur = input.snapshot.currency ? ` ${input.snapshot.currency}` : '';
+  const amt = (n: number) => `${Math.round(n * 100) / 100}${cur}`;
+  const weeksBack = Math.max(
+    0,
+    Math.min(4, typeof args.weeksBack === 'number' ? Math.round(args.weeksBack) : 0),
+  );
+
+  // Find the Sunday that opens the week we care about, in the user's zone.
+  const zone = input.timezone;
+  const nowMs = input.now.getTime();
+  const todayStr = today(zone, nowMs);
+  const [y, m, d] = todayStr.split('-').map(Number);
+  const todayDate = new Date(Date.UTC(y!, m! - 1, d!));
+  const dow = todayDate.getUTCDay(); // 0 = Sunday
+  const sundayMs = todayDate.getTime() - dow * 24 * 60 * 60 * 1000 - weeksBack * 7 * 24 * 60 * 60 * 1000;
+  const sunday = new Date(sundayMs);
+  const saturday = new Date(sundayMs + 6 * 24 * 60 * 60 * 1000);
+
+  const isoDate = (date: Date) =>
+    `${date.getUTCFullYear()}-${String(date.getUTCMonth() + 1).padStart(2, '0')}-${String(date.getUTCDate()).padStart(2, '0')}`;
+  const weekStart = isoDate(sunday);
+  const weekEnd = isoDate(saturday);
+
+  // Money in and out this week.
+  const weekMoney = input.snapshot.money.filter((r) => r.date >= weekStart && r.date <= weekEnd);
+  const income = weekMoney.filter((r) => r.kind === 'income').reduce((s, r) => s + r.amount, 0);
+  const spent = weekMoney.filter((r) => r.kind === 'expense').reduce((s, r) => s + r.amount, 0);
+
+  const byCat = new Map<string, number>();
+  for (const r of weekMoney) {
+    if (r.kind !== 'expense') continue;
+    const key = r.category ?? 'uncategorised';
+    byCat.set(key, (byCat.get(key) ?? 0) + r.amount);
+  }
+  const biggestCat = [...byCat.entries()].sort((a, b) => b[1] - a[1])[0] ?? null;
+
+  // Tasks finished this week (dueAt within the window AND isDone).
+  // The snapshot's isDone only tells us current state, not when it finished,
+  // so this is an approximation: a done task whose due date is this week.
+  const tasksDoneThisWeek = input.snapshot.tasks.filter(
+    (t) => t.isDone && t.dueAt && dayOf(t.dueAt, zone)! >= weekStart && dayOf(t.dueAt, zone)! <= weekEnd,
+  );
+  const tasksOpenThisWeek = input.snapshot.tasks.filter(
+    (t) => !t.isDone && t.dueAt && dayOf(t.dueAt, zone)! >= weekStart && dayOf(t.dueAt, zone)! <= weekEnd,
+  );
+
+  // Which days were packed: count events per day.
+  const eventsPerDay = new Map<string, number>();
+  for (const e of input.snapshot.events) {
+    const day = dayOf(e.startsAt, zone);
+    if (!day || day < weekStart || day > weekEnd) continue;
+    eventsPerDay.set(day, (eventsPerDay.get(day) ?? 0) + 1);
+  }
+  const packedDays = [...eventsPerDay.entries()]
+    .filter(([, n]) => n >= 4)
+    .map(([date]) => date);
+
+  // Upcoming week preview — next 7 days of events.
+  const upcoming = input.snapshot.events
+    .filter((e) => {
+      const t = new Date(e.startsAt).getTime();
+      return t >= nowMs && t <= nowMs + 7 * 24 * 60 * 60 * 1000;
+    })
+    .slice(0, 5)
+    .map((e) => ({ title: e.title, startsAt: e.startsAt, location: e.location ?? null }));
+
+  return JSON.stringify({
+    ok: true,
+    weekStart,
+    weekEnd,
+    money: {
+      income: amt(income),
+      spent: amt(spent),
+      balance: amt(income - spent),
+      biggestCategory: biggestCat
+        ? { name: biggestCat[0], amount: amt(biggestCat[1]) }
+        : null,
+    },
+    tasks: {
+      finished: tasksDoneThisWeek.length,
+      stillOpen: tasksOpenThisWeek.length,
+    },
+    packedDays,
+    upcoming,
+    instruction:
+      'Hand the user a short recap: one line of what happened, one line of what is ahead. ' +
+      'Celebrate wins ("you knocked out 12 tasks this week"), name the biggest spend, name tomorrow or Monday if it stands out. ' +
+      'Use present_summary for the numbers; do not read every figure aloud.',
   });
 }
 

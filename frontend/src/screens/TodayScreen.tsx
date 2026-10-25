@@ -577,7 +577,7 @@ function WeatherSquare({
 // ── The headline ───────────────────────────────────────────────────────────
 
 /** The app's name in each script — the sweep applies to whichever appears. */
-const BRANDS = ['Planzi', 'פלנזי'] as const;
+const BRANDS = ['Planzi'] as const;
 
 function findBrand(line: string): number {
   for (const b of BRANDS) {

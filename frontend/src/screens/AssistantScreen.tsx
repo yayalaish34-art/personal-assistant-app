@@ -20,7 +20,7 @@ import type { NativeStackNavigationProp } from '@react-navigation/native-stack';
 import * as Haptics from 'expo-haptics';
 import { LinearGradient } from 'expo-linear-gradient';
 import Svg, { Circle, Path } from 'react-native-svg';
-import { X, Mic, Undo2, RotateCcw, Send, Sparkles, CheckCheck, Check, Clock, ArrowUpRight, ArrowDownLeft, Sun, Cloud, CloudRain, CloudLightning, Snowflake, CloudSun, Wind, CloudFog, TrendingUp, TrendingDown, Minus, Star } from 'lucide-react-native';
+import { X, Mic, Undo2, RotateCcw, Send, Sparkles, CheckCheck, Check, Clock, ArrowUpRight, ArrowDownLeft, Sun, Cloud, CloudRain, CloudLightning, Snowflake, CloudSun, Wind, CloudFog, TrendingUp, TrendingDown, Minus, Star, CalendarDays, ListTodo, ShoppingCart, Wallet, MapPin, Navigation, CalendarClock } from 'lucide-react-native';
 
 import { Glow, LitDisc } from '../components/ui';
 import { api } from '../lib/api';
@@ -895,6 +895,28 @@ export default function AssistantScreen() {
         contentContainerStyle={styles.transcriptContent}
         showsVerticalScrollIndicator={false}
       >
+        {lines.length === 0 ? (
+          <Entrance delay={180} from={14}>
+            <Text style={styles.canDoTitle}>{t('voice.canDo')}</Text>
+            <View style={styles.capGrid}>
+              {([
+                { key: 'schedule', Glyph: CalendarDays },
+                { key: 'tasks', Glyph: ListTodo },
+                { key: 'shopping', Glyph: ShoppingCart },
+                { key: 'money', Glyph: Wallet },
+                { key: 'nearby', Glyph: MapPin },
+                { key: 'travel', Glyph: Navigation },
+                { key: 'freeTime', Glyph: CalendarClock },
+                { key: 'weather', Glyph: Sun },
+              ] as const).map(({ key, Glyph }) => (
+                <View key={key} style={styles.capChip}>
+                  <Glyph color={VOICE.accent} size={16} strokeWidth={2} />
+                  <Text style={styles.capText}>{t(`voice.cap.${key}`)}</Text>
+                </View>
+              ))}
+            </View>
+          </Entrance>
+        ) : null}
         {lines.map((line) => (
           // Full width, so the bubble inside still sits to its side and its
           // percentage widths still measure the column.
@@ -1328,6 +1350,33 @@ const styles = themed(() =>
       paddingVertical: 8,
     },
     chipText: { fontSize: 14, ...font(600), color: VOICE.accent },
+
+    // ── Capabilities (empty state) ──
+    canDoTitle: {
+      fontSize: 15,
+      ...font(600),
+      color: VOICE.meta,
+      textAlign: 'center',
+      marginBottom: 12,
+      marginTop: 24,
+    },
+    capGrid: {
+      flexDirection: 'row',
+      flexWrap: 'wrap',
+      gap: 8,
+      justifyContent: 'center',
+      paddingHorizontal: 12,
+    },
+    capChip: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      gap: 6,
+      backgroundColor: VOICE.chrome,
+      borderRadius: 100,
+      paddingHorizontal: 14,
+      paddingVertical: 8,
+    },
+    capText: { fontSize: 13, ...font(500), color: VOICE.ink },
 
     // ── Weather ──
     weatherRow: {

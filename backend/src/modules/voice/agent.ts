@@ -658,6 +658,68 @@ export const ACTION_TOOLS = [
   {
     type: 'function' as const,
     function: {
+      name: 'plan_recurring_goal',
+      description:
+        "Turn a weekly goal into real calendar slots. Given a title ('workout', 'studying', 'calling clients'), a count per week, and a rough duration, this searches the coming week's free windows and picks that many non-adjacent slots that actually fit — travel and sleep already subtracted. Returns the proposed slot list; the user says yes, you call create_event per slot. Use this instead of making the user pick times by hand.",
+      parameters: {
+        type: 'object',
+        properties: {
+          title: {
+            type: 'string',
+            description: 'Short name of the recurring thing — "workout", "deep work", "piano practice". No dates or filler.',
+          },
+          timesPerWeek: {
+            type: 'number',
+            description: 'How many slots to find across the week. 1–7.',
+          },
+          durationMinutes: {
+            type: 'number',
+            description: 'Rough length of one slot. Default 60.',
+          },
+          preferredPeriod: {
+            type: 'string',
+            enum: ['morning', 'afternoon', 'evening', 'any'],
+            description: 'When in the day. Default any — call it only when the user said so.',
+          },
+        },
+        required: ['title', 'timesPerWeek'],
+      },
+    },
+  },
+  {
+    type: 'function' as const,
+    function: {
+      name: 'cluster_errands',
+      description:
+        "Scan the next few days of events looking for pairs or more that sit in the same place or area, so you can propose consolidating a trip or dropping something in on a day the user is already heading that way. Returns the clusters it found (what's happening in what city, on which day). Call this when the user asks about the week ahead, when they add an event in a place that already appears, or when they ask whether something can be batched.",
+      parameters: {
+        type: 'object',
+        properties: {
+          lookAheadDays: {
+            type: 'number',
+            description: 'How many days to scan. Default 7, max 14.',
+          },
+        },
+        required: [],
+      },
+    },
+  },
+  {
+    type: 'function' as const,
+    function: {
+      name: 'end_of_day',
+      description:
+        "The evening close ritual: what landed today, what slipped, what tomorrow starts with. Returns the numbers so you can hand the user a short, non-shaming recap: 'you shipped nine, two moved to tomorrow, you start with the dentist at 9'. Use this at or near the user's wind-down hour, when they ask 'how did today go', or whenever the day is clearly over for them. Pair with replan_remainder if things slipped.",
+      parameters: {
+        type: 'object',
+        properties: {},
+        required: [],
+      },
+    },
+  },
+  {
+    type: 'function' as const,
+    function: {
       name: 'check_weather',
       description:
         "Fetch the current weather and the next-24h forecast for the user's area. Call this when the user asks about the weather, when an outdoor errand is on the schedule and conditions could matter, or whenever a plan would read differently in rain. Returns temperature, precipitation chance by hour, and a short condition code. Prefer present_weather to show the forecast; use the fetched facts to decide whether to suggest moving an outdoor plan.",
@@ -1083,6 +1145,16 @@ const ARG_SCHEMAS = {
       .optional(),
     highlights: z.array(z.string().max(200)).max(5).optional(),
   }),
+  plan_recurring_goal: z.object({
+    title: z.string().min(1).max(80),
+    timesPerWeek: z.number().int().min(1).max(7),
+    durationMinutes: z.number().positive().max(8 * 60).optional(),
+    preferredPeriod: z.enum(['morning', 'afternoon', 'evening', 'any']).optional(),
+  }),
+  cluster_errands: z.object({
+    lookAheadDays: z.number().int().min(1).max(14).optional(),
+  }),
+  end_of_day: z.object({}),
   check_weather: z.object({
     days: z.number().positive().max(7).optional(),
   }),
@@ -1686,13 +1758,33 @@ export function buildSystemPrompt(input: {
     '  is a Planzi sentence; "I have moved it" is not.',
     '- EVENING CLOSE AND WEEKLY RECAP: when the user opens the app late (near',
     '  their sleep window) or asks "how did today go" or "how was my week",',
-    '  that is a recap, not a to-do read. For a day: say what got done, what',
-    '  slipped (and offer replan_remainder on it), and what tomorrow holds in',
-    '  one line. For a week: call weekly_summary and lead with one win, one',
-    '  biggest spend, and one thing coming up. Never read a long list aloud —',
-    '  present_summary is the surface. Never shame the user for unfinished',
-    '  tasks; the vision calls this "no red to-do list of shame — just order',
-    '  and move on".',
+    '  that is a recap, not a to-do read. For today: call end_of_day — it',
+    '  returns tasks done, what slipped, and tomorrow\'s first thing; lead with',
+    '  a win, pair with replan_remainder on anything that slipped. For a week:',
+    '  call weekly_summary and lead with one win, one biggest spend, and one',
+    '  thing coming up. Never read a long list aloud — present_summary is the',
+    '  surface. Never shame the user for unfinished tasks; the vision calls',
+    '  this "no red to-do list of shame — just order and move on".',
+    '- GOALS BECOME SLOTS: when the user says a count-per-week goal — "three',
+    '  workouts this week", "I want to study four evenings", "call clients',
+    '  twice a week" — call plan_recurring_goal, not create_task. It picks',
+    '  real windows and spreads them across different days. Pitch the plan in',
+    '  one line ("I found three 60-minute slots that fit — Sunday, Tuesday',
+    '  evening, Thursday morning. Lock them in?"); on yes, call create_event',
+    '  per proposed slot.',
+    '- BATCHING BY AREA: when the user asks what the week looks like, when',
+    '  they add a second thing in a city that already appears, or when they',
+    '  ask if an errand can be grouped, call cluster_errands. If a cluster',
+    '  comes back, offer the batch: "you have two things in Beer Sheva next',
+    '  Tuesday and Thursday — want me to put Omer\'s visit on one of them?"',
+    '  Encourage adding location to events so this works.',
+    '- HOSTING, LESSONS, APPOINTMENTS AS BUNDLES: "I\'m hosting twelve on',
+    '  Friday" or "I booked a piano lesson for Tuesday" is one event plus a',
+    '  few prep tasks plus (for hosting) a shopping run. Issue all of them in',
+    '  the same reply: create_event, then create_task for cleaning / set-up /',
+    '  pre-work, then add_shopping_item per item. Hosting dinner for N scales:',
+    '  mains, sides, drinks, bread, dessert, something to welcome them with.',
+    '  Lesson or appointment: one event + reminders at useful times.',
     '- FREE TIME IS NOT WORK TIME: when the user has blocked time for family,',
     '  rest or themselves, respect it. Do not stuff an errand into dinner just',
     '  because the clock is open.',
@@ -1930,6 +2022,33 @@ export async function runVoiceTurn(input: VoiceTurnInput): Promise<VoiceTurnResu
           role: 'tool',
           tool_call_id: call.id,
           content: await answerCheckWeather(outcome.action.arguments, input),
+        });
+        continue;
+      }
+
+      if (outcome.action?.tool === 'plan_recurring_goal') {
+        messages.push({
+          role: 'tool',
+          tool_call_id: call.id,
+          content: await answerPlanRecurringGoal(outcome.action.arguments, input),
+        });
+        continue;
+      }
+
+      if (outcome.action?.tool === 'cluster_errands') {
+        messages.push({
+          role: 'tool',
+          tool_call_id: call.id,
+          content: answerClusterErrands(outcome.action.arguments, input),
+        });
+        continue;
+      }
+
+      if (outcome.action?.tool === 'end_of_day') {
+        messages.push({
+          role: 'tool',
+          tool_call_id: call.id,
+          content: answerEndOfDay(outcome.action.arguments, input),
         });
         continue;
       }
@@ -2208,7 +2327,7 @@ async function answerTravelCheck(
  * Returns one candidate suggestion or null. Returning two gives the model room
  * to pick the less-useful one; returning none is better than inventing one.
  */
-async function answerSuggestOpportunity(
+export async function answerSuggestOpportunity(
   args: Record<string, unknown>,
   input: VoiceTurnInput,
 ): Promise<string> {
@@ -2354,7 +2473,7 @@ async function answerSuggestOpportunity(
  * "Deliveries up 28% versus last month" — spending trends, computed, so the
  * model never sums figures itself.
  */
-function answerSpendingTrends(
+export function answerSpendingTrends(
   args: Record<string, unknown>,
   input: VoiceTurnInput,
 ): string {
@@ -2467,7 +2586,7 @@ function answerSpendingTrends(
  * days". Finds expense descriptions that repeated across months, estimates the
  * next hit from the day-of-month pattern, and totals them.
  */
-function answerUpcomingDebits(
+export function answerUpcomingDebits(
   args: Record<string, unknown>,
   input: VoiceTurnInput,
 ): string {
@@ -2578,7 +2697,7 @@ function answerUpcomingDebits(
  * plus a next-24h precipitation picture, so the model can decide whether an
  * outdoor plan needs moving without wading through a full forecast.
  */
-async function answerCheckWeather(
+export async function answerCheckWeather(
   args: Record<string, unknown>,
   input: VoiceTurnInput,
 ): Promise<string> {
@@ -2721,7 +2840,7 @@ function weatherCodeLabel(code: number): string {
  * few days' free windows and proposes a specific new slot. The model turns
  * the plan into one short pitch; a yes from the user becomes update_task calls.
  */
-async function answerReplanRemainder(
+export async function answerReplanRemainder(
   args: Record<string, unknown>,
   input: VoiceTurnInput,
 ): Promise<string> {
@@ -2832,7 +2951,7 @@ async function answerReplanRemainder(
  * forward from the current pace through the end of the month and flags the ones
  * likely to overshoot.
  */
-function answerBudgetAlert(
+export function answerBudgetAlert(
   _args: Record<string, unknown>,
   input: VoiceTurnInput,
 ): string {
@@ -2937,7 +3056,7 @@ function answerBudgetAlert(
  * Weekly recap: what shifted this week, in numbers the model can quote without
  * doing arithmetic. Zone-aware week bounds — Sunday is day 0 (Israel/US).
  */
-function answerWeeklySummary(
+export function answerWeeklySummary(
   args: Record<string, unknown>,
   input: VoiceTurnInput,
 ): string {
@@ -3029,6 +3148,319 @@ function answerWeeklySummary(
       'Hand the user a short recap: one line of what happened, one line of what is ahead. ' +
       'Celebrate wins ("you knocked out 12 tasks this week"), name the biggest spend, name tomorrow or Monday if it stands out. ' +
       'Use present_summary for the numbers; do not read every figure aloud.',
+  });
+}
+
+/**
+ * "Three workouts this week" → three concrete, non-adjacent calendar slots.
+ *
+ * Picks windows from the next 7 days that each hold the requested duration,
+ * spread apart so the user does not land three workouts on three consecutive
+ * days. Returns the proposal; the agent asks the user to confirm, then creates
+ * events for each slot.
+ */
+export async function answerPlanRecurringGoal(
+  args: Record<string, unknown>,
+  input: VoiceTurnInput,
+): Promise<string> {
+  const title = String(args.title ?? '').trim();
+  const timesPerWeek = Math.max(
+    1,
+    Math.min(7, Math.round(Number(args.timesPerWeek) || 1)),
+  );
+  const duration = Math.max(
+    15,
+    Math.min(
+      8 * 60,
+      typeof args.durationMinutes === 'number' && args.durationMinutes > 0
+        ? Math.round(args.durationMinutes)
+        : 60,
+    ),
+  );
+  const period = ((args.preferredPeriod as string | undefined) ?? 'any') as
+    | 'morning'
+    | 'afternoon'
+    | 'evening'
+    | 'any';
+
+  if (!title) {
+    return JSON.stringify({ ok: false, error: 'No title given.' });
+  }
+
+  const zone = input.timezone;
+  const nowMs = input.now.getTime();
+  const fromDate = today(zone, nowMs);
+
+  const events: AvailabilityEvent[] = input.snapshot.events.map((e) => ({
+    title: e.title,
+    startsAt: e.startsAt,
+    endsAt: e.endsAt ?? null,
+    location: e.location ?? null,
+  }));
+
+  const { days } = await findTime({
+    fromDate,
+    events,
+    timeZone: zone,
+    now: nowMs,
+    prefs: input.profile
+      ? {
+          sleepStartHour: input.profile.sleepStartHour,
+          sleepEndHour: input.profile.sleepEndHour,
+          bufferMinutes: input.profile.bufferMinutes,
+        }
+      : undefined,
+    wantDays: 7,
+    searchDays: 7,
+  });
+
+  // Flatten and filter by duration + preferred period.
+  const hourFromIso = (iso: string): number => {
+    const h = new Intl.DateTimeFormat('en-GB', {
+      timeZone: zone,
+      hour: '2-digit',
+      hour12: false,
+    }).format(new Date(iso));
+    return Number(h);
+  };
+  const inPeriod = (h: number): boolean => {
+    if (period === 'any') return true;
+    if (period === 'morning') return h >= 6 && h < 12;
+    if (period === 'afternoon') return h >= 12 && h < 17;
+    return h >= 17 && h < 22;
+  };
+
+  const slots = days.flatMap((d) =>
+    d.windows
+      .filter((w) => w.minutes >= duration)
+      .filter((w) => inPeriod(hourFromIso(w.startsAt)))
+      .map((w) => ({ date: d.date, startsAt: w.startsAt, windowMinutes: w.minutes })),
+  );
+
+  if (slots.length === 0) {
+    return JSON.stringify({
+      ok: true,
+      proposed: [],
+      note:
+        period === 'any'
+          ? `No ${duration}-minute windows found in the next 7 days. Say the week is packed and ask the user how to make room.`
+          : `No ${duration}-minute windows in the ${period} slot across the next 7 days. Ask if another time of day works.`,
+    });
+  }
+
+  // Spread: pick one slot per day, preferring different days before doubling up.
+  const picked: typeof slots = [];
+  const usedDates = new Set<string>();
+  for (const s of slots) {
+    if (picked.length >= timesPerWeek) break;
+    if (usedDates.has(s.date)) continue;
+    picked.push(s);
+    usedDates.add(s.date);
+  }
+  // If still short, allow a second slot on days that already have one, but
+  // only when we really need the count. This happens on weeks with few free
+  // days — better two on Tuesday than silently skipping the goal.
+  if (picked.length < timesPerWeek) {
+    for (const s of slots) {
+      if (picked.length >= timesPerWeek) break;
+      if (picked.some((p) => p.startsAt === s.startsAt)) continue;
+      picked.push(s);
+    }
+  }
+
+  const proposed = picked.map((s) => ({
+    title,
+    startsAt: s.startsAt,
+    durationMinutes: duration,
+    windowMinutes: s.windowMinutes,
+    date: s.date,
+  }));
+
+  return JSON.stringify({
+    ok: true,
+    goalTitle: title,
+    timesPerWeekRequested: timesPerWeek,
+    foundCount: proposed.length,
+    proposed,
+    instruction:
+      proposed.length < timesPerWeek
+        ? `Only ${proposed.length} ${duration}-min slots fit this week. Say so and ask whether to go with the fewer or push to next week — do NOT silently drop any.`
+        : `Pitch the plan in one short sentence ("I have three ${duration}-minute slots that fit — Sunday morning, Tuesday evening and Thursday morning. Lock them in?"). On yes, call create_event per proposed slot with title "${title}", startsAt as given, and endsAt = startsAt + ${duration} minutes.`,
+  });
+}
+
+/**
+ * Group upcoming events by city or short-prefix location string, so the model
+ * can offer to batch tasks on a day the user is already heading somewhere.
+ */
+export function answerClusterErrands(
+  args: Record<string, unknown>,
+  input: VoiceTurnInput,
+): string {
+  const lookAhead = Math.max(
+    1,
+    Math.min(
+      14,
+      typeof args.lookAheadDays === 'number' ? Math.round(args.lookAheadDays) : 7,
+    ),
+  );
+
+  const zone = input.timezone;
+  const nowMs = input.now.getTime();
+  const horizonMs = nowMs + lookAhead * 24 * 60 * 60 * 1000;
+
+  // "City" from a free-text location: take the first comma segment, lowercased
+  // and trimmed. "Beer Sheva, Industrial Zone" and "Beer Sheva, HaRav Herzog"
+  // both land in "beer sheva".
+  const cityOf = (loc: string): string =>
+    loc.split(',')[0]!.trim().toLowerCase().replace(/\s+/g, ' ');
+
+  const relevant = input.snapshot.events
+    .filter((e) => {
+      if (!e.location || !e.location.trim()) return false;
+      const t = new Date(e.startsAt).getTime();
+      return Number.isFinite(t) && t >= nowMs && t <= horizonMs;
+    })
+    .map((e) => ({
+      id: e.id,
+      title: e.title,
+      startsAt: e.startsAt,
+      day: dayOf(e.startsAt, zone)!,
+      location: e.location!.trim(),
+      city: cityOf(e.location!),
+    }));
+
+  if (relevant.length < 2) {
+    return JSON.stringify({
+      ok: true,
+      clusters: [],
+      note:
+        relevant.length === 0
+          ? 'No upcoming events have a location set in the lookahead. Encourage the user to add locations to events so clustering can work.'
+          : 'Only one upcoming event has a location — not enough to cluster. Say so plainly, do not invent a cluster.',
+    });
+  }
+
+  // Group by city.
+  const byCity = new Map<string, typeof relevant>();
+  for (const e of relevant) {
+    const bucket = byCity.get(e.city);
+    if (bucket) bucket.push(e);
+    else byCity.set(e.city, [e]);
+  }
+
+  // Only real clusters: two or more events in the same city, and preferably
+  // on different days — a cluster on one day already is one trip; the leverage
+  // is proposing to batch another errand onto that trip.
+  const clusters: Array<{
+    city: string;
+    events: Array<{ id: string; title: string; day: string; startsAt: string; location: string }>;
+    spansDays: boolean;
+  }> = [];
+  for (const [city, es] of byCity.entries()) {
+    if (es.length < 2) continue;
+    const days = new Set(es.map((e) => e.day));
+    clusters.push({
+      city,
+      events: es
+        .sort((a, b) => a.startsAt.localeCompare(b.startsAt))
+        .map((e) => ({
+          id: e.id,
+          title: e.title,
+          day: e.day,
+          startsAt: e.startsAt,
+          location: e.location,
+        })),
+      spansDays: days.size > 1,
+    });
+  }
+
+  clusters.sort((a, b) => b.events.length - a.events.length);
+
+  return JSON.stringify({
+    ok: true,
+    lookAheadDays: lookAhead,
+    clusters: clusters.slice(0, 3),
+    instruction:
+      clusters.length === 0
+        ? 'No cities repeat in the lookahead. Say so briefly, nothing to batch.'
+        : 'Name the biggest cluster plainly ("you have two things in Beer Sheva next week — Monday and Thursday"). If spansDays is true, offer to add any pending errand onto one of the days. Keep it to one sentence; use present_cards if details help.',
+  });
+}
+
+/**
+ * End-of-day close: what landed, what slipped, tomorrow's first thing.
+ *
+ * Zone-aware. Does not shame the user for unfinished tasks — the instruction
+ * explicitly tells the model to lead with wins.
+ */
+export function answerEndOfDay(
+  _args: Record<string, unknown>,
+  input: VoiceTurnInput,
+): string {
+  const zone = input.timezone;
+  const nowMs = input.now.getTime();
+  const todayStr = today(zone, nowMs);
+  const tomorrowStr = today(zone, nowMs + 24 * 60 * 60 * 1000);
+
+  // Tasks whose dueAt is today.
+  const todayTasks = input.snapshot.tasks.filter(
+    (t) => t.dueAt && dayOf(t.dueAt, zone) === todayStr,
+  );
+  const done = todayTasks.filter((t) => t.isDone);
+  const open = todayTasks.filter((t) => !t.isDone);
+
+  // Events that happened today (started before now).
+  const todayEvents = input.snapshot.events.filter(
+    (e) => dayOf(e.startsAt, zone) === todayStr,
+  );
+  const eventsBehindNow = todayEvents.filter(
+    (e) => new Date(e.startsAt).getTime() <= nowMs,
+  );
+
+  // Money that moved today.
+  const todayMoney = input.snapshot.money.filter((m) => m.date === todayStr);
+  const spent = todayMoney
+    .filter((m) => m.kind === 'expense')
+    .reduce((s, m) => s + m.amount, 0);
+  const earned = todayMoney
+    .filter((m) => m.kind === 'income')
+    .reduce((s, m) => s + m.amount, 0);
+  const cur = input.snapshot.currency ? ` ${input.snapshot.currency}` : '';
+  const amt = (n: number) => `${Math.round(n * 100) / 100}${cur}`;
+
+  // Tomorrow's first event, if any.
+  const tomorrowEvents = input.snapshot.events
+    .filter((e) => dayOf(e.startsAt, zone) === tomorrowStr)
+    .sort((a, b) => a.startsAt.localeCompare(b.startsAt));
+  const tomorrowFirst = tomorrowEvents[0]
+    ? {
+        title: tomorrowEvents[0].title,
+        startsAt: tomorrowEvents[0].startsAt,
+        location: tomorrowEvents[0].location ?? null,
+      }
+    : null;
+
+  return JSON.stringify({
+    ok: true,
+    today: {
+      tasksDone: done.length,
+      tasksOpen: open.length,
+      openTitles: open.slice(0, 3).map((t) => ({ id: t.id, title: t.title })),
+      eventsHeld: eventsBehindNow.length,
+      spent: amt(spent),
+      earned: amt(earned),
+    },
+    tomorrow: {
+      first: tomorrowFirst,
+      eventCount: tomorrowEvents.length,
+    },
+    instruction:
+      done.length === 0 && open.length === 0 && eventsBehindNow.length === 0
+        ? 'The day was quiet — no scheduled items. Say that plainly, no shame.'
+        : 'Lead with a win ("you shipped ' +
+          String(done.length) +
+          ' today"), note what slipped in one phrase (not a list), and name tomorrow\'s first thing with a time. If anything slipped, offer replan_remainder in the SAME reply ("want me to find a spot for them tomorrow?"). Use present_summary if the numbers help on screen; never read every slipped task aloud.',
   });
 }
 

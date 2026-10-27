@@ -665,7 +665,7 @@ export const ACTION_TOOLS = [
     function: {
       name: 'plan_recurring_goal',
       description:
-        "Turn a weekly goal into real calendar slots. Given a title ('workout', 'studying', 'calling clients'), a count per week, and a rough duration, this searches the coming week's free windows and picks that many non-adjacent slots that actually fit — travel and sleep already subtracted. Returns the proposed slot list; the user says yes, you call create_event per slot. Use this instead of making the user pick times by hand.",
+        "Turn a weekly goal into REAL CALENDAR EVENTS in one call. Given a title ('workout', 'studying', 'calling clients'), a count per week, and a rough duration, this searches the coming week's free windows, picks that many non-adjacent slots that actually fit (travel and sleep already subtracted) AND CREATES THE CALENDAR EVENTS DIRECTLY. The device will apply them without any further tool call from you. After this returns, confirm aloud in one short sentence what landed — do NOT call create_event for the same slots, do NOT re-propose, do NOT ask the user to confirm. This replaces the user picking times by hand.",
       parameters: {
         type: 'object',
         properties: {
@@ -685,6 +685,10 @@ export const ACTION_TOOLS = [
             type: 'string',
             enum: ['morning', 'afternoon', 'evening', 'any'],
             description: 'When in the day. Default any — call it only when the user said so.',
+          },
+          reminderMinutesBefore: {
+            type: 'number',
+            description: 'Minutes of heads-up before each slot. Pass only if the user asked for a reminder (e.g. "remind me 30 min before"). Omit for no reminder.',
           },
         },
         required: ['title', 'timesPerWeek'],
@@ -1657,6 +1661,34 @@ export function buildSystemPrompt(input: {
     '  about things a tool call actually did. Three workouts is three',
     '  create_event calls in this one reply, not a sentence about three',
     '  workouts and a question whether to proceed.',
+    '- NEVER PROPOSE AND WAIT. "Want me to add it?", "Shall I confirm?",',
+    '  "Lock them in?" are phrases from the old assistant and they are banned',
+    '  as a flow. If the user named the thing clearly enough to decide, you',
+    '  decide, you act, you say what landed. The ONLY time it is right to ask',
+    '  before acting is when a critical detail is actually missing (which',
+    '  person, which day, which amount) — not when the detail is "do you want',
+    '  me to do what you just asked for". When the ambiguity is only',
+    '  "proceed?", DO.',
+    '- RECURRING AND MULTI-SLOT in one call. For "every Monday at 8", "three',
+    '  workouts a week", "study four evenings", "weekly team call" — call',
+    '  plan_recurring_goal (or several create_event in the same reply, one',
+    '  per occurrence of the first ~2 weeks). plan_recurring_goal CREATES the',
+    '  events itself; after it returns, do NOT call create_event for the same',
+    '  slots, do NOT re-propose. Confirm aloud what landed.',
+    '- SUMMARIES ARE A TOOL, NOT A SENTENCE. "סכמי לי את היום", "how did the',
+    '  day go", "what did I get done" → call end_of_day. "סיכום שבועי",',
+    '  "how was my week" → call weekly_summary. Reading the counts aloud',
+    '  without the tool call means the device has no card to render and the',
+    '  numbers vanish the moment the voice stops. Same rule for budgets:',
+    '  before "N left in the budget", call budget_alert and let its result',
+    '  (plus present_budget) carry the figure.',
+    '- READ-THEN-WRITE: calling a read tool (find_free_time, suggest_opportunity',
+    '  check_weather, upcoming_debits, spending_trends) is step one. If the',
+    '  user asked for an action — "find me a slot", "schedule it", "what',
+    '  should I do with 45 minutes" — the second step is a write or display',
+    '  tool in the SAME reply: create_event / create_task / offer_times /',
+    '  present_checklist / present_cards. Narrating the result without that',
+    '  second call is the same ghost-promise failure.',
     '- NEVER answer a question about free time, gaps, availability or "when',
     '  could I" from the agenda below. The agenda cannot tell you those things.',
     '  Call find_free_time and answer from what it returns, every single time,',
@@ -1800,11 +1832,14 @@ export function buildSystemPrompt(input: {
     '  this "no red to-do list of shame — just order and move on".',
     '- GOALS BECOME SLOTS: when the user says a count-per-week goal — "three',
     '  workouts this week", "I want to study four evenings", "call clients',
-    '  twice a week" — call plan_recurring_goal, not create_task. It picks',
-    '  real windows and spreads them across different days. Pitch the plan in',
-    '  one line ("I found three 60-minute slots that fit — Sunday, Tuesday',
-    '  evening, Thursday morning. Lock them in?"); on yes, call create_event',
-    '  per proposed slot.',
+    '  twice a week", OR when they name specific weekdays and times ("workouts',
+    '  every Mon, Wed, Fri at eight") — call plan_recurring_goal in this',
+    '  reply. It picks the slots AND CREATES THE CALENDAR EVENTS in one call.',
+    '  You do NOT call create_event after; you do NOT re-propose or ask the',
+    '  user to confirm. Just confirm aloud in one short sentence what landed:',
+    '  "I put workouts on Monday, Wednesday and Friday at eight, with a',
+    '  thirty-minute heads-up." Pass reminderMinutesBefore if the user asked',
+    '  for a lead ("remind me 30 min before" → reminderMinutesBefore: 30).',
     '- BATCHING BY AREA: when the user asks what the week looks like, when',
     '  they add a second thing in a city that already appears, or when they',
     '  ask if an errand can be grouped, call cluster_errands. If a cluster',
@@ -2063,7 +2098,7 @@ export async function runVoiceTurn(input: VoiceTurnInput): Promise<VoiceTurnResu
         messages.push({
           role: 'tool',
           tool_call_id: call.id,
-          content: await answerPlanRecurringGoal(outcome.action.arguments, input),
+          content: await answerPlanRecurringGoal(outcome.action.arguments, input, actions),
         });
         continue;
       }
@@ -3185,16 +3220,22 @@ export function answerWeeklySummary(
 }
 
 /**
- * "Three workouts this week" → three concrete, non-adjacent calendar slots.
+ * "Three workouts this week" → three concrete, non-adjacent calendar slots,
+ * and the calendar events to put them there.
  *
- * Picks windows from the next 7 days that each hold the requested duration,
- * spread apart so the user does not land three workouts on three consecutive
- * days. Returns the proposal; the agent asks the user to confirm, then creates
- * events for each slot.
+ * The old shape asked the model to pitch a proposal, wait for yes, then issue
+ * create_event calls on the next turn — and that second turn routinely never
+ * fired. The model would re-propose different times or just talk, and the
+ * device never got a single event. Now the slots become real events
+ * immediately: each one is pushed to the shared `actions` list the device
+ * will apply, with the user's chosen reminder lead baked in. The tool-result
+ * tells the model there is nothing left to execute — only to confirm aloud
+ * what landed.
  */
 export async function answerPlanRecurringGoal(
   args: Record<string, unknown>,
   input: VoiceTurnInput,
+  actions: VoiceAction[],
 ): Promise<string> {
   const title = String(args.title ?? '').trim();
   const timesPerWeek = Math.max(
@@ -3301,24 +3342,30 @@ export async function answerPlanRecurringGoal(
     }
   }
 
-  const proposed = picked.map((s) => ({
-    title,
-    startsAt: s.startsAt,
-    durationMinutes: duration,
-    windowMinutes: s.windowMinutes,
-    date: s.date,
-  }));
+  const reminderMinutes =
+    typeof args.reminderMinutesBefore === 'number' && args.reminderMinutesBefore >= 0
+      ? Math.min(1440, Math.round(args.reminderMinutesBefore))
+      : null;
+
+  const created = picked.map((s) => {
+    const endsAt = new Date(new Date(s.startsAt).getTime() + duration * 60_000).toISOString();
+    const createArgs: Record<string, unknown> = { title, startsAt: s.startsAt, endsAt };
+    if (reminderMinutes !== null) createArgs.reminderMinutesBefore = reminderMinutes;
+    actions.push({ tool: 'create_event', arguments: createArgs });
+    return { title, startsAt: s.startsAt, endsAt, date: s.date };
+  });
 
   return JSON.stringify({
     ok: true,
     goalTitle: title,
     timesPerWeekRequested: timesPerWeek,
-    foundCount: proposed.length,
-    proposed,
+    createdCount: created.length,
+    created,
+    reminderMinutesBefore: reminderMinutes,
     instruction:
-      proposed.length < timesPerWeek
-        ? `Only ${proposed.length} ${duration}-min slots fit this week. Say so and ask whether to go with the fewer or push to next week — do NOT silently drop any.`
-        : `Pitch the plan in one short sentence ("I have three ${duration}-minute slots that fit — Sunday morning, Tuesday evening and Thursday morning. Lock them in?"). On yes, call create_event per proposed slot with title "${title}", startsAt as given, and endsAt = startsAt + ${duration} minutes.`,
+      created.length < timesPerWeek
+        ? `Only ${created.length} ${duration}-min slots fit this week — the rest were skipped. The ${created.length} that fit were ALREADY CREATED as calendar events (do NOT call create_event again for them). Confirm aloud in one sentence what landed, and ask whether to push the missing one(s) to next week.`
+        : `All ${created.length} slots were ALREADY CREATED as calendar events (do NOT call create_event again for them). Confirm aloud in one short sentence what landed — "I put workouts on Monday, Wednesday and Friday at eight, with a thirty-minute heads-up before each" — nothing else.`,
   });
 }
 

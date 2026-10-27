@@ -54,7 +54,11 @@ const turnBody = z.object({
    */
   language: languageCode.default('he'),
   timezone: z.string().min(1).max(64).default('UTC'),
-  now: z.string().datetime().optional(),
+  // Accept any ISO-8601 datetime, with or without an explicit numeric offset.
+  // zod's `.datetime()` default rejects "+02:00" and only honours `Z`, which
+  // broke every client sending the local wall-clock the user typed. `{offset:
+  // true}` relaxes it; a bad string still fails parse at `new Date(...)`.
+  now: z.string().datetime({ offset: true }).optional(),
   userName: z.string().max(80).optional(),
   /**
    * Earlier turns of this conversation, oldest first. The conversation is one

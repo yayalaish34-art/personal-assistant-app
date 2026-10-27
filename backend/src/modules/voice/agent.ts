@@ -1172,9 +1172,32 @@ const ARG_SCHEMAS = {
   }),
   plan_recurring_goal: z.object({
     title: z.string().min(1).max(80),
-    timesPerWeek: z.number().int().min(1).max(7),
+    // Goal mode and specific mode share the same tool now; each mode owns
+    // its own parameters. zod sees them all as optional at the schema level,
+    // and the handler decides mode by what was passed.
+    timesPerWeek: z.number().int().min(1).max(7).optional(),
+    weekdays: z
+      .array(
+        z.enum([
+          'sunday',
+          'monday',
+          'tuesday',
+          'wednesday',
+          'thursday',
+          'friday',
+          'saturday',
+        ]),
+      )
+      .max(7)
+      .optional(),
+    timeOfDay: z
+      .string()
+      .regex(/^(?:[01]?\d|2[0-3]):[0-5]\d$/, 'HH:MM 24h clock time')
+      .optional(),
+    weeksAhead: z.number().int().min(1).max(8).optional(),
     durationMinutes: z.number().positive().max(8 * 60).optional(),
     preferredPeriod: z.enum(['morning', 'afternoon', 'evening', 'any']).optional(),
+    reminderMinutesBefore: z.number().int().min(0).max(1440).optional(),
   }),
   cluster_errands: z.object({
     lookAheadDays: z.number().int().min(1).max(14).optional(),

@@ -331,10 +331,10 @@ export default function CalendarScreen() {
 
   useFocusEffect(load);
 
-  const shiftMonth = (delta: number) => {
+  const shiftWeek = (delta: number) => {
     Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
     const d = new Date(selected);
-    d.setMonth(d.getMonth() + delta);
+    d.setDate(d.getDate() + delta * 7);
     setShiftDir(delta > 0 ? 1 : -1);
     setQuick(true);
     setSelected(d);
@@ -494,18 +494,22 @@ export default function CalendarScreen() {
           </SlideIn>
           <View style={styles.monthArrows}>
             <Pressable
-              onPress={() => shiftMonth(-1)}
+              onPress={() => shiftWeek(-1)}
               style={({ pressed }) => [styles.arrowBtn, pressed && styles.pressedDim]}
               accessibilityRole="button"
+              accessibilityLabel={t('calendar.prevWeek')}
+              hitSlop={10}
             >
-              <ChevronLeft color={colors.text} size={20} strokeWidth={2} style={{ transform: [{ scaleX: isRTL() ? -1 : 1 }] }} />
+              <ChevronLeft color={colors.primaryText} size={24} strokeWidth={2.6} style={{ transform: [{ scaleX: isRTL() ? -1 : 1 }] }} />
             </Pressable>
             <Pressable
-              onPress={() => shiftMonth(1)}
+              onPress={() => shiftWeek(1)}
               style={({ pressed }) => [styles.arrowBtn, pressed && styles.pressedDim]}
               accessibilityRole="button"
+              accessibilityLabel={t('calendar.nextWeek')}
+              hitSlop={10}
             >
-              <ChevronRight color={colors.text} size={20} strokeWidth={2} style={{ transform: [{ scaleX: isRTL() ? -1 : 1 }] }} />
+              <ChevronRight color={colors.primaryText} size={24} strokeWidth={2.6} style={{ transform: [{ scaleX: isRTL() ? -1 : 1 }] }} />
             </Pressable>
           </View>
         </View>
@@ -747,12 +751,17 @@ const styles = themed(() =>
     /** Takes the row's spare width, so the name can slide inside it. */
     monthLabelSlot: { flex: 1 },
     monthLabel: { fontSize: 21, ...font(700), color: colors.text, letterSpacing: -0.4 },
-    monthArrows: { flexDirection: 'row', gap: 8 },
+    monthArrows: { flexDirection: 'row', gap: 10 },
     arrowBtn: {
-      ...glass,
-      width: 36,
-      height: 36,
-      borderRadius: 18,
+      // Beefier than the glass pills elsewhere: these are the only control on
+      // the month row and were disappearing against the page. A fuller fill
+      // and a thicker border give them a real surface.
+      backgroundColor: NIGHT.card,
+      borderWidth: 1,
+      borderColor: NIGHT.line,
+      width: 42,
+      height: 42,
+      borderRadius: 21,
       alignItems: 'center',
       justifyContent: 'center',
     },

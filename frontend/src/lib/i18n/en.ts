@@ -82,6 +82,8 @@ export const en = {
   'calendar.view.day': 'Day',
   'calendar.view.week': 'Week',
   'calendar.view.month': 'Month',
+  'calendar.prevWeek': 'Previous week',
+  'calendar.nextWeek': 'Next week',
   'tasks.title': 'My Tasks',
   'tasks.filter.upcoming': 'Upcoming',
   'tasks.completed': 'Completed',

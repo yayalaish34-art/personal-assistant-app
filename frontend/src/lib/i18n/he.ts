@@ -78,6 +78,8 @@ export const he: Dict = {
   'calendar.view.day': 'יום',
   'calendar.view.week': 'שבוע',
   'calendar.view.month': 'חודש',
+  'calendar.prevWeek': 'שבוע קודם',
+  'calendar.nextWeek': 'שבוע הבא',
   'tasks.title': 'המשימות שלי',
   'tasks.filter.upcoming': 'קרובות',
   'tasks.completed': 'הושלמו',

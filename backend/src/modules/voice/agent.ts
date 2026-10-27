@@ -3713,12 +3713,11 @@ function nextWeekdayAt(
   if (daysForward === 0 && (hour < nowHour || (hour === nowHour && minute <= nowMin))) {
     daysForward = 7;
   }
-  daysForward += weekShift * 7;
-
-  // Build a UTC date for the target local wall-clock, then correct for the
-  // zone's offset at that instant. Doing it in two passes handles DST shifts
-  // cleanly: the first pass picks a tentative instant, the second measures
-  // how far off its zone-local hour is from the one we wanted and nudges.
+  // `weekShift` is "N-th occurrence from the first valid one" — so it is
+  // added AFTER the minStart bump below, not before. Adding it here used to
+  // land both w=0 (bumped past minStart by 1 week) and w=1 (unbumped +
+  // 1 week natively) on the same date, which showed up as duplicate events
+  // in the output.
   const target = new Date(todayY, todayM - 1, todayD + daysForward, hour, minute, 0, 0);
   if (Number.isNaN(target.getTime())) return null;
 
@@ -3736,16 +3735,20 @@ function nextWeekdayAt(
   const wanted = hour * 60 + minute;
   const got = zoneHM(target.getTime());
   const drift = wanted - got;
-  const settled = drift === 0 ? target : new Date(target.getTime() + drift * 60_000);
+  let settled = drift === 0 ? target : new Date(target.getTime() + drift * 60_000);
 
-  // When the user named a start date ("starting Monday Nov 2"), slide
-  // forward whole weeks until the first occurrence is on or after it.
-  // Without this, "every Monday starting Nov 2" would still land Oct 28
-  // Wednesdays and Fridays in the first week of a Mon/Wed/Fri plan.
+  // Resolve the first valid occurrence (slide forward whole weeks past
+  // minStartMs if needed), THEN add weekShift weeks on top. Order matters:
+  // doing weekShift first and then bumping past minStart caused `w=0` and
+  // `w=1` to collide on the same date whenever the first week was already
+  // consumed by the minStart bump.
+  const weekMs = 7 * 24 * 60 * 60 * 1000;
   if (minStartMs != null && settled.getTime() < minStartMs) {
-    const weekMs = 7 * 24 * 60 * 60 * 1000;
     const bumps = Math.ceil((minStartMs - settled.getTime()) / weekMs);
-    return new Date(settled.getTime() + bumps * weekMs);
+    settled = new Date(settled.getTime() + bumps * weekMs);
+  }
+  if (weekShift > 0) {
+    settled = new Date(settled.getTime() + weekShift * weekMs);
   }
 
   return settled;

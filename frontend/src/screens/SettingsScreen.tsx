@@ -51,6 +51,7 @@ import {
 import {
   HourRangePicker,
   BufferPicker,
+  TaskLeadPicker,
   EventTypePicker,
   GenderPicker,
   SleepInsight,
@@ -756,6 +757,16 @@ export default function SettingsScreen() {
           <BufferPicker
             value={profile.bufferMinutes}
             onChange={(bufferMinutes) => setProfile((p) => ({ ...p, bufferMinutes }))}
+          />
+
+          <Text style={[styles.fieldLabel, alignStartStyle, { marginTop: spacing.md }]}>
+            {t('onboarding.reminder.title')}
+          </Text>
+          <TaskLeadPicker
+            value={profile.taskReminderMinutes}
+            onChange={(taskReminderMinutes) =>
+              setProfile((p) => ({ ...p, taskReminderMinutes }))
+            }
           />
 
           <Text style={[styles.fieldLabel, alignStartStyle, { marginTop: spacing.md }]}>

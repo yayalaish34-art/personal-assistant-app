@@ -113,6 +113,7 @@ export const profileSchema = z.object({
   sleepStartHour: z.number().int().min(0).max(23).default(23),
   sleepEndHour: z.number().int().min(0).max(23).default(7),
   bufferMinutes: z.number().int().min(0).max(120).default(15),
+  taskReminderMinutes: z.number().int().min(0).max(1440).default(15),
   eventTypes: z.array(z.string().max(40)).max(20).default([]),
   fixedCommitments: z.string().max(500).default(''),
   workDays: z.array(z.number().int().min(0).max(6)).max(7).optional(),
@@ -1563,6 +1564,7 @@ function describeProfile(p: Profile): string {
     '  rather than refusing — evenings and weekends are theirs to use.',
     `- Asleep ${hour(p.sleepStartHour)}–${hour(p.sleepEndHour)}. Never propose anything in there.`,
     `- Likes ${p.bufferMinutes} minutes between one thing and the next.`,
+    `- Task reminders fire ${p.taskReminderMinutes === 0 ? 'exactly at the due time' : `${p.taskReminderMinutes} minutes before the due time`}. Mention this when creating a dated task so they know what to expect.`,
   ];
   if (p.eventTypes.length) {
     lines.push(`- Their days are mostly: ${p.eventTypes.join(', ')}.`);

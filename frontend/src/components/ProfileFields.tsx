@@ -32,6 +32,13 @@ import { t, isRTL, alignStart, locale } from '../lib/i18n';
 /** Offered gaps between meetings, in minutes. */
 export const BUFFERS = [0, 10, 15, 30];
 
+/**
+ * Offered lead times for task reminders, in minutes. 0 is "exactly at the due
+ * minute"; the rest range from a nudge to a full day's notice, so a task can
+ * fire the moment it is due or well before, depending on the person.
+ */
+export const TASK_LEADS = [0, 5, 10, 15, 30, 60, 120, 240, 1440] as const;
+
 const HOURS = Array.from({ length: 24 }, (_, i) => i);
 
 export function hourLabel(hour: number): string {
@@ -188,6 +195,67 @@ export function HourRangePicker({
       <HourPicker value={to} onChange={onTo} tile={tile} surface={surface} />
     </>
   );
+}
+
+/**
+ * How much notice before a task is due the reminder should fire.
+ *
+ * Rendered as a horizontal scrollable rail — the "wheel" the sleep and work
+ * hour pickers already use — because the options span an order of magnitude
+ * (zero to a full day) and a chip grid would wrap awkwardly.
+ */
+export function TaskLeadPicker({
+  value,
+  onChange,
+  surface = NIGHT.card,
+}: {
+  value: number;
+  onChange: (minutes: number) => void;
+  surface?: string;
+}) {
+  const mirror = isRTL() ? [{ scaleX: -1 as number }] : undefined;
+  return (
+    <View style={[styles.hourRail, { backgroundColor: surface }]}>
+      <ScrollView
+        horizontal
+        showsHorizontalScrollIndicator={false}
+        style={{ direction: 'ltr', transform: mirror }}
+      >
+        {TASK_LEADS.map((minutes, i) => {
+          const active = minutes === value;
+          const besideOn = active || TASK_LEADS[i - 1] === value;
+          return (
+            <Fragment key={minutes}>
+              {i > 0 ? (
+                <View style={[styles.hourDivider, besideOn && styles.hourDividerClear]} />
+              ) : null}
+              <Pressable
+                onPress={() => {
+                  tap();
+                  onChange(minutes);
+                }}
+                accessibilityRole="button"
+                accessibilityState={{ selected: active }}
+                style={[styles.leadCell, { transform: mirror }]}
+              >
+                {active ? <LitFill radius={HOUR_RADIUS} /> : null}
+                <Text style={[styles.hourText, active && styles.hourTextActive]}>
+                  {taskLeadLabel(minutes)}
+                </Text>
+              </Pressable>
+            </Fragment>
+          );
+        })}
+      </ScrollView>
+    </View>
+  );
+}
+
+function taskLeadLabel(minutes: number): string {
+  if (minutes === 0) return t('onboarding.reminder.onTime');
+  if (minutes >= 1440) return t('onboarding.reminder.days', { count: Math.round(minutes / 1440) });
+  if (minutes >= 60) return t('onboarding.reminder.hours', { count: Math.round(minutes / 60) });
+  return t('onboarding.reminder.minutes', { count: minutes });
 }
 
 /** How much room to leave between one thing and the next. */
@@ -548,6 +616,13 @@ const styles = themed(() =>
       minWidth: 62,
       height: 48,
       paddingHorizontal: 12,
+      alignItems: 'center',
+      justifyContent: 'center',
+    },
+    leadCell: {
+      minWidth: 90,
+      height: 48,
+      paddingHorizontal: 14,
       alignItems: 'center',
       justifyContent: 'center',
     },

@@ -64,6 +64,11 @@ export type Profile = {
   gender: Gender;
   /** Minutes she keeps clear either side of a meeting. */
   bufferMinutes: number;
+  /**
+   * How many minutes before a task's due time the reminder fires. 0 means at
+   * the exact due time; a positive value is the lead time.
+   */
+  taskReminderMinutes: number;
   eventTypes: EventType[];
   /** Whatever repeats and cannot move, in the user's own words. */
   fixedCommitments: string;
@@ -83,6 +88,7 @@ export const defaultProfile: Profile = {
   sleepEndHour: 7,
   gender: 'unspecified',
   bufferMinutes: 15,
+  taskReminderMinutes: 15,
   eventTypes: ['work'],
   fixedCommitments: '',
   workDays: [0, 1, 2, 3, 4],

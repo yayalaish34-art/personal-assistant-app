@@ -151,7 +151,11 @@ export async function scheduleReminder(input: {
   }
 }
 
-/** A task rings when it is due. */
+/**
+ * A task rings ahead of its due time by the user's chosen lead time
+ * (`taskReminderMinutes` on the profile; default 15 minutes). Setting the lead
+ * to zero preserves the old behaviour of ringing right on the due minute.
+ */
 export async function scheduleTaskReminder(task: {
   id: string;
   title: string;
@@ -162,11 +166,27 @@ export async function scheduleTaskReminder(task: {
     await cancelReminder(task.id);
     return;
   }
+
+  const due = new Date(task.dueAt).getTime();
+  if (Number.isNaN(due)) return;
+
+  let leadMinutes = 15;
+  try {
+    const profile = await storage.getProfile();
+    const n = Number(profile.taskReminderMinutes);
+    if (Number.isFinite(n) && n >= 0) leadMinutes = Math.round(n);
+  } catch {
+    /* fall back to the default lead */
+  }
+
   await scheduleReminder({
     rowId: task.id,
     title: t('notify.taskTitle', { title: task.title }),
-    body: t('notify.taskBody'),
-    at: new Date(task.dueAt),
+    body:
+      leadMinutes > 0
+        ? t('notify.taskBodyLead', { minutes: leadMinutes })
+        : t('notify.taskBody'),
+    at: new Date(due - leadMinutes * 60 * 1000),
   });
 }
 

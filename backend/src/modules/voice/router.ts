@@ -5,6 +5,7 @@ import { asyncHandler, parseBody, parseQuery } from '../../lib/http.js';
 import { voiceTurnLimiter, voiceMediaLimiter } from '../../middleware/rateLimit.js';
 import { ValidationError } from '../../lib/errors.js';
 import { config } from '../../config.js';
+import { logger } from '../../lib/logger.js';
 import { runVoiceTurn, snapshotSchema, profileSchema, didNotCatchThat } from './agent.js';
 import { synthesizeStream, prewarmSpeech, servePrewarmed, isSpeechConfigured, MAX_SPEECH_CHARS } from './tts.js';
 
@@ -129,6 +130,28 @@ voiceRouter.post(
       profile: body.profile,
       location: body.location,
     });
+
+    // One structured line per completed turn. The HTTP logger only sees
+    // headers, which is useless when the question is "the user said X, what
+    // did she do?" — a confirmation that gets ignored looks identical to a
+    // confirmation that fired three create_event tools. Every piece here is
+    // what a human would need to answer that: the words that came in, the
+    // last thing the user heard before them, the words going back out, and
+    // the exact action list the device will execute.
+    const lastAssistant = [...body.history]
+      .reverse()
+      .find((m) => m.role === 'assistant')?.content ?? null;
+    logger.info(
+      {
+        userText: body.text,
+        lastAssistant,
+        historyLen: body.history.length,
+        reply,
+        actionCount: actions.length,
+        actions: actions.map((a) => ({ tool: a.tool, arguments: a.arguments })),
+      },
+      'voice turn completed',
+    );
 
     // Start TTS immediately so audio is mid-stream by the time the client
     // receives this JSON and opens /voice/speak with the token.

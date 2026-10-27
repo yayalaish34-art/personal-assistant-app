@@ -4,7 +4,12 @@ import { config } from '../../config.js';
 import { getOpenAI } from '../chat/llm.js';
 import { logger } from '../../lib/logger.js';
 
-const CLEANUP_MODEL = 'gpt-4.1-nano';
+// gpt-4.1-nano was deprecated by OpenAI mid-2026 and now returns a 404 on
+// every call; the cleanup step was failing silently and every Hebrew
+// transcription was going through as raw Whisper output (merged words,
+// missing spaces). gpt-4o-mini is the fast, cheap replacement that
+// supports the same chat-completions shape.
+const CLEANUP_MODEL = 'gpt-4o-mini';
 const CLEANUP_TIMEOUT_MS = 8_000;
 
 /** Shared by both transcription routes, so every recording uses the same model. */

@@ -665,7 +665,7 @@ export const ACTION_TOOLS = [
     function: {
       name: 'plan_recurring_goal',
       description:
-        "Turn a weekly goal into REAL CALENDAR EVENTS in one call. Given a title ('workout', 'studying', 'calling clients'), a count per week, and a rough duration, this searches the coming week's free windows, picks that many non-adjacent slots that actually fit (travel and sleep already subtracted) AND CREATES THE CALENDAR EVENTS DIRECTLY. The device will apply them without any further tool call from you. After this returns, confirm aloud in one short sentence what landed — do NOT call create_event for the same slots, do NOT re-propose, do NOT ask the user to confirm. This replaces the user picking times by hand.",
+        "Turn a recurring plan into REAL CALENDAR EVENTS in one call. Call this for ANY shape of repeating slot: a weekly goal ('three workouts a week', 'study four evenings'), named weekdays with a time ('every Monday at seven', 'שני רביעי שישי ב-20:00', 'כל יום חמישי ב-09:00'), or a mix. It searches the coming week's free windows and creates the right calendar events directly — not a proposal, actual events, pushed to the device in this turn. After this returns, confirm aloud in one short sentence what landed; do NOT call create_event for the same slots, do NOT re-propose, do NOT ask the user to confirm. Use this instead of issuing one create_event per occurrence by hand.",
       parameters: {
         type: 'object',
         properties: {

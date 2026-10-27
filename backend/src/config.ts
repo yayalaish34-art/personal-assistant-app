@@ -21,9 +21,15 @@ export const configSchema = z.object({
   // The voice assistant runs on its own model: it has to pick the right tool
   // first time (a spoken "I deleted it" that called nothing is a lie the user
   // only discovers later), and it has to answer fast enough to feel like a
-  // conversation. gpt-4o-mini, which the text chat uses, is not reliable
-  // enough at the first half of that.
-  OPENAI_VOICE_MODEL: z.string().default('gpt-4.1-mini'),
+  // conversation. gpt-4o-mini (the text chat model) is not reliable enough
+  // at tool selection; gpt-4.1-mini — the previous default — looked right
+  // on the chat samples but QA found it systematically dropping tool calls
+  // on recurring plans and summary requests, narrating "I'll do X" with
+  // zero actions. gpt-4o follows the system prompt's "call the tool, do
+  // not propose and wait" rule much more reliably at a few cents more per
+  // turn, and 9.1 (the stakeholder's workout scenario) is the moment this
+  // app has to not fail.
+  OPENAI_VOICE_MODEL: z.string().default('gpt-4o'),
   // Text-to-speech for the voice assistant. Without a key the app still works;
   // the assistant answers in text and simply does not speak.
   ELEVENLABS_API_KEY: z.string().optional(),

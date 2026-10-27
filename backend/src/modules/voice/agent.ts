@@ -2098,6 +2098,10 @@ export async function runVoiceTurn(input: VoiceTurnInput): Promise<VoiceTurnResu
   // can finish with a reply, a confirmation card or the second half of a
   // read-then-write pair.
   const forcedTool = detectForcedTool(input.text);
+  logger.info(
+    { userText: input.text.slice(0, 160), forcedTool },
+    'voice turn starting',
+  );
 
   for (let round = 0; round < MAX_ROUNDS; round++) {
     const lastRound = round === MAX_ROUNDS - 1;
@@ -2126,6 +2130,18 @@ export async function runVoiceTurn(input: VoiceTurnInput): Promise<VoiceTurnResu
     if (!message) break;
 
     const toolCalls = message.tool_calls ?? [];
+    logger.info(
+      {
+        round,
+        toolCallCount: toolCalls.length,
+        toolCalls: toolCalls.map((c) =>
+          c.type === 'function'
+            ? { name: c.function.name, args: c.function.arguments.slice(0, 200) }
+            : { type: c.type },
+        ),
+      },
+      'voice turn round completed',
+    );
     if (toolCalls.length === 0) {
       reply = message.content?.trim() ?? '';
       break;

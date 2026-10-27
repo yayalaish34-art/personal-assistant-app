@@ -151,6 +151,7 @@ voiceRouter.post(
         lastAssistant,
         historyLen: body.history.length,
         reply,
+        replyPreview: reply.slice(0, 400),
         actionCount: actions.length,
         actions: actions.map((a) => ({ tool: a.tool, arguments: a.arguments })),
       },

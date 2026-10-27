@@ -1999,6 +1999,64 @@ const MAX_ROUNDS = 3;
  */
 const ROUND_TIMEOUT_MS = 25_000;
 
+/**
+ * When the user's utterance makes the right tool unambiguous — a recurring
+ * plan, a day/week summary, a budget check — pre-route to it. The model has
+ * repeatedly been dropping these on `tool_choice: 'auto'` and narrating a
+ * promise instead; the server knows these intents cheaply and reliably, so
+ * it decides for the first round.
+ *
+ * Only the clearest patterns are matched. Anything ambiguous stays `auto`.
+ */
+function detectForcedTool(text: string): string | null {
+  const t = text.toLowerCase();
+
+  // Recurring plans — Hebrew and English, with named weekdays or an N-times
+  // formulation, or an explicit "recurring/weekly" word.
+  const hebrewWeekdays =
+    '(?:ראשון|שני|שלישי|רביעי|חמישי|שישי|שבת)';
+  const englishWeekdays =
+    '(?:sun|mon|tue|wed|thu|fri|sat)(?:day)?';
+  const hebrewCounts = '(?:פעמיים|שלוש|ארבע|חמש|שש|שבע|\\d+)\\s+פעמים';
+  const recurringPatterns = [
+    new RegExp(`כל\\s+יום\\s+${hebrewWeekdays}`, 'i'),
+    new RegExp(`every\\s+${englishWeekdays}`, 'i'),
+    new RegExp(`${hebrewCounts}\\s+בשבוע`, 'i'),
+    /\d+\s+times\s+a\s+week/i,
+    /אירוע\s+חוזר|תזכורת\s+חוזר(?:ה|ת)|באופן\s+קבוע\s+בכל\s+שבוע/i,
+    /\brecurring\b|\bweekly\b/i,
+  ];
+  if (recurringPatterns.some((r) => r.test(t))) {
+    return 'plan_recurring_goal';
+  }
+
+  // Day summary.
+  if (
+    /סכמי\s+(?:לי\s+)?את\s+היום|סיכום\s+של\s+היום|סיכום\s+יום/.test(t) ||
+    /how\s+(?:did|was)\s+(?:my\s+)?day|summar(?:ize|y)\s+(?:my\s+)?day|end\s+of\s+day/i.test(t)
+  ) {
+    return 'end_of_day';
+  }
+
+  // Weekly summary.
+  if (
+    /סיכום\s+שבועי|סיכום\s+של\s+השבוע|סכמי\s+(?:לי\s+)?את\s+השבוע/.test(t) ||
+    /weekly\s+summary|how\s+(?:did|was)\s+(?:my\s+)?week/i.test(t)
+  ) {
+    return 'weekly_summary';
+  }
+
+  // Budget pressure — "how much is left in the budget".
+  if (
+    /כמה\s+נשאר\s+(?:לי\s+)?בתקציב|כמה\s+נשאר\s+(?:לי\s+)?השבוע|כמה\s+(?:יש\s+לי\s+)?בתקציב|האם\s+אני\s+בתקציב/.test(t) ||
+    /how\s+much\s+(?:is\s+)?left\s+in\s+(?:my\s+)?budget|am\s+i\s+(?:over|within)\s+budget/i.test(t)
+  ) {
+    return 'budget_alert';
+  }
+
+  return null;
+}
+
 export async function runVoiceTurn(input: VoiceTurnInput): Promise<VoiceTurnResult> {
   const client = getOpenAI();
 
@@ -2013,15 +2071,32 @@ export async function runVoiceTurn(input: VoiceTurnInput): Promise<VoiceTurnResu
   /** Whether she actually consulted the calculator this turn. */
   let consulted = false;
 
+  // Detect the exact shape of intent the model keeps dropping on the floor —
+  // recurring plans, day summaries, weekly summaries, budget checks — and on
+  // the opening round force the model to call the matching tool. QA found
+  // that `tool_choice: 'auto'` alone leaves gpt-4o-class models narrating
+  // "I'll put workouts on Mon/Wed/Fri" and emitting actions:[]; forcing the
+  // right tool here turns that narration back into an actual call.
+  //
+  // Only the first round is forced. Follow-up rounds stay auto so the model
+  // can finish with a reply, a confirmation card or the second half of a
+  // read-then-write pair.
+  const forcedTool = detectForcedTool(input.text);
+
   for (let round = 0; round < MAX_ROUNDS; round++) {
     const lastRound = round === MAX_ROUNDS - 1;
+    const toolChoice: OpenAI.Chat.Completions.ChatCompletionToolChoiceOption =
+      lastRound
+        ? 'none'
+        : round === 0 && forcedTool
+          ? { type: 'function', function: { name: forcedTool } }
+          : 'auto';
     const completion = await client.chat.completions.create(
       {
         model: config.OPENAI_VOICE_MODEL,
         messages,
         tools: ACTION_TOOLS,
-        // On the final round she has already acted; all that is left is to say so.
-        tool_choice: lastRound ? 'none' : 'auto',
+        tool_choice: toolChoice,
         temperature: 0.3,
         max_completion_tokens: 2000,
       },

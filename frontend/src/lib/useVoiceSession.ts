@@ -706,13 +706,26 @@ export function useVoiceSession(options: {
       // means something is actually wrong, so one failure just costs a turn.
       let consecutiveFailures = 0;
 
+      // Fresh session, no earlier thread to resume: let her speak first. The
+      // server knows what to do with the sentinel — a short briefing in the
+      // user's own language, grounded in today's agenda — so the mic opens
+      // onto a greeting that references the day rather than a silent prompt.
+      // On a resumed thread we stay silent so she does not greet twice.
+      if (earlier.length === 0 && !cancelled && !doneRef.current) {
+        try {
+          setPhase('thinking');
+          const prebuilt = await buildSnapshotWithProfile();
+          if (!cancelled && !doneRef.current) {
+            await runTurn(SESSION_START, prebuilt);
+          }
+        } catch {
+          /* a failed opener should not stop the session — just drop into
+             the loop and let the user speak. */
+        }
+      }
+
       while (!cancelled && !doneRef.current) {
         try {
-          // On an empty transcript the screen shows the capability chips,
-          // which carry the "here is what I do" message better than a spoken
-          // greeting that pushes the chips off screen the moment it arrives.
-          // The mic opens straight away; the user speaks first.
-
           const uri = await listen();
           if (cancelled || doneRef.current) break;
           if (!uri) continue; // silence — keep the mic open

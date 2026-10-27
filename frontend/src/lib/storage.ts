@@ -95,7 +95,11 @@ export const defaultProfile: Profile = {
   focusPeriod: 'flexible',
   primaryGoal: 'balance',
   sleepQuality: 'unspecified',
-  assistanceStyle: 'brief',
+  // The vision is a proactive assistant — any install that never visits the
+  // question in Settings should get the behaviour the product is defined by.
+  // Someone who prefers quieter nudges will pick 'brief' explicitly and that
+  // save keeps precedence over this default.
+  assistanceStyle: 'proactive',
 };
 
 async function getJSON<T>(key: string, fallback: T): Promise<T> {

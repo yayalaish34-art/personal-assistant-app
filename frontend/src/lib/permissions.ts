@@ -149,3 +149,70 @@ export async function requestNotifications(): Promise<PermissionState> {
     return 'unavailable';
   }
 }
+
+// ── Background location ─────────────────────────────────────────────────────
+
+/**
+ * `expo-location`, loaded guarded the same way audio is: a build without the
+ * native module should not crash onboarding. A device that is offline-first
+ * but has no GPS still gets microphone and notifications; location simply
+ * reports 'unavailable' and the arrival/travel features stay dark.
+ */
+interface LocationPermissionApi {
+  getBackgroundPermissionsAsync?: () => Promise<{ status: string }>;
+  requestForegroundPermissionsAsync?: () => Promise<{ status: string }>;
+  requestBackgroundPermissionsAsync?: () => Promise<{ status: string }>;
+}
+
+let cachedLocation: LocationPermissionApi | null | undefined;
+
+function locationApi(): LocationPermissionApi | null {
+  if (cachedLocation === undefined) {
+    try {
+      // eslint-disable-next-line @typescript-eslint/no-require-imports
+      const mod = require('expo-location') as LocationPermissionApi;
+      cachedLocation = mod ?? null;
+    } catch {
+      cachedLocation = null;
+    }
+  }
+  return cachedLocation ?? null;
+}
+
+/** Whether background location is already ours, without prompting. */
+export async function getBackgroundLocationState(): Promise<PermissionState> {
+  const api = locationApi();
+  if (!api?.getBackgroundPermissionsAsync) return 'unavailable';
+  try {
+    const { status } = await api.getBackgroundPermissionsAsync();
+    return status === 'granted' ? 'granted' : 'denied';
+  } catch {
+    return 'unavailable';
+  }
+}
+
+/**
+ * Prompts for background location in the OS-mandated order: foreground first,
+ * then background. Both must say yes for a geofence to fire while the app is
+ * closed — the arrival notification ("you're near Sami's place, you're in the
+ * right spot") needs this and nothing else gives it.
+ *
+ * iOS stacks the two dialogs; the user has to pick "Allow While Using the
+ * App" first and then "Change to Always Allow" on the second prompt. We do
+ * not try to coach them through that — the body text in onboarding does — we
+ * just pass what came back.
+ */
+export async function requestBackgroundLocationPerm(): Promise<PermissionState> {
+  const api = locationApi();
+  if (!api?.requestForegroundPermissionsAsync || !api.requestBackgroundPermissionsAsync) {
+    return 'unavailable';
+  }
+  try {
+    const fg = await api.requestForegroundPermissionsAsync();
+    if (fg.status !== 'granted') return 'denied';
+    const bg = await api.requestBackgroundPermissionsAsync();
+    return bg.status === 'granted' ? 'granted' : 'denied';
+  } catch {
+    return 'unavailable';
+  }
+}

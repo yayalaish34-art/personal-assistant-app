@@ -616,6 +616,10 @@ export async function buildSnapshot() {
         notes: t.notes,
         dueAt: t.dueAt,
         isDone: t.isDone,
+        // Nonzero means this task has been pushed later before — the agent
+        // uses it to notice a pattern instead of silently moving it again.
+        postponeCount: t.postponeCount ?? 0,
+        lastPostponedAt: t.lastPostponedAt ?? null,
       })),
     events: live(events)
       .filter((e) => inWindow(e.startsAt))

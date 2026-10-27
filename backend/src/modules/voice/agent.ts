@@ -29,6 +29,10 @@ export const snapshotSchema = z.object({
         notes: z.string().nullish(),
         dueAt: z.string().nullish(),
         isDone: z.boolean().default(false),
+        /** Number of times the user has pushed this task's dueAt later. */
+        postponeCount: z.number().int().min(0).default(0),
+        /** When the last postponement happened, if any. ISO-8601. */
+        lastPostponedAt: z.string().nullish(),
       }),
     )
     .max(200)
@@ -1741,6 +1745,15 @@ export function buildSystemPrompt(input: {
     '  on yes, apply each proposal with update_task. When several errands sit',
     '  in the same area and the user is near there on a known day, offer to',
     '  cluster them. Short, concrete, one proposal.',
+    '- A TASK THAT KEEPS SLIPPING: every task carries a postponeCount in the',
+    '  snapshot — the number of times the user has pushed its dueAt later. When',
+    '  the user asks you to move one and its postponeCount is already 2 or more,',
+    '  do not just re-schedule it silently. Name the pattern gently and offer a',
+    '  concrete alternative: "This is the third time this one is moving — want',
+    '  to pick a smaller first step, or should I break it into two?" If they',
+    '  insist, move it. If a task appears overdue in the agenda and its',
+    '  postponeCount is high, raise it unprompted during the session-start',
+    '  briefing — kindly, once.',
     '- BUDGET PRESSURE: before saying "you have N left in the budget", call',
     '  budget_alert — it projects spending to end of month at the current pace',
     '  and flags the category most at risk. The point is to warn the user',

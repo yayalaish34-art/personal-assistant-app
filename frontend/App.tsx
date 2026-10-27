@@ -25,6 +25,7 @@ import { storage } from './src/lib/storage';
 import { getAppearance, loadAppearance, subscribeToAppearance } from './src/lib/appearance';
 import { configureOnce as configureNotifications } from './src/lib/notifications';
 import { refreshGeofences } from './src/lib/geofencing';
+import { startLocationTracking } from './src/lib/location';
 import { registerProactiveTask } from './src/lib/proactive';
 import { colors } from './src/theme';
 
@@ -114,6 +115,11 @@ export default function App() {
     });
     void refreshGeofences();
     void registerProactiveTask();
+    // Begin location tracking so the "time to leave" reminder has a fresh
+    // position to measure travel from. Silent at launch — only starts if
+    // the user has already granted foreground location. The voice session
+    // calls the asking variant later; the module is idempotent.
+    void startLocationTracking({ requireExistingPermission: true }).catch(() => undefined);
     storage
       .isOnboarded()
       // In development the questionnaire opens every launch. It is the thing

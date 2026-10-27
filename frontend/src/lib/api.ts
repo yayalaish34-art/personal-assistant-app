@@ -3,6 +3,7 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
 import {
   cancelAllReminders,
   cancelReminder,
+  fireFreedTimeNotice,
   scheduleEventReminder,
   scheduleTaskReminder,
 } from './notifications';
@@ -102,6 +103,15 @@ export type Task = {
   createdAt: string;
   updatedAt: string;
   deletedAt: string | null;
+  /**
+   * How many times this task's due date was moved later. Bumps on every
+   * `updateTask` where `dueAt` is strictly later than the previous one.
+   * Lets the agent recognise a task that keeps slipping and nudge rather
+   * than silently re-schedule it again.
+   */
+  postponeCount?: number;
+  /** The last time the user pushed this task later. ISO-8601. */
+  lastPostponedAt?: string | null;
 };
 
 export type Event = {
@@ -877,7 +887,23 @@ export const api = {
     const rows = await readList<Task>(KEYS.tasks);
     const i = rows.findIndex((r) => r.id === id);
     if (i === -1) throw new ApiError(404, 'NOT_FOUND', 'Task not found');
-    rows[i] = { ...rows[i], ...patch, updatedAt: patch.updatedAt ?? nowIso() };
+
+    // A later `dueAt` is a postpone — the signal the agent needs to notice
+    // a task is slipping. A completed task is not a postpone, nor is a date
+    // being added for the first time; only an actual move to a later moment.
+    const prev = rows[i];
+    const movedLater =
+      !prev.isDone &&
+      !patch.isDone &&
+      typeof patch.dueAt === 'string' &&
+      typeof prev.dueAt === 'string' &&
+      Date.parse(patch.dueAt) > Date.parse(prev.dueAt);
+    const next: Task = { ...prev, ...patch, updatedAt: patch.updatedAt ?? nowIso() };
+    if (movedLater) {
+      next.postponeCount = (prev.postponeCount ?? 0) + 1;
+      next.lastPostponedAt = next.updatedAt;
+    }
+    rows[i] = next;
     await writeList(KEYS.tasks, rows);
     // Moving the due date moves the reminder; completing it drops the reminder.
     void scheduleTaskReminder(rows[i]);
@@ -954,9 +980,42 @@ export const api = {
     const rows = await readList<Event>(KEYS.events);
     const i = rows.findIndex((r) => r.id === id);
     if (i === -1) return null;
-    rows[i] = { ...rows[i], endedAt: nowIso(), updatedAt: nowIso() };
+    const now = nowIso();
+    const endedMs = Date.parse(now);
+    const scheduledEndMs = Date.parse(rows[i].endsAt);
+    rows[i] = { ...rows[i], endedAt: now, updatedAt: now };
     await writeList(KEYS.events, rows);
     void cancelReminder(id);
+    // Also drop the travel-aware "time to leave" reminder, if one is queued.
+    void cancelReminder(`leave-${id}`);
+
+    // Finishing noticeably ahead of schedule frees real minutes — the
+    // moment the stakeholder keeps citing. Find the next anchor so the
+    // notification can say "free until 14:30 Sami" instead of a bare
+    // minute count, and only fire when there's enough time to use.
+    if (
+      Number.isFinite(scheduledEndMs) &&
+      Number.isFinite(endedMs) &&
+      scheduledEndMs > endedMs
+    ) {
+      const upcoming = rows
+        .filter(
+          (r) =>
+            !r.deletedAt &&
+            !r.endedAt &&
+            r.id !== id &&
+            Date.parse(r.startsAt) > endedMs,
+        )
+        .sort((a, b) => Date.parse(a.startsAt) - Date.parse(b.startsAt))[0];
+
+      void fireFreedTimeNotice({
+        endedAtMs: endedMs,
+        scheduledEndMs,
+        nextStartsAt: upcoming ? new Date(upcoming.startsAt) : null,
+        nextTitle: upcoming?.title ?? null,
+      });
+    }
+
     return rows[i];
   },
 
@@ -967,6 +1026,7 @@ export const api = {
       rows.filter((r) => r.id !== id),
     );
     void cancelReminder(id);
+    void cancelReminder(`leave-${id}`);
   },
 
   // ── Notes ──

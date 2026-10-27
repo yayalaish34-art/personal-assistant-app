@@ -27,6 +27,7 @@ import {
   CalendarDays,
   Pin,
   Globe,
+  Navigation,
 } from 'lucide-react-native';
 
 import { LinearGradient } from 'expo-linear-gradient';
@@ -55,8 +56,10 @@ import { PersonalizationField, PERSONALIZATION_QUESTIONS, type PersonalizationQu
 import { guessCountry, currencyOf } from '../lib/currency';
 import { api } from '../lib/api';
 import {
+  getBackgroundLocationState,
   getMicrophoneState,
   getNotificationState,
+  requestBackgroundLocationPerm,
   requestMicrophone,
   requestNotifications,
   type PermissionState,
@@ -175,6 +178,20 @@ const PERMISSIONS = [
     tile: 'yellow',
     request: requestNotifications,
     read: getNotificationState,
+  },
+  // Background location is optional and sits last on purpose: it is the only
+  // permission the OS asks about twice ("while using" then "always"), the
+  // body text has to explain why that matters, and someone who says no still
+  // gets reminders — they just do not get the arrival nudge. Granting it also
+  // starts the geofence watch, which is why the handler below is wired to
+  // refresh it on the spot (otherwise it would only pick up the first "yes"
+  // on the next event write).
+  {
+    key: 'location',
+    Icon: Navigation,
+    tile: 'blue',
+    request: requestBackgroundLocationPerm,
+    read: getBackgroundLocationState,
   },
 ] as const satisfies readonly {
   key: string;
@@ -427,7 +444,7 @@ export default function OnboardingScreen({ onDone }: { onDone: () => void }) {
       : defaultProfile;
   });
   const [permissions, setPermissions] = useState<Record<PermissionKey, PermissionState | 'unknown'>>(
-    { mic: 'unknown', notify: 'unknown' },
+    { mic: 'unknown', notify: 'unknown', location: 'unknown' },
   );
   const [asking, setAsking] = useState<PermissionKey | null>(null);
   /**
@@ -490,6 +507,18 @@ export default function OnboardingScreen({ onDone }: { onDone: () => void }) {
     setPermissions((prev) => ({ ...prev, [key]: state }));
     if (state === 'granted') {
       Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+      // Background location only starts firing arrival nudges once a geofence
+      // is actually registered. Prompting the module now means a user who
+      // already has an event with a location sees the first arrival alert
+      // today instead of after their next event write.
+      if (key === 'location') {
+        try {
+          const mod = require('../lib/geofencing') as { refreshGeofences: () => Promise<void> };
+          void mod.refreshGeofences();
+        } catch {
+          /* geofencing not available on this platform */
+        }
+      }
     } else if (state === 'denied') {
       setRefused((prev) => (prev.includes(key) ? prev : [...prev, key]));
     }

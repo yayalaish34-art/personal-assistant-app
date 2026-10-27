@@ -5,6 +5,7 @@ import { Platform } from 'react-native';
 import { t } from './i18n';
 import { REMINDER_CHANNEL, requestNotifications } from './permissions';
 import { storage } from './storage';
+import { estimateTravelMinutes } from './travel';
 
 // Reminders, scheduled on the device.
 //
@@ -85,9 +86,16 @@ export async function cancelReminder(rowId: string): Promise<void> {
 
 /**
  * If a notification would fire during the user's sleep window, push it to
- * wake time instead. This respects the profile's sleepStartHour/sleepEndHour.
+ * wake time instead — unless doing so would land it *after* the thing it is
+ * reminding about. A 7 AM meeting with a 15-minute lead sits at 06:45, which
+ * is in most people's sleep window; shifting it to wake-time silently fires
+ * the reminder after the meeting is already underway, which is the exact
+ * failure the stakeholder flagged ("notifications never arrive"). So: when
+ * the shifted time would pass the actual due moment, hold the original time
+ * — the user asked to be reminded, and a quiet buzz at 06:45 is better than
+ * a chime at 07:30 for a meeting that started at 07:00.
  */
-async function respectSleepHours(at: Date): Promise<Date> {
+async function respectSleepHours(at: Date, notAfter?: Date): Promise<Date> {
   try {
     const profile = await storage.getProfile();
     const { sleepStartHour, sleepEndHour } = profile;
@@ -105,6 +113,11 @@ async function respectSleepHours(at: Date): Promise<Date> {
       wake.setDate(wake.getDate() + 1);
     }
     wake.setHours(sleepEndHour, 0, 0, 0);
+
+    // Would shifting push the reminder past the actual event? Keep the
+    // original time — late reminders are worse than quiet ones.
+    if (notAfter && wake.getTime() >= notAfter.getTime()) return at;
+
     return wake;
   } catch {
     return at;
@@ -115,7 +128,10 @@ async function respectSleepHours(at: Date): Promise<Date> {
  * Schedules one reminder for a row, replacing any it already had.
  *
  * A time in the past schedules nothing — it would fire immediately, which
- * reads as a bug rather than a reminder.
+ * reads as a bug rather than a reminder. `notAfter` is the moment the
+ * reminder is for (the task's due time, the event's start): it caps the
+ * sleep-hours shift so a lead reminder is never pushed past the thing it is
+ * announcing.
  */
 export async function scheduleReminder(input: {
   rowId: string;
@@ -123,10 +139,12 @@ export async function scheduleReminder(input: {
   body?: string;
   /** When it should fire. */
   at: Date;
+  /** The event/task time itself — a sleep-hour shift stops here. */
+  notAfter?: Date;
 }): Promise<void> {
   await cancelReminder(input.rowId);
 
-  const adjusted = await respectSleepHours(input.at);
+  const adjusted = await respectSleepHours(input.at, input.notAfter);
   if (Number.isNaN(adjusted.getTime()) || adjusted.getTime() <= Date.now()) return;
   if (!(await ensurePermission())) return;
 
@@ -187,6 +205,7 @@ export async function scheduleTaskReminder(task: {
         ? t('notify.taskBodyLead', { minutes: leadMinutes })
         : t('notify.taskBody'),
     at: new Date(due - leadMinutes * 60 * 1000),
+    notAfter: new Date(due),
   });
 }
 
@@ -217,7 +236,118 @@ export async function scheduleEventReminder(event: {
     title: t('notify.eventTitle'),
     body,
     at: new Date(starts - mins * 60 * 1000),
+    notAfter: new Date(starts),
   });
+
+  // A second buzz for events with a place: "time to head out, drive is
+  // about N min". Only fires when the device can give an honest travel
+  // estimate (recent fix + geocodable name + a non-trivial distance), and
+  // only when the leave moment is far enough from the prep reminder to be
+  // its own thing — otherwise one notification is enough.
+  await scheduleEventLeaveReminder(event);
+}
+
+/**
+ * The "time to leave" reminder — a travel-aware second buzz for events with
+ * a `location`. Separate id from the main reminder so both can co-exist; a
+ * null estimate (no permission, no fix, unknown place, nearby) cancels this
+ * one silently and leaves the ordinary prep reminder in place.
+ */
+export async function scheduleEventLeaveReminder(event: {
+  id: string;
+  title: string;
+  startsAt: string;
+  location?: string | null;
+}): Promise<void> {
+  const leaveId = `leave-${event.id}`;
+  const loc = event.location?.trim();
+  if (!loc) {
+    await cancelReminder(leaveId);
+    return;
+  }
+  const starts = new Date(event.startsAt).getTime();
+  if (Number.isNaN(starts)) return;
+
+  const travelMin = await estimateTravelMinutes(loc);
+  if (travelMin === null) {
+    await cancelReminder(leaveId);
+    return;
+  }
+
+  const leaveAt = new Date(starts - travelMin * 60 * 1000);
+  // If the leave moment sits inside the ordinary prep window — i.e. earlier
+  // than or very close to the prep reminder — the two would stack. Skip:
+  // the regular reminder already covers it.
+  if (leaveAt.getTime() <= Date.now()) {
+    await cancelReminder(leaveId);
+    return;
+  }
+
+  await scheduleReminder({
+    rowId: leaveId,
+    title: t('notify.eventTitle'),
+    body: t('notify.eventBodyTravel', { title: event.title, travel: travelMin }),
+    at: leaveAt,
+    notAfter: new Date(starts),
+  });
+}
+
+/**
+ * Fired right after the user marks a meeting as finished early — the
+ * freed-time nudge the stakeholder keeps citing. Pulls `minutes` from the
+ * gap between the actual end and the scheduled end, references the next
+ * thing on today's agenda when there is one. Returns silently if the gap is
+ * too small to matter (anything under 15 minutes is just the meeting
+ * running a touch short), or if nothing changed.
+ */
+export async function fireFreedTimeNotice(input: {
+  endedAtMs: number;
+  scheduledEndMs: number;
+  nextStartsAt?: Date | null;
+  nextTitle?: string | null;
+}): Promise<void> {
+  const freedMs = input.scheduledEndMs - input.endedAtMs;
+  const freedMin = Math.round(freedMs / 60_000);
+  if (freedMin < 15) return;
+
+  if (!(await ensurePermission())) return;
+
+  // How long is the window until the next thing lands? If nothing is next,
+  // say the whole day is free; otherwise show the gap and the next anchor.
+  let body: string;
+  if (input.nextStartsAt && input.nextTitle) {
+    const gapMin = Math.max(
+      0,
+      Math.round((input.nextStartsAt.getTime() - input.endedAtMs) / 60_000),
+    );
+    const nextLabel = formatTimeShort(input.nextStartsAt) + ' ' + input.nextTitle;
+    body = t('notify.endedEarlyBody', { minutes: gapMin, next: nextLabel });
+  } else {
+    body = t('notify.endedEarlyNoNext');
+  }
+
+  try {
+    await Notifications.scheduleNotificationAsync({
+      content: {
+        title: t('notify.endedEarly'),
+        body,
+        sound: true,
+      },
+      trigger: {
+        type: Notifications.SchedulableTriggerInputTypes.DATE,
+        date: new Date(Date.now() + 1500),
+        ...(Platform.OS === 'android' ? { channelId: REMINDER_CHANNEL } : {}),
+      },
+    });
+  } catch {
+    /* best effort; the schedule-wipe path below cleans up */
+  }
+}
+
+function formatTimeShort(d: Date): string {
+  const h = String(d.getHours()).padStart(2, '0');
+  const m = String(d.getMinutes()).padStart(2, '0');
+  return `${h}:${m}`;
 }
 
 /** Clears every scheduled reminder — used when all data is wiped. */

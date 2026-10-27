@@ -15,11 +15,25 @@ export function getLocation(): DeviceLocation | null {
   return current;
 }
 
-export async function startLocationTracking(): Promise<void> {
+/**
+ * Begin tracking. On the first voice session, which calls this, the asker
+ * version prompts the user. Everywhere else it starts silently — the launch
+ * path uses `requireExistingPermission: true` so the OS dialog never
+ * appears mid-splash — and both routes end up at the same tracker.
+ */
+export async function startLocationTracking(opts?: {
+  /** Don't prompt; only start if permission is already granted. */
+  requireExistingPermission?: boolean;
+}): Promise<void> {
   if (watching) return;
 
-  const { status } = await Location.requestForegroundPermissionsAsync();
-  if (status !== 'granted') return;
+  if (opts?.requireExistingPermission) {
+    const existing = await Location.getForegroundPermissionsAsync();
+    if (existing.status !== 'granted') return;
+  } else {
+    const asked = await Location.requestForegroundPermissionsAsync();
+    if (asked.status !== 'granted') return;
+  }
 
   try {
     const pos = await Location.getCurrentPositionAsync({

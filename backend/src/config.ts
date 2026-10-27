@@ -30,6 +30,12 @@ export const configSchema = z.object({
   // turn, and 9.1 (the stakeholder's workout scenario) is the moment this
   // app has to not fail.
   OPENAI_VOICE_MODEL: z.string().default('gpt-4o'),
+  // When the server already decided which function to call (see
+  // detectForcedTool in modules/voice/agent.ts), the model's only remaining
+  // job is to fill in the arguments. gpt-4o-mini does that cheaply and
+  // reliably — roughly a sixth of the price of gpt-4o per turn. Free rounds
+  // keep the stronger model.
+  OPENAI_FORCED_TOOL_MODEL: z.string().default('gpt-4o-mini'),
   // Text-to-speech for the voice assistant. Without a key the app still works;
   // the assistant answers in text and simply does not speak.
   ELEVENLABS_API_KEY: z.string().optional(),

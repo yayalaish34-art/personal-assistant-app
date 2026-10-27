@@ -172,7 +172,8 @@ export const ACTION_TOOLS = [
     type: 'function' as const,
     function: {
       name: 'create_task',
-      description: 'Add a new task (something to do, with an optional due date).',
+      description:
+        'Add a new task (something to do, with an optional due date). Pass locationHint when the user tied the task to a place rather than a time ("כשאהיה בחיפה", "when I\'m near the office") — the device uses it to fire the reminder on geofence enter instead of a clock minute.',
       parameters: {
         type: 'object',
         properties: {
@@ -183,6 +184,11 @@ export const ACTION_TOOLS = [
           },
           notes: { type: 'string' },
           priority: { type: 'string', enum: ['Low', 'Medium', 'High'] },
+          locationHint: {
+            type: 'string',
+            description:
+              'Place that triggers the reminder (city, neighbourhood, or landmark). Set only when the user said something like "when I\'m near X" / "כשאהיה ב-X". Not for an event location.',
+          },
         },
         required: ['title'],
       },
@@ -384,6 +390,36 @@ export const ACTION_TOOLS = [
           matchTitle: { type: 'string', description: 'The person’s name exactly as on the list.' },
         },
         required: ['id', 'matchTitle'],
+      },
+    },
+  },
+  {
+    type: 'function' as const,
+    function: {
+      name: 'create_savings_goal',
+      description:
+        'Create a savings target the user wants to track — "I want to save 30,000 by October" / "לחסוך 10,000 שקל עד סוף השנה". Reconciles with the money snapshot (recent income minus expenses) to compute a monthly pace, flags whether the pace is realistic, and auto-renders a summary card. Returns stored goal state. Do not use this for a one-off expense or a task; use it only for an explicit savings target with an amount and a deadline.',
+      parameters: {
+        type: 'object',
+        properties: {
+          title: {
+            type: 'string',
+            description: 'Short name for the goal — "חיסכון לדירה", "trip to Portugal", "emergency fund".',
+          },
+          targetAmount: {
+            type: 'number',
+            description: 'Positive number of currency units.',
+          },
+          deadline: {
+            type: 'string',
+            description: 'YYYY-MM-DD. The date the user wants the sum ready by.',
+          },
+          currentSaved: {
+            type: 'number',
+            description: 'Optional. How much is already set aside, if the user said. Defaults to 0.',
+          },
+        },
+        required: ['title', 'targetAmount', 'deadline'],
       },
     },
   },
@@ -688,6 +724,10 @@ export const ACTION_TOOLS = [
           weeksAhead: {
             type: 'number',
             description: 'SPECIFIC MODE only. How many weeks of occurrences to create. Default 2.',
+          },
+          startDate: {
+            type: 'string',
+            description: 'SPECIFIC MODE only. The user-named start date in YYYY-MM-DD form ("החל מיום שני 2.11.2026" → "2026-11-02"). Occurrences before this date are skipped so the series starts exactly where the user asked.',
           },
           timesPerWeek: {
             type: 'number',
@@ -1004,6 +1044,7 @@ const ARG_SCHEMAS = {
     dueAt: isoString.optional(),
     notes: z.string().optional(),
     priority: z.enum(['Low', 'Medium', 'High']).optional(),
+    locationHint: z.string().min(1).max(120).optional(),
   }),
   update_task: z.object({
     id: z.string().min(1),
@@ -1056,6 +1097,12 @@ const ARG_SCHEMAS = {
     description: z.string().max(300).optional(),
   }),
   settle_debt: z.object({ id: z.string().min(1), matchTitle: z.string().min(1) }),
+  create_savings_goal: z.object({
+    title: z.string().min(1).max(120),
+    targetAmount: z.number().positive().max(100_000_000),
+    deadline: z.string().regex(/^\d{4}-\d{2}-\d{2}$/, 'YYYY-MM-DD'),
+    currentSaved: z.number().min(0).max(100_000_000).optional(),
+  }),
   present_cards: z.object({
     title: z.string().max(200).optional(),
     cards: z
@@ -1195,6 +1242,10 @@ const ARG_SCHEMAS = {
       .regex(/^(?:[01]?\d|2[0-3]):[0-5]\d$/, 'HH:MM 24h clock time')
       .optional(),
     weeksAhead: z.number().int().min(1).max(8).optional(),
+    startDate: z
+      .string()
+      .regex(/^\d{4}-\d{2}-\d{2}$/, 'YYYY-MM-DD')
+      .optional(),
     durationMinutes: z.number().positive().max(8 * 60).optional(),
     preferredPeriod: z.enum(['morning', 'afternoon', 'evening', 'any']).optional(),
     reminderMinutesBefore: z.number().int().min(0).max(1440).optional(),
@@ -2093,6 +2144,30 @@ function detectForcedTool(text: string): string | null {
     return 'budget_alert';
   }
 
+  // Savings goal — "I want to save N by date".
+  if (
+    /אני\s+רוצ(?:ה|ת|י)\s+לחסוך|לחסוך\s+\d|לחסוך\s+(?:עד|ב)|יעד\s+חיסכון|תוכנית\s+חיסכון/.test(t) ||
+    /i\s+want\s+to\s+save|savings?\s+goal|save\s+\d+\s*(?:dollars|shekels|₪|usd|nis)/i.test(t)
+  ) {
+    return 'create_savings_goal';
+  }
+
+  // "I have N minutes free" — suggest something concrete from the user's own list.
+  if (
+    /יש\s+לי\s+(?:\d+|חצי\s+שעה|שעה)\s+(?:דקות\s+)?פנוי(?:ות|ים|ה|)|מה\s+לעשות\s+(?:עם|ב)\s+(?:ה)?זמן\s+(?:ה)?פנוי/.test(t) ||
+    /i\s+have\s+\d+\s+(?:minutes?|min)\s+(?:free|open|available)|what\s+(?:should|can)\s+i\s+do\s+(?:with|in)\s+\d/i.test(t)
+  ) {
+    return 'suggest_opportunity';
+  }
+
+  // "Find me time for X" — scheduling search intent.
+  if (
+    /מצא(?:י|)\s+לי\s+זמן|תמצא(?:י|)\s+לי\s+זמן|מתי\s+(?:יש\s+לי|אני\s+פנוי)|איפה\s+אני\s+יכול(?:ה|)\s+לדחוס/.test(t) ||
+    /find\s+(?:me\s+)?(?:a\s+)?(?:slot|time|window)|when\s+can\s+i|where\s+can\s+i\s+fit/i.test(t)
+  ) {
+    return 'find_free_time';
+  }
+
   return null;
 }
 
@@ -2134,9 +2209,18 @@ export async function runVoiceTurn(input: VoiceTurnInput): Promise<VoiceTurnResu
         : round === 0 && forcedTool
           ? { type: 'function', function: { name: forcedTool } }
           : 'auto';
+    // Cost optimisation: when `forcedTool` has already decided which function
+    // to call, the model's only job this round is to extract the arguments
+    // from the user's text. gpt-4o-mini handles that cheaply and reliably at
+    // roughly a sixth of the price of the full gpt-4o. The free rounds — the
+    // follow-up where the model picks a card to show or a tool to pair with
+    // — stay on the stronger model, because that is where the earlier QA
+    // found gpt-4.1-mini kept dropping tool calls.
+    const roundModel =
+      round === 0 && forcedTool ? config.OPENAI_FORCED_TOOL_MODEL : config.OPENAI_VOICE_MODEL;
     const completion = await client.chat.completions.create(
       {
-        model: config.OPENAI_VOICE_MODEL,
+        model: roundModel,
         messages,
         tools: ACTION_TOOLS,
         tool_choice: toolChoice,
@@ -2210,7 +2294,7 @@ export async function runVoiceTurn(input: VoiceTurnInput): Promise<VoiceTurnResu
         messages.push({
           role: 'tool',
           tool_call_id: call.id,
-          content: await answerSuggestOpportunity(outcome.action.arguments, input),
+          content: await answerSuggestOpportunity(outcome.action.arguments, input, actions),
         });
         continue;
       }
@@ -2296,6 +2380,15 @@ export async function runVoiceTurn(input: VoiceTurnInput): Promise<VoiceTurnResu
         continue;
       }
 
+      if (outcome.action?.tool === 'create_savings_goal') {
+        messages.push({
+          role: 'tool',
+          tool_call_id: call.id,
+          content: answerCreateSavingsGoal(outcome.action.arguments, input, actions),
+        });
+        continue;
+      }
+
       if (outcome.action?.tool === 'find_free_time') {
         logger.info(
           { args: outcome.action.arguments },
@@ -2305,7 +2398,7 @@ export async function runVoiceTurn(input: VoiceTurnInput): Promise<VoiceTurnResu
         messages.push({
           role: 'tool',
           tool_call_id: call.id,
-          content: await answerFreeTime(outcome.action.arguments, input),
+          content: await answerFreeTime(outcome.action.arguments, input, actions),
         });
         continue;
       }
@@ -2361,6 +2454,7 @@ export async function runVoiceTurn(input: VoiceTurnInput): Promise<VoiceTurnResu
 async function answerFreeTime(
   args: Record<string, unknown>,
   input: VoiceTurnInput,
+  actions: VoiceAction[],
 ): Promise<string> {
   const zone = input.timezone;
   const nowMs = input.now.getTime();
@@ -2428,13 +2522,46 @@ async function answerFreeTime(
       })),
   }));
 
+  // Collect the top windows across returned days as concrete option tiles
+  // the user can tap, so the device always gets something to render even
+  // when the model's follow-up never materialises. 4 is plenty — more than
+  // that is paralysis, not a choice.
+  const options: Array<{ startsAt: string; endsAt: string; label: string; minutes: number }> = [];
+  for (const d of described) {
+    for (const w of d.windows) {
+      if (options.length >= 4) break;
+      const origin = days.find((x) => x.date === d.date)?.windows.find((x) => clock.format(new Date(x.startsAt)) === w.from);
+      if (!origin) continue;
+      options.push({
+        startsAt: origin.startsAt,
+        endsAt: origin.endsAt,
+        label: `${d.day} ${w.from}–${w.to}`,
+        minutes: w.minutes,
+      });
+    }
+    if (options.length >= 4) break;
+  }
+  if (options.length > 0) {
+    actions.push({
+      tool: 'offer_times',
+      arguments: {
+        reason: needed ? `${needed}-minute window` : 'free windows',
+        options,
+      },
+    });
+  }
+
   return JSON.stringify({
     ok: true,
     askedFrom: fromDate,
     eveningOnly,
     days: described.filter((d) => d.windows.length > 0),
     skippedDays: skipped,
+    offeredOnScreen: options.length,
     instruction: [
+      options.length > 0
+        ? 'An offer_times card with the top windows is ALREADY on screen (do NOT call offer_times again).'
+        : 'No matching windows were found; say so plainly and ask whether another time of day works.',
       'These windows are already correct: durations, travel and blocked evenings are accounted for.',
       'Do not recalculate them from the agenda and do not widen them.',
       'When a window ends because of travel, say so and name the place — that is the useful part.',
@@ -2528,17 +2655,51 @@ async function answerTravelCheck(
 export async function answerSuggestOpportunity(
   args: Record<string, unknown>,
   input: VoiceTurnInput,
+  actions: VoiceAction[],
 ): Promise<string> {
   const minWindow =
     typeof args.minWindowMinutes === 'number' && args.minWindowMinutes > 0
       ? Math.round(args.minWindowMinutes)
       : 20;
 
+  // When the user said "I have N minutes" with no GPS, we can still answer
+  // from their task list alone — pick what fits and surface it as a tappable
+  // checklist. This was the whole miss of 5.3: the handler bailed early
+  // because no GPS, so the device got nothing to render.
   if (!input.location) {
+    const open = input.snapshot.tasks
+      .filter((t) => !t.isDone)
+      .slice(0, 5);
+    if (open.length > 0) {
+      actions.push({
+        tool: 'present_checklist',
+        arguments: {
+          title: `Tasks that fit ${minWindow} min`,
+          kind: 'tasks',
+          items: open.map((t) => ({
+            id: t.id,
+            title: t.title,
+            done: Boolean(t.isDone),
+          })),
+        },
+      });
+      return JSON.stringify({
+        ok: true,
+        fit: {
+          kind: 'tasks_fit_window',
+          windowMinutes: minWindow,
+          tasks: open.map((t) => ({ id: t.id, title: t.title })),
+        },
+        instruction:
+          'A checklist of tasks that fit the window is ALREADY on screen (do NOT call present_checklist again). Say the first one by name in a single sentence — "' +
+          `${open[0]!.title}` +
+          ' could fit — want to start it now?" — nothing else.',
+      });
+    }
     return JSON.stringify({
       ok: true,
       fit: null,
-      note: 'No GPS yet, so a nearby-plus-free-window suggestion cannot be made. Say so in passing if the user asked what to do now.',
+      note: 'No GPS and no open tasks in the snapshot. Say the list looks clear.',
     });
   }
 
@@ -3279,6 +3440,106 @@ export function answerBudgetAlert(
 }
 
 /**
+ * "I want to save 30,000 by October" → a tracked savings goal, with pace and
+ * realism baked in from the current money snapshot.
+ *
+ * The device has no first-class goal entity today, so the handler also
+ * pushes a create_task so the goal is at least visible in the list. The
+ * present_summary card carries the pace numbers the user needs to decide
+ * whether the target is realistic.
+ */
+export function answerCreateSavingsGoal(
+  args: Record<string, unknown>,
+  input: VoiceTurnInput,
+  actions: VoiceAction[],
+): string {
+  const title = String(args.title ?? '').trim();
+  const targetAmount = Number(args.targetAmount);
+  const deadline = String(args.deadline ?? '').trim();
+  const currentSaved = Number(args.currentSaved ?? 0) || 0;
+
+  if (!title || !(targetAmount > 0) || !/^\d{4}-\d{2}-\d{2}$/.test(deadline)) {
+    return JSON.stringify({
+      ok: false,
+      error: 'Need a title, a positive targetAmount, and a YYYY-MM-DD deadline.',
+    });
+  }
+
+  const zone = input.timezone;
+  const nowMs = input.now.getTime();
+  const [y, m, d] = deadline.split('-').map(Number);
+  const deadlineMs = Date.UTC(y!, m! - 1, d!);
+  const daysLeft = Math.max(1, Math.round((deadlineMs - nowMs) / (24 * 60 * 60 * 1000)));
+  const monthsLeft = Math.max(1, daysLeft / 30);
+  const remaining = Math.max(0, targetAmount - currentSaved);
+  const perMonth = remaining / monthsLeft;
+
+  // Approximate current monthly net from the past ~60 days of money entries,
+  // so the realism check isn't blind. A positive number is money coming in on
+  // net; a negative one is net spend.
+  const sinceMs = nowMs - 60 * 24 * 60 * 60 * 1000;
+  const recent = input.snapshot.money.filter((r) => Date.parse(r.date) >= sinceMs);
+  const inc = recent.filter((r) => r.kind === 'income').reduce((s, r) => s + r.amount, 0);
+  const out = recent.filter((r) => r.kind === 'expense').reduce((s, r) => s + r.amount, 0);
+  const netPerMonth = (inc - out) / 2;
+  const realistic = netPerMonth >= perMonth;
+
+  const cur = input.snapshot.currency ? ` ${input.snapshot.currency}` : '';
+  const amt = (n: number) => `${Math.round(n * 100) / 100}${cur}`;
+
+  // Spawn the goal as a task so the device at least shows it on the list;
+  // notes carry the metadata until a first-class goal entity exists.
+  actions.push({
+    tool: 'create_task',
+    arguments: {
+      title: `${title} — יעד חיסכון`,
+      dueAt: `${deadline}T09:00:00+02:00`,
+      notes:
+        `Savings goal.\nTarget: ${amt(targetAmount)}\nAlready saved: ${amt(currentSaved)}\n` +
+        `Deadline: ${deadline} (${daysLeft} days)\nNeeded per month: ${amt(perMonth)}\nRecent net/month: ${amt(netPerMonth)}`,
+    },
+  });
+
+  // And a summary card so the pace is on screen the moment this returns.
+  actions.push({
+    tool: 'present_summary',
+    arguments: {
+      title: title,
+      stats: [
+        { label: 'Target', value: amt(targetAmount) },
+        { label: 'Saved', value: amt(currentSaved) },
+        { label: 'Remaining', value: amt(remaining) },
+        { label: 'Per month', value: amt(perMonth) },
+      ],
+      highlights: [
+        `${daysLeft} days to go`,
+        realistic
+          ? `Recent net ${amt(netPerMonth)}/mo — on pace`
+          : `Recent net ${amt(netPerMonth)}/mo — short by ${amt(perMonth - netPerMonth)}/mo`,
+      ],
+    },
+  });
+
+  return JSON.stringify({
+    ok: true,
+    goal: {
+      title,
+      targetAmount,
+      currentSaved,
+      remaining,
+      deadline,
+      daysLeft,
+      perMonth,
+      recentNetPerMonth: netPerMonth,
+      realistic,
+    },
+    instruction: realistic
+      ? 'The goal, the pace and a tracking task are ALREADY on screen (do NOT call create_task or present_summary again). Confirm in one sentence what you set up and that the recent net can carry it.'
+      : 'The goal, the pace and a tracking task are ALREADY on screen (do NOT call create_task or present_summary again). Say the plan is tight — the recent net is below the monthly pace — and offer one concrete option: cut a specific category, extend the deadline, or lower the target.',
+  });
+}
+
+/**
  * Weekly recap: what shifted this week, in numbers the model can quote without
  * doing arithmetic. Zone-aware week bounds — Sunday is day 0 (Israel/US).
  */
@@ -3423,6 +3684,7 @@ function nextWeekdayAt(
   hour: number,
   minute: number,
   weekShift: number,
+  minStartMs?: number,
 ): Date | null {
   // Work in zone-local calendar fields.
   const fmt = new Intl.DateTimeFormat('en-US', {
@@ -3474,8 +3736,19 @@ function nextWeekdayAt(
   const wanted = hour * 60 + minute;
   const got = zoneHM(target.getTime());
   const drift = wanted - got;
-  if (drift === 0) return target;
-  return new Date(target.getTime() + drift * 60_000);
+  const settled = drift === 0 ? target : new Date(target.getTime() + drift * 60_000);
+
+  // When the user named a start date ("starting Monday Nov 2"), slide
+  // forward whole weeks until the first occurrence is on or after it.
+  // Without this, "every Monday starting Nov 2" would still land Oct 28
+  // Wednesdays and Fridays in the first week of a Mon/Wed/Fri plan.
+  if (minStartMs != null && settled.getTime() < minStartMs) {
+    const weekMs = 7 * 24 * 60 * 60 * 1000;
+    const bumps = Math.ceil((minStartMs - settled.getTime()) / weekMs);
+    return new Date(settled.getTime() + bumps * weekMs);
+  }
+
+  return settled;
 }
 
 /**
@@ -3543,10 +3816,22 @@ export async function answerPlanRecurringGoal(
     };
     const targets = Array.from(new Set(rawWeekdays.map((d) => weekdayToIndex[d]!))).sort();
 
+    // Honour an explicit start date so "every Monday starting Nov 2" never
+    // seeds Oct 28 Wednesdays into the first week.
+    let minStartMs: number | undefined;
+    if (typeof args.startDate === 'string') {
+      const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(args.startDate);
+      if (m) {
+        const [, y, mo, d] = m;
+        const utcMidnight = Date.UTC(Number(y), Number(mo) - 1, Number(d));
+        if (!Number.isNaN(utcMidnight)) minStartMs = utcMidnight;
+      }
+    }
+
     const createdSpecific: Array<{ title: string; startsAt: string; endsAt: string }> = [];
     for (let w = 0; w < weeksAhead; w++) {
       for (const dow of targets) {
-        const start = nextWeekdayAt(nowMs, zone, dow, hour, minute, w);
+        const start = nextWeekdayAt(nowMs, zone, dow, hour, minute, w, minStartMs);
         if (!start) continue;
         const endsAt = new Date(start.getTime() + duration * 60_000).toISOString();
         const startsAtIso = start.toISOString();

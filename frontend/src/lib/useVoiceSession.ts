@@ -708,11 +708,10 @@ export function useVoiceSession(options: {
 
       while (!cancelled && !doneRef.current) {
         try {
-          if (historyRef.current.length === 0) {
-            // She speaks first, so the user knows she is listening.
-            await runTurn(SESSION_START);
-            if (cancelled || doneRef.current) break;
-          }
+          // On an empty transcript the screen shows the capability chips,
+          // which carry the "here is what I do" message better than a spoken
+          // greeting that pushes the chips off screen the moment it arrives.
+          // The mic opens straight away; the user speaks first.
 
           const uri = await listen();
           if (cancelled || doneRef.current) break;

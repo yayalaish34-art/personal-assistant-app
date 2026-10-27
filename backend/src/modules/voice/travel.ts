@@ -20,9 +20,22 @@ import { logger } from '../../lib/logger.js';
  */
 
 const GEOCODE_URL = 'https://geocoding-api.open-meteo.com/v1/search';
+/**
+ * Fallback for names the first geocoder cannot find.
+ *
+ * Open-Meteo indexes mostly Latin-script names, so "Beer Sheva" works but
+ * "באר שבע" returns nothing. Nominatim indexes OSM, which carries every name
+ * in every language a mapper added, so Hebrew, Arabic and Persian names
+ * resolve too. The User-Agent is mandatory and must identify the app;
+ * Nominatim bans anonymous traffic.
+ */
+const NOMINATIM_URL = 'https://nominatim.openstreetmap.org/search';
+const NOMINATIM_UA = 'PlanziAssistant/1.0 (support@planzi.app)';
 
 /** How long a lookup may hold up the turn it is running inside. */
 const GEOCODE_TIMEOUT_MS = 2_000;
+/** Per-attempt budget when both geocoders are tried in sequence. */
+const PER_ATTEMPT_TIMEOUT_MS = 1_500;
 
 /** Names repeat constantly across a snapshot; each one is looked up once. */
 const cache = new Map<string, Point | null>();
@@ -50,34 +63,88 @@ export async function geocode(place: string): Promise<Point | null> {
   const hit = cache.get(key);
   if (hit !== undefined) return hit;
 
-  // Bounded, because this runs inside a voice turn with someone waiting at the
-  // end of it. A bare fetch has no timeout at all: one unresponsive geocoder
-  // would hold the turn open until the socket gave up on its own, and the
-  // conversation would simply stop with no error to show for it. Two seconds
-  // is generous for a lookup whose only job is to answer "can they get there",
-  // and the answer to a lookup that misses is the same as one that fails —
-  // say nothing about that leg.
+  const trimmed = place.trim();
+
+  // Open-Meteo first — fast, no User-Agent needed, no rate limit worries.
+  // Latin-script names resolve here reliably ("Beer Sheva", "Tel Aviv",
+  // "Krayon Mall") and we never pay the cost of a second lookup for them.
+  const primary = await tryOpenMeteo(trimmed);
+  if (primary) {
+    cache.set(key, primary);
+    return primary;
+  }
+
+  // Nothing on Open-Meteo. If the name carries non-Latin characters —
+  // Hebrew, Arabic, Persian — the next try is Nominatim, which indexes OSM
+  // and holds those names at the source. Latin-only misses stop here: a
+  // misspelled "Blerzsheba" is not a Nominatim case.
+  if (hasNonLatin(trimmed)) {
+    const fallback = await tryNominatim(trimmed);
+    if (fallback) {
+      cache.set(key, fallback);
+      return fallback;
+    }
+  }
+
+  cache.set(key, null);
+  return null;
+}
+
+/**
+ * Does the string carry any character outside basic Latin? If yes, a lookup
+ * against a Latin-first geocoder is likely to miss and the Nominatim fallback
+ * is worth trying.
+ */
+function hasNonLatin(s: string): boolean {
+  // Hebrew: ֐–׿. Arabic: ؀–ۿ. Persian/Urdu extension:
+  // ܀–ݿ. CJK and others we leave for later — the current app
+  // targets Hebrew first.
+  return /[֐-׿؀-ۿ܀-ݿ]/.test(s);
+}
+
+async function tryOpenMeteo(name: string): Promise<Point | null> {
   const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), GEOCODE_TIMEOUT_MS);
+  const timer = setTimeout(() => controller.abort(), PER_ATTEMPT_TIMEOUT_MS);
   try {
     const res = await fetch(
-      `${GEOCODE_URL}?name=${encodeURIComponent(place.trim())}&count=1&format=json`,
+      `${GEOCODE_URL}?name=${encodeURIComponent(name)}&count=1&format=json`,
       { signal: controller.signal },
     );
-    if (!res.ok) {
-      cache.set(key, null);
-      return null;
-    }
+    if (!res.ok) return null;
     const body = (await res.json()) as {
       results?: { latitude: number; longitude: number }[];
     };
     const first = body.results?.[0];
-    const point = first ? { latitude: first.latitude, longitude: first.longitude } : null;
-    cache.set(key, point);
-    return point;
+    return first ? { latitude: first.latitude, longitude: first.longitude } : null;
   } catch (err) {
-    logger.warn({ err, place }, 'geocode failed');
-    // Not cached: a network blip should not poison the name for the process.
+    logger.warn({ err: String(err), place: name }, 'open-meteo geocode failed');
+    return null;
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+async function tryNominatim(name: string): Promise<Point | null> {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), PER_ATTEMPT_TIMEOUT_MS);
+  try {
+    const res = await fetch(
+      `${NOMINATIM_URL}?q=${encodeURIComponent(name)}&format=json&limit=1`,
+      {
+        signal: controller.signal,
+        headers: { 'User-Agent': NOMINATIM_UA, 'Accept-Language': 'he,en' },
+      },
+    );
+    if (!res.ok) return null;
+    const body = (await res.json()) as Array<{ lat: string; lon: string }>;
+    const first = body[0];
+    if (!first) return null;
+    const latitude = Number(first.lat);
+    const longitude = Number(first.lon);
+    if (!Number.isFinite(latitude) || !Number.isFinite(longitude)) return null;
+    return { latitude, longitude };
+  } catch (err) {
+    logger.warn({ err: String(err), place: name }, 'nominatim geocode failed');
     return null;
   } finally {
     clearTimeout(timer);

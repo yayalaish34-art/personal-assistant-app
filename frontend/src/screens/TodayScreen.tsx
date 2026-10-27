@@ -595,8 +595,17 @@ function Headline({ text, size }: { text: string; size: number }) {
       {text.split('\n').map((line, i) => {
         const at = findBrand(line);
         if (at === -1) {
+          // Match the brand-carrying line's visual side (its flex row's start
+          // in LTR, where "direction: rtl" has mixed support across RN
+          // versions) so the two lines read as one block, not two.
           return (
-            <Text key={i} style={[type, { textAlign: alignStart(), writingDirection: dir }]}>
+            <Text
+              key={i}
+              style={[
+                type,
+                { textAlign: isRTL() ? 'left' : 'right', writingDirection: dir },
+              ]}
+            >
               {line}
             </Text>
           );

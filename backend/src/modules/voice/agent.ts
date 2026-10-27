@@ -665,7 +665,7 @@ export const ACTION_TOOLS = [
     function: {
       name: 'plan_recurring_goal',
       description:
-        "Turn a recurring plan into REAL CALENDAR EVENTS in one call. Call this for ANY shape of repeating slot: a weekly goal ('three workouts a week', 'study four evenings'), named weekdays with a time ('every Monday at seven', 'שני רביעי שישי ב-20:00', 'כל יום חמישי ב-09:00'), or a mix. It searches the coming week's free windows and creates the right calendar events directly — not a proposal, actual events, pushed to the device in this turn. After this returns, confirm aloud in one short sentence what landed; do NOT call create_event for the same slots, do NOT re-propose, do NOT ask the user to confirm. Use this instead of issuing one create_event per occurrence by hand.",
+        "Turn a recurring plan into REAL CALENDAR EVENTS in one call. Two modes:\n\n(A) SPECIFIC MODE — user named exact weekdays and a clock time ('every Monday at seven', 'כל יום שני בשעה 19', 'שני רביעי שישי ב-20:00'): pass `weekdays` + `timeOfDay` + `durationMinutes`. The handler creates one event per named weekday for the next `weeksAhead` weeks (default 2), at exactly the time given, no free-window search.\n\n(B) GOAL MODE — user named a count per week with no specific day ('three workouts this week', 'study four evenings'): pass `timesPerWeek` + optional `preferredPeriod`. The handler searches free windows and picks that many non-adjacent slots.\n\nIn BOTH modes the handler creates the calendar events directly — not a proposal, actual events, pushed to the device in this turn. After this returns, confirm aloud in one short sentence what landed; do NOT call create_event for the same slots, do NOT re-propose, do NOT ask the user to confirm.",
       parameters: {
         type: 'object',
         properties: {
@@ -673,25 +673,41 @@ export const ACTION_TOOLS = [
             type: 'string',
             description: 'Short name of the recurring thing — "workout", "deep work", "piano practice". No dates or filler.',
           },
+          weekdays: {
+            type: 'array',
+            items: {
+              type: 'string',
+              enum: ['sunday', 'monday', 'tuesday', 'wednesday', 'thursday', 'friday', 'saturday'],
+            },
+            description: 'SPECIFIC MODE only. The named weekdays the user asked for. Empty/omitted → goal mode.',
+          },
+          timeOfDay: {
+            type: 'string',
+            description: 'SPECIFIC MODE only. The clock time the user named, in 24h "HH:MM" format (e.g. "20:00", "09:30"). Required with weekdays.',
+          },
+          weeksAhead: {
+            type: 'number',
+            description: 'SPECIFIC MODE only. How many weeks of occurrences to create. Default 2.',
+          },
           timesPerWeek: {
             type: 'number',
-            description: 'How many slots to find across the week. 1–7.',
+            description: 'GOAL MODE only. How many slots to find across the week. 1–7. Omit when weekdays is given.',
           },
           durationMinutes: {
             type: 'number',
-            description: 'Rough length of one slot. Default 60.',
+            description: 'Length of one slot in minutes. Default 60.',
           },
           preferredPeriod: {
             type: 'string',
             enum: ['morning', 'afternoon', 'evening', 'any'],
-            description: 'When in the day. Default any — call it only when the user said so.',
+            description: 'GOAL MODE only. When in the day. Default any — call it only when the user said so.',
           },
           reminderMinutesBefore: {
             type: 'number',
             description: 'Minutes of heads-up before each slot. Pass only if the user asked for a reminder (e.g. "remind me 30 min before"). Omit for no reminder.',
           },
         },
-        required: ['title', 'timesPerWeek'],
+        required: ['title'],
       },
     },
   },
@@ -3295,6 +3311,76 @@ export function answerWeeklySummary(
 }
 
 /**
+ * The next occurrence of `targetDow` (0=Sun..6=Sat) in `zone`, at `hour`:`minute`
+ * local, offset by `weekShift` whole weeks ahead. If that moment has already
+ * passed today (same weekday, earlier in the day), the first occurrence rolls
+ * forward one week; subsequent weeks stack on top.
+ *
+ * Returns `null` only when the time arithmetic produced an invalid Date.
+ */
+function nextWeekdayAt(
+  nowMs: number,
+  zone: string,
+  targetDow: number,
+  hour: number,
+  minute: number,
+  weekShift: number,
+): Date | null {
+  // Work in zone-local calendar fields.
+  const fmt = new Intl.DateTimeFormat('en-US', {
+    timeZone: zone,
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+    weekday: 'short',
+    hour: '2-digit',
+    minute: '2-digit',
+    hour12: false,
+  });
+  const parts = fmt.formatToParts(new Date(nowMs));
+  const get = (t: string) => parts.find((p) => p.type === t)?.value ?? '';
+  const todayY = Number(get('year'));
+  const todayM = Number(get('month'));
+  const todayD = Number(get('day'));
+  const weekdayShort = get('weekday').toLowerCase();
+  const dowMap: Record<string, number> = { sun: 0, mon: 1, tue: 2, wed: 3, thu: 4, fri: 5, sat: 6 };
+  const todayDow = dowMap[weekdayShort] ?? 0;
+  const nowHour = Number(get('hour'));
+  const nowMin = Number(get('minute'));
+
+  let daysForward = (targetDow - todayDow + 7) % 7;
+  // Same weekday but the time has already passed → push to next week.
+  if (daysForward === 0 && (hour < nowHour || (hour === nowHour && minute <= nowMin))) {
+    daysForward = 7;
+  }
+  daysForward += weekShift * 7;
+
+  // Build a UTC date for the target local wall-clock, then correct for the
+  // zone's offset at that instant. Doing it in two passes handles DST shifts
+  // cleanly: the first pass picks a tentative instant, the second measures
+  // how far off its zone-local hour is from the one we wanted and nudges.
+  const target = new Date(todayY, todayM - 1, todayD + daysForward, hour, minute, 0, 0);
+  if (Number.isNaN(target.getTime())) return null;
+
+  const zoneHM = (ms: number) => {
+    const p = new Intl.DateTimeFormat('en-US', {
+      timeZone: zone,
+      hour: '2-digit',
+      minute: '2-digit',
+      hour12: false,
+    }).formatToParts(new Date(ms));
+    const h = Number(p.find((x) => x.type === 'hour')?.value ?? '0');
+    const m = Number(p.find((x) => x.type === 'minute')?.value ?? '0');
+    return h * 60 + m;
+  };
+  const wanted = hour * 60 + minute;
+  const got = zoneHM(target.getTime());
+  const drift = wanted - got;
+  if (drift === 0) return target;
+  return new Date(target.getTime() + drift * 60_000);
+}
+
+/**
  * "Three workouts this week" → three concrete, non-adjacent calendar slots,
  * and the calendar events to put them there.
  *
@@ -3313,10 +3399,6 @@ export async function answerPlanRecurringGoal(
   actions: VoiceAction[],
 ): Promise<string> {
   const title = String(args.title ?? '').trim();
-  const timesPerWeek = Math.max(
-    1,
-    Math.min(7, Math.round(Number(args.timesPerWeek) || 1)),
-  );
   const duration = Math.max(
     15,
     Math.min(
@@ -3326,11 +3408,10 @@ export async function answerPlanRecurringGoal(
         : 60,
     ),
   );
-  const period = ((args.preferredPeriod as string | undefined) ?? 'any') as
-    | 'morning'
-    | 'afternoon'
-    | 'evening'
-    | 'any';
+  const reminderMinutes =
+    typeof args.reminderMinutesBefore === 'number' && args.reminderMinutesBefore >= 0
+      ? Math.min(1440, Math.round(args.reminderMinutesBefore))
+      : null;
 
   if (!title) {
     return JSON.stringify({ ok: false, error: 'No title given.' });
@@ -3338,6 +3419,74 @@ export async function answerPlanRecurringGoal(
 
   const zone = input.timezone;
   const nowMs = input.now.getTime();
+
+  // ── SPECIFIC MODE ─────────────────────────────────────────────────────
+  // Named weekdays + clock time: create events on exactly those weekdays
+  // at exactly that time, for `weeksAhead` weeks. No free-window search.
+  // This is the shape the model kept failing to execute — "every Monday at
+  // 19:00" or "Mon/Wed/Fri at 20:00" — and the one the stakeholder's
+  // workout test needs to pass.
+  const weekdayNames = ['sunday', 'monday', 'tuesday', 'wednesday', 'thursday', 'friday', 'saturday'];
+  const rawWeekdays = Array.isArray(args.weekdays)
+    ? (args.weekdays as unknown[]).map((d) => String(d).toLowerCase()).filter((d) => weekdayNames.includes(d))
+    : [];
+  const timeOfDay = typeof args.timeOfDay === 'string' ? args.timeOfDay.trim() : '';
+  const timeMatch = /^(\d{1,2}):(\d{2})$/.exec(timeOfDay);
+  if (rawWeekdays.length > 0 && timeMatch) {
+    const hour = Math.min(23, Math.max(0, parseInt(timeMatch[1]!, 10)));
+    const minute = Math.min(59, Math.max(0, parseInt(timeMatch[2]!, 10)));
+    const weeksAhead = Math.max(
+      1,
+      Math.min(8, typeof args.weeksAhead === 'number' ? Math.round(args.weeksAhead) : 2),
+    );
+
+    const weekdayToIndex: Record<string, number> = {
+      sunday: 0, monday: 1, tuesday: 2, wednesday: 3, thursday: 4, friday: 5, saturday: 6,
+    };
+    const targets = Array.from(new Set(rawWeekdays.map((d) => weekdayToIndex[d]!))).sort();
+
+    const createdSpecific: Array<{ title: string; startsAt: string; endsAt: string }> = [];
+    for (let w = 0; w < weeksAhead; w++) {
+      for (const dow of targets) {
+        const start = nextWeekdayAt(nowMs, zone, dow, hour, minute, w);
+        if (!start) continue;
+        const endsAt = new Date(start.getTime() + duration * 60_000).toISOString();
+        const startsAtIso = start.toISOString();
+        const createArgs: Record<string, unknown> = {
+          title,
+          startsAt: startsAtIso,
+          endsAt,
+        };
+        if (reminderMinutes !== null) createArgs.reminderMinutesBefore = reminderMinutes;
+        actions.push({ tool: 'create_event', arguments: createArgs });
+        createdSpecific.push({ title, startsAt: startsAtIso, endsAt });
+      }
+    }
+
+    return JSON.stringify({
+      ok: true,
+      mode: 'specific',
+      goalTitle: title,
+      createdCount: createdSpecific.length,
+      weeksAhead,
+      weekdays: rawWeekdays,
+      timeOfDay,
+      reminderMinutesBefore: reminderMinutes,
+      created: createdSpecific,
+      instruction: `All ${createdSpecific.length} events were ALREADY CREATED (do NOT call create_event again). Confirm aloud in one short sentence what landed — the weekdays, the time, the reminder if set — nothing else.`,
+    });
+  }
+
+  // ── GOAL MODE ─────────────────────────────────────────────────────────
+  const timesPerWeek = Math.max(
+    1,
+    Math.min(7, Math.round(Number(args.timesPerWeek) || 1)),
+  );
+  const period = ((args.preferredPeriod as string | undefined) ?? 'any') as
+    | 'morning'
+    | 'afternoon'
+    | 'evening'
+    | 'any';
   const fromDate = today(zone, nowMs);
 
   const events: AvailabilityEvent[] = input.snapshot.events.map((e) => ({
@@ -3417,11 +3566,6 @@ export async function answerPlanRecurringGoal(
     }
   }
 
-  const reminderMinutes =
-    typeof args.reminderMinutesBefore === 'number' && args.reminderMinutesBefore >= 0
-      ? Math.min(1440, Math.round(args.reminderMinutesBefore))
-      : null;
-
   const created = picked.map((s) => {
     const endsAt = new Date(new Date(s.startsAt).getTime() + duration * 60_000).toISOString();
     const createArgs: Record<string, unknown> = { title, startsAt: s.startsAt, endsAt };
@@ -3432,6 +3576,7 @@ export async function answerPlanRecurringGoal(
 
   return JSON.stringify({
     ok: true,
+    mode: 'goal',
     goalTitle: title,
     timesPerWeekRequested: timesPerWeek,
     createdCount: created.length,

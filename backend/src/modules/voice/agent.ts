@@ -2246,7 +2246,7 @@ export async function runVoiceTurn(input: VoiceTurnInput): Promise<VoiceTurnResu
         messages.push({
           role: 'tool',
           tool_call_id: call.id,
-          content: answerEndOfDay(outcome.action.arguments, input),
+          content: answerEndOfDay(outcome.action.arguments, input, actions),
         });
         continue;
       }
@@ -2264,7 +2264,7 @@ export async function runVoiceTurn(input: VoiceTurnInput): Promise<VoiceTurnResu
         messages.push({
           role: 'tool',
           tool_call_id: call.id,
-          content: answerBudgetAlert(outcome.action.arguments, input),
+          content: answerBudgetAlert(outcome.action.arguments, input, actions),
         });
         continue;
       }
@@ -2273,7 +2273,7 @@ export async function runVoiceTurn(input: VoiceTurnInput): Promise<VoiceTurnResu
         messages.push({
           role: 'tool',
           tool_call_id: call.id,
-          content: answerWeeklySummary(outcome.action.arguments, input),
+          content: answerWeeklySummary(outcome.action.arguments, input, actions),
         });
         continue;
       }
@@ -3152,6 +3152,7 @@ export async function answerReplanRemainder(
 export function answerBudgetAlert(
   _args: Record<string, unknown>,
   input: VoiceTurnInput,
+  actions: VoiceAction[],
 ): string {
   const cur = input.snapshot.currency ? ` ${input.snapshot.currency}` : '';
   const amt = (n: number) => `${Math.round(n * 100) / 100}${cur}`;
@@ -3225,6 +3226,33 @@ export function answerBudgetAlert(
     return b.overshoot - a.overshoot;
   });
 
+  // Auto-render a budget card for every category with a limit, so the user
+  // sees the live state even when nothing is at risk. The model only speaks.
+  if (Object.keys(budgets).length > 0) {
+    const categoriesCard = Object.entries(budgets)
+      .filter(([, limit]) => Number(limit) > 0)
+      .map(([cat, limit]) => {
+        const spent = spentByCat.get(cat) ?? 0;
+        const remaining = Math.max(0, Number(limit) - spent);
+        return {
+          name: cat,
+          budget: amt(Number(limit)),
+          spent: amt(spent),
+          remaining: amt(remaining),
+          pct: Math.round((spent / Number(limit)) * 100),
+        };
+      });
+    actions.push({
+      tool: 'present_budget',
+      arguments: {
+        title: 'Budget',
+        monthProgressPct: Math.round(monthProgress * 100),
+        daysLeft,
+        categories: categoriesCard,
+      },
+    });
+  }
+
   return JSON.stringify({
     ok: true,
     monthProgress: Math.round(monthProgress * 100),
@@ -3245,8 +3273,8 @@ export function answerBudgetAlert(
     })),
     instruction:
       findings.length === 0
-        ? 'All budgets are on track. Say so briefly and leave it at that.'
-        : 'Lead with the single worst category. Say the number plainly ("food is 78 percent through with 11 days left — on pace to overshoot by about 240"), then give one concrete option. Use present_budget to render the detail.',
+        ? 'All budgets are on track. Say so briefly and leave it at that. The budget card is ALREADY on screen; do NOT call present_budget.'
+        : 'The budget card is ALREADY on screen (do NOT call present_budget again). Lead aloud with the single worst category. Say the number plainly ("food is 78 percent through with 11 days left — on pace to overshoot by about 240"), then give one concrete option.',
   });
 }
 
@@ -3257,6 +3285,7 @@ export function answerBudgetAlert(
 export function answerWeeklySummary(
   args: Record<string, unknown>,
   input: VoiceTurnInput,
+  actions: VoiceAction[],
 ): string {
   const cur = input.snapshot.currency ? ` ${input.snapshot.currency}` : '';
   const amt = (n: number) => `${Math.round(n * 100) / 100}${cur}`;
@@ -3324,6 +3353,36 @@ export function answerWeeklySummary(
     .slice(0, 5)
     .map((e) => ({ title: e.title, startsAt: e.startsAt, location: e.location ?? null }));
 
+  // Auto-push the weekly summary card so the device always has numbers to
+  // render — this used to depend on the model remembering a second call,
+  // which it sometimes dropped.
+  const weeklyStats = [
+    { label: 'Done', value: String(tasksDoneThisWeek.length) },
+    { label: 'Open', value: String(tasksOpenThisWeek.length) },
+    { label: 'Spent', value: amt(spent) },
+    ...(income > 0
+      ? [
+          { label: 'Earned', value: amt(income) },
+          { label: 'Balance', value: amt(income - spent) },
+        ]
+      : []),
+  ];
+  const weeklyHighlights: string[] = [];
+  if (tasksDoneThisWeek.length > 0)
+    weeklyHighlights.push(`Finished ${tasksDoneThisWeek.length} this week`);
+  if (biggestCat)
+    weeklyHighlights.push(`Biggest spend: ${biggestCat[0]} ${amt(biggestCat[1])}`);
+  if (packedDays.length > 0) weeklyHighlights.push(`Packed: ${packedDays.join(', ')}`);
+  if (upcoming[0]) weeklyHighlights.push(`Next up: ${upcoming[0].title}`);
+  actions.push({
+    tool: 'present_summary',
+    arguments: {
+      title: 'This week',
+      stats: weeklyStats,
+      highlights: weeklyHighlights,
+    },
+  });
+
   return JSON.stringify({
     ok: true,
     weekStart,
@@ -3343,9 +3402,9 @@ export function answerWeeklySummary(
     packedDays,
     upcoming,
     instruction:
-      'Hand the user a short recap: one line of what happened, one line of what is ahead. ' +
-      'Celebrate wins ("you knocked out 12 tasks this week"), name the biggest spend, name tomorrow or Monday if it stands out. ' +
-      'Use present_summary for the numbers; do not read every figure aloud.',
+      'The weekly summary card is ALREADY on screen (do NOT call present_summary again). ' +
+      'Hand the user a short recap aloud: one line of what happened, one line of what is ahead. ' +
+      'Celebrate wins ("you knocked out 12 tasks this week"), name the biggest spend, name tomorrow or Monday if it stands out.',
   });
 }
 
@@ -3736,6 +3795,7 @@ export function answerClusterErrands(
 export function answerEndOfDay(
   _args: Record<string, unknown>,
   input: VoiceTurnInput,
+  actions: VoiceAction[],
 ): string {
   const zone = input.timezone;
   const nowMs = input.now.getTime();
@@ -3780,6 +3840,40 @@ export function answerEndOfDay(
       }
     : null;
 
+  // Push the on-screen summary card directly so the device always has
+  // something to render. The model's job is just to narrate; verbal-only
+  // summaries were the stakeholder's "she just talks" complaint.
+  const summaryStats = [
+    { label: 'Done today', value: String(done.length) },
+    { label: 'Open', value: String(open.length) },
+    { label: 'Spent', value: amt(spent) },
+    ...(earned > 0 ? [{ label: 'Earned', value: amt(earned) }] : []),
+  ];
+  const summaryHighlights: string[] = [];
+  if (done.length > 0) summaryHighlights.push(`Finished ${done.length} today`);
+  if (open.length > 0) {
+    summaryHighlights.push(
+      `${open.length} open: ${open.slice(0, 2).map((t) => t.title).join(', ')}`,
+    );
+  }
+  if (tomorrowFirst) {
+    const hhmm = new Intl.DateTimeFormat('en-GB', {
+      timeZone: zone,
+      hour: '2-digit',
+      minute: '2-digit',
+      hour12: false,
+    }).format(new Date(tomorrowFirst.startsAt));
+    summaryHighlights.push(`Tomorrow kicks off ${hhmm} — ${tomorrowFirst.title}`);
+  }
+  actions.push({
+    tool: 'present_summary',
+    arguments: {
+      title: 'Today',
+      stats: summaryStats,
+      highlights: summaryHighlights,
+    },
+  });
+
   return JSON.stringify({
     ok: true,
     today: {
@@ -3796,10 +3890,10 @@ export function answerEndOfDay(
     },
     instruction:
       done.length === 0 && open.length === 0 && eventsBehindNow.length === 0
-        ? 'The day was quiet — no scheduled items. Say that plainly, no shame.'
-        : 'Lead with a win ("you shipped ' +
+        ? 'The day was quiet — no scheduled items. Say that plainly, no shame. The summary card is ALREADY on screen; do NOT call present_summary.'
+        : 'The summary card is ALREADY on screen (do NOT call present_summary again). Lead aloud with a win ("you shipped ' +
           String(done.length) +
-          ' today"), note what slipped in one phrase (not a list), and name tomorrow\'s first thing with a time. If anything slipped, offer replan_remainder in the SAME reply ("want me to find a spot for them tomorrow?"). Use present_summary if the numbers help on screen; never read every slipped task aloud.',
+          ' today"), note what slipped in one phrase (not a list), and name tomorrow\'s first thing with a time. If anything slipped, offer replan_remainder in the SAME reply ("want me to find a spot for them tomorrow?"). Never read every slipped task aloud.',
   });
 }
 

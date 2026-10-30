@@ -69,6 +69,16 @@ export type Profile = {
    * the exact due time; a positive value is the lead time.
    */
   taskReminderMinutes: number;
+  /**
+   * How long the user needs between "ok, time to start getting ready" and
+   * "walking out the door" — shower, dress, breakfast, pack, however they
+   * do it. Used by the morning check-in to time the "start getting ready"
+   * nudge so it lands at `firstEvent.startsAt − travelMinutes − prepTime`.
+   * The stakeholder's one hard note: this is personal and non-negotiable,
+   * because 30 minutes is a 15-minute shower for one person and a scramble
+   * for another.
+   */
+  prepTimeMinutes: number;
   eventTypes: EventType[];
   /** Whatever repeats and cannot move, in the user's own words. */
   fixedCommitments: string;
@@ -89,6 +99,7 @@ export const defaultProfile: Profile = {
   gender: 'unspecified',
   bufferMinutes: 15,
   taskReminderMinutes: 15,
+  prepTimeMinutes: 30,
   eventTypes: ['work'],
   fixedCommitments: '',
   workDays: [0, 1, 2, 3, 4],

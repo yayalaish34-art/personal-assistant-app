@@ -120,8 +120,14 @@ const SPEECH_DB = -35;
 const SILENCE_MS = 1100;
 /** Don't cut anyone off mid-thought, even if they started quietly. */
 const MIN_LISTEN_MS = 900;
-/** A recording this long is someone who forgot to stop, or a noisy room. */
-const MAX_LISTEN_MS = 25_000;
+/**
+ * The ceiling for a single turn. Three minutes is long enough for a real
+ * dump — "here's everything I need to do this week" — without becoming the
+ * forgotten-mic recording that fills a transcription bill with silence.
+ * The silence detector still ends the turn as soon as the user stops talking;
+ * this only matters when they genuinely keep going.
+ */
+const MAX_LISTEN_MS = 180_000;
 const POLL_MS = 150;
 /** Metering is optional; if none arrives by now, fall back to tap-to-stop. */
 const METERING_GRACE_MS = 1200;

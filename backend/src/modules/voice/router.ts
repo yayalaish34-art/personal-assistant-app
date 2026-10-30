@@ -47,7 +47,7 @@ const turnBody = z.object({
    * the turn succeeds and she asks for it again, which is what a person would
    * do.
    */
-  text: z.string().max(2000),
+  text: z.string().max(8000),
   /**
    * The language of the opening greeting — the one turn with no user words to
    * mirror. Every real turn is answered in whatever language the user spoke.
@@ -69,7 +69,7 @@ const turnBody = z.object({
     .array(
       z.object({
         role: z.enum(['user', 'assistant']),
-        content: z.string().min(1).max(2000),
+        content: z.string().min(1).max(8000),
       }),
     )
     .max(40)

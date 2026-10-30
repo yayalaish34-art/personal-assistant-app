@@ -118,6 +118,13 @@ export const profileSchema = z.object({
   sleepEndHour: z.number().int().min(0).max(23).default(7),
   bufferMinutes: z.number().int().min(0).max(120).default(15),
   taskReminderMinutes: z.number().int().min(0).max(1440).default(15),
+  /**
+   * How long the user needs to get ready in the morning (shower, dress,
+   * coffee). Used by the agent when the user asks "when should I start
+   * getting ready" or when scheduling a morning event — she will suggest
+   * `startsAt - prepTimeMinutes - travelTime` as the heads-up moment.
+   */
+  prepTimeMinutes: z.number().int().min(0).max(240).default(30),
   eventTypes: z.array(z.string().max(40)).max(20).default([]),
   fixedCommitments: z.string().max(500).default(''),
   workDays: z.array(z.number().int().min(0).max(6)).max(7).optional(),
@@ -1663,6 +1670,7 @@ function describeProfile(p: Profile): string {
     `- Asleep ${hour(p.sleepStartHour)}–${hour(p.sleepEndHour)}. Never propose anything in there.`,
     `- Likes ${p.bufferMinutes} minutes between one thing and the next.`,
     `- Task reminders fire ${p.taskReminderMinutes === 0 ? 'exactly at the due time' : `${p.taskReminderMinutes} minutes before the due time`}. Mention this when creating a dated task so they know what to expect.`,
+    `- Needs ${p.prepTimeMinutes} minutes to get ready in the morning (shower, dress, coffee). When they ask "when should I leave" or "when should I start getting ready" for a morning event, subtract both this prep time and the travel time from the event's start. The app also fires a warm "time to start getting ready" nudge automatically at that moment.`,
   ];
   if (p.eventTypes.length) {
     lines.push(`- Their days are mostly: ${p.eventTypes.join(', ')}.`);

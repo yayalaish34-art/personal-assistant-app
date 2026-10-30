@@ -46,6 +46,7 @@ import {
   HourRangePicker,
   BufferPicker,
   TaskLeadPicker,
+  PrepTimePicker,
   EventTypePicker,
   GenderPicker,
   SleepInsight,
@@ -108,6 +109,7 @@ type StepId =
   | 'place'
   | 'work'
   | 'sleep'
+  | 'prepTime'
   | 'buffer'
   | 'reminder'
   | 'types'
@@ -126,6 +128,7 @@ const STEPS: StepId[] = [
   'sleep',
   'sleepQuality',
   'assistanceStyle',
+  'prepTime',
   'buffer',
   'reminder',
   'types',
@@ -150,6 +153,7 @@ const STEP_SKIN: Record<StepId, { tile: AuraKey; Icon: typeof Mic }> = {
   place: { tile: 'green', Icon: Globe },
   work: { tile: 'green', Icon: Clock },
   sleep: { tile: 'blue', Icon: Moon },
+  prepTime: { tile: 'yellow', Icon: Timer },
   buffer: { tile: 'yellow', Icon: Timer },
   reminder: { tile: 'blue', Icon: Bell },
   types: { tile: 'green', Icon: CalendarDays },
@@ -828,6 +832,15 @@ export default function OnboardingScreen({ onDone }: { onDone: () => void }) {
                 />
               </StepIn>
             </>
+          ) : null}
+
+          {step === 'prepTime' ? (
+            <StepIn heading={heading} delay={ANSWERS_AT}>
+              <PrepTimePicker
+                value={profile.prepTimeMinutes}
+                onChange={(prepTimeMinutes) => patch({ prepTimeMinutes })}
+              />
+            </StepIn>
           ) : null}
 
           {step === 'buffer' ? (

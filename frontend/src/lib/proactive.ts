@@ -5,6 +5,7 @@ import { api, type Event, type Task } from './api';
 import { t } from './i18n';
 import { scheduleReminder } from './notifications';
 import { storage, type Profile } from './storage';
+import { estimateTravelMinutes } from './travel';
 
 // Proactive pattern-based notifications.
 //
@@ -126,6 +127,60 @@ TaskManager.defineTask(PROACTIVE_TASK, async () => {
     const tomorrow = tomorrowStr();
     const hour = new Date().getHours();
 
+    // Morning "get ready" nudge — the stakeholder's one hard ask.
+    //
+    // Runs in the hour BEFORE wake time: iOS wakes background fetch every
+    // ~15–30 min, so the first firing after sleepEndHour-1 is our chance to
+    // schedule a notification at the exact moment the user needs to start
+    // moving. The math: firstEvent.startsAt − travelMinutes − prepTime. If
+    // the result is in the past (the first event is close, or there is no
+    // travel), the ordinary 15-min-before reminder has it covered.
+    //
+    // We also still fall through to the generic briefing below when there
+    // is no first-event-with-location — a user with only tasks or in-office
+    // meetings should still hear from her in the morning.
+    if (last?.type !== `getready-${today}` && hour >= profile.sleepEndHour - 1 && hour <= profile.sleepEndHour + 1) {
+      const agenda = await api.agendaForDate(today);
+      const liveEvents = agenda.events
+        .filter((e) => !e.deletedAt && !e.endedAt)
+        .sort((a, b) => new Date(a.startsAt).getTime() - new Date(b.startsAt).getTime());
+      const first = liveEvents[0];
+      if (first) {
+        const startMs = new Date(first.startsAt).getTime();
+        const travelMin = await estimateTravelMinutes(first.location) ?? 0;
+        const prepMin = profile.prepTimeMinutes ?? 30;
+        const leaveReadyMs = startMs - (travelMin + prepMin) * 60_000;
+        // Only schedule if the nudge still has somewhere to land ahead of
+        // the event — otherwise the normal event reminder is enough.
+        if (leaveReadyMs > Date.now() + 60_000) {
+          const firstTime = new Date(startMs).toLocaleTimeString(undefined, {
+            hour: '2-digit',
+            minute: '2-digit',
+          });
+          const body = travelMin > 0
+            ? t('notify.morningGetReadyWithTravel', {
+                title: first.title,
+                time: firstTime,
+                travel: travelMin,
+                prep: prepMin,
+              })
+            : t('notify.morningGetReady', {
+                title: first.title,
+                time: firstTime,
+                prep: prepMin,
+              });
+          await scheduleReminder({
+            rowId: `proactive-getready-${today}`,
+            title: t('notify.morningTitle'),
+            body,
+            at: new Date(leaveReadyMs),
+          });
+          await setLastRun(today, `getready-${today}`);
+          return BackgroundFetch.BackgroundFetchResult.NewData;
+        }
+      }
+    }
+
     // Morning briefing: once per day, around wake time
     if (last?.date !== today && last?.type !== `briefing-${today}` && hour >= profile.sleepEndHour && hour < profile.sleepEndHour + 2) {
       const agenda = await api.agendaForDate(today);
@@ -146,6 +201,48 @@ TaskManager.defineTask(PROACTIVE_TASK, async () => {
         });
         await setLastRun(today, `briefing-${today}`);
         return BackgroundFetch.BackgroundFetchResult.NewData;
+      }
+    }
+
+    // "Time just opened up" — the second half of the stakeholder's ask. A
+    // user whose next meeting is still an hour away, with open tasks on
+    // their list, should hear from her once per such window rather than
+    // waking up to it or finding out when they check.
+    //
+    // We fire during the user's work hours only, dedup by hour (so a
+    // 90-minute window doesn't nudge twice), and skip when the gap is
+    // actually just the end of the day. A smaller than 45-minute window
+    // isn't worth interrupting for.
+    if (hour >= profile.workStartHour && hour < profile.workEndHour) {
+      const slot = `freed-${today}-${hour}`;
+      if (last?.type !== slot) {
+        const agenda = await api.agendaForDate(today);
+        const live = agenda.events
+          .filter((e) => !e.deletedAt && !e.endedAt)
+          .sort((a, b) => new Date(a.startsAt).getTime() - new Date(b.startsAt).getTime());
+        const now = Date.now();
+        const next = live.find((e) => new Date(e.startsAt).getTime() > now);
+        const gapMin = next
+          ? Math.round((new Date(next.startsAt).getTime() - now) / 60_000)
+          : Math.max(0, (profile.workEndHour - hour) * 60);
+
+        const openTasks = agenda.tasks.filter((task) => !task.deletedAt && !task.isDone);
+        if (gapMin >= 45 && openTasks.length > 0) {
+          const nextLabel = next
+            ? `${new Date(next.startsAt).toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit' })} ${next.title}`
+            : null;
+          const body = nextLabel
+            ? t('notify.freedBeforeNext', { minutes: gapMin, next: nextLabel, task: openTasks[0]!.title })
+            : t('notify.freedOpen', { minutes: gapMin, task: openTasks[0]!.title });
+          await scheduleReminder({
+            rowId: `proactive-${slot}`,
+            title: t('notify.freedTitle'),
+            body,
+            at: new Date(now + 2000),
+          });
+          await setLastRun(today, slot);
+          return BackgroundFetch.BackgroundFetchResult.NewData;
+        }
       }
     }
 

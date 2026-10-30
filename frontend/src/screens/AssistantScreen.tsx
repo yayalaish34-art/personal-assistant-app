@@ -20,9 +20,9 @@ import type { NativeStackNavigationProp } from '@react-navigation/native-stack';
 import * as Haptics from 'expo-haptics';
 import { LinearGradient } from 'expo-linear-gradient';
 import Svg, { Circle, Path } from 'react-native-svg';
-import { X, Mic, Undo2, RotateCcw, Send, Sparkles, CheckCheck, Check, Clock, ArrowUpRight, ArrowDownLeft, Sun, Cloud, CloudRain, CloudLightning, Snowflake, CloudSun, Wind, CloudFog, TrendingUp, TrendingDown, Minus, Star, CalendarDays, ListTodo, ShoppingCart, Wallet, MapPin, Navigation, CalendarClock } from 'lucide-react-native';
+import { X, Mic, Undo2, RotateCcw, Send, CheckCheck, Check, Clock, ArrowUpRight, ArrowDownLeft, Sun, Cloud, CloudRain, CloudLightning, Snowflake, CloudSun, Wind, CloudFog, TrendingUp, TrendingDown, Minus, Star, CalendarDays, ListTodo, ShoppingCart, Wallet, MapPin, Navigation, CalendarClock } from 'lucide-react-native';
 
-import { Glow, LitDisc } from '../components/ui';
+import { Glow } from '../components/ui';
 import { api } from '../lib/api';
 import { useVoiceSession, type Line } from '../lib/useVoiceSession';
 import type { RootStackParamList } from '../navigation';
@@ -465,9 +465,7 @@ export default function AssistantScreen() {
    */
   const spark = (
     <PopIn from={0.5}>
-      <LitDisc colors={VOICE.accentGradient} style={styles.spark}>
-        <Sparkles color={NIGHT.glyph} size={17} strokeWidth={2.2} />
-      </LitDisc>
+      <Image source={require('../../assets/planzi-mark.png')} style={styles.spark} />
     </PopIn>
   );
 
@@ -1115,7 +1113,16 @@ const styles = themed(() =>
      * than the disc's own last stop, so every line of hers is signed by the thing
      * you talk to.
      */
-    spark: { shadowColor: VOICE.accentGradient[1] },
+    spark: {
+      width: 34,
+      height: 34,
+      borderRadius: 17,
+      shadowColor: VOICE.accentGradient[1],
+      shadowOpacity: 0.35,
+      shadowRadius: 8,
+      shadowOffset: { width: 0, height: 2 },
+      elevation: 4,
+    },
     herBubble: {
       ...edge,
       backgroundColor: VOICE.her,

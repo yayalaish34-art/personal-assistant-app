@@ -33,6 +33,13 @@ import { t, isRTL, alignStart, locale } from '../lib/i18n';
 export const BUFFERS = [0, 10, 15, 30];
 
 /**
+ * Offered morning prep times, in minutes. The spread covers the three real
+ * mornings: a quick shower-and-go (15), a standard "coffee and dress" (30),
+ * and a slower one that includes breakfast or exercise (60/90).
+ */
+export const PREP_TIMES = [15, 30, 45, 60, 90] as const;
+
+/**
  * Offered lead times for task reminders, in minutes. 0 is "exactly at the due
  * minute"; the rest range from a nudge to a full day's notice, so a task can
  * fire the moment it is due or well before, depending on the person.
@@ -256,6 +263,31 @@ function taskLeadLabel(minutes: number): string {
   if (minutes >= 1440) return t('onboarding.reminder.days', { count: Math.round(minutes / 1440) });
   if (minutes >= 60) return t('onboarding.reminder.hours', { count: Math.round(minutes / 60) });
   return t('onboarding.reminder.minutes', { count: minutes });
+}
+
+/** How long it takes the user to get ready in the morning. */
+export function PrepTimePicker({
+  value,
+  onChange,
+  surface = NIGHT.card,
+}: {
+  value: number;
+  onChange: (minutes: number) => void;
+  surface?: string;
+}) {
+  return (
+    <View style={styles.chipWrap}>
+      {PREP_TIMES.map((minutes) => (
+        <Chip
+          key={minutes}
+          label={t('onboarding.prepTime.minutes', { count: minutes })}
+          active={minutes === value}
+          onPress={() => onChange(minutes)}
+          surface={surface}
+        />
+      ))}
+    </View>
+  );
 }
 
 /** How much room to leave between one thing and the next. */

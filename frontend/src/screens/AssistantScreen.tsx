@@ -9,6 +9,8 @@ import {
   Easing,
   Image,
   ActivityIndicator,
+  KeyboardAvoidingView,
+  Platform,
   useWindowDimensions,
   type StyleProp,
   type TextStyle,
@@ -841,7 +843,14 @@ export default function AssistantScreen() {
   };
 
   return (
-    <View
+    <KeyboardAvoidingView
+      // The composer sits at the bottom of the screen; without this, the
+      // system keyboard slides up and covers the input and the send button,
+      // so the user can neither see what they're typing nor press send. On
+      // iOS the whole view lifts by the keyboard's height; on Android the
+      // insets adjust automatically from the window soft-input mode and no
+      // behavior is needed.
+      behavior={Platform.OS === 'ios' ? 'padding' : undefined}
       style={[
         styles.root,
         {
@@ -1059,7 +1068,7 @@ export default function AssistantScreen() {
           </Pressable>
         </PopIn>
       ) : null}
-    </View>
+    </KeyboardAvoidingView>
   );
 }
 

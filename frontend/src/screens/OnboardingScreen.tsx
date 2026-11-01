@@ -28,6 +28,13 @@ import {
   Pin,
   Globe,
   Navigation,
+  Battery,
+  Sun,
+  Users,
+  ListChecks,
+  Wallet,
+  House,
+  Car,
 } from 'lucide-react-native';
 
 import { LinearGradient } from 'expo-linear-gradient';
@@ -124,14 +131,21 @@ const STEPS: StepId[] = [
   'work',
   'workDays',
   'focusPeriod',
+  'energyLow',
   'primaryGoal',
+  'moneyMood',
+  'planningDensity',
   'sleep',
   'sleepQuality',
+  'weekendRhythm',
   'assistanceStyle',
+  'socialBattery',
   'prepTime',
   'buffer',
   'reminder',
+  'commute',
   'types',
+  'household',
   'fixed',
   'permissions',
 ];
@@ -164,6 +178,16 @@ const STEP_SKIN: Record<StepId, { tile: AuraKey; Icon: typeof Mic }> = {
   primaryGoal: { tile: 'yellow', Icon: Sparkles },
   sleepQuality: { tile: 'blue', Icon: Moon },
   assistanceStyle: { tile: 'green', Icon: Mic },
+  // The seven deeper questions. Each lives in a hue that keeps the chapter
+  // row varied — see PersonalizationFields.tsx for the tile that lights up
+  // under the chips once an answer is picked.
+  energyLow: { tile: 'yellow', Icon: Battery },
+  weekendRhythm: { tile: 'yellow', Icon: Sun },
+  socialBattery: { tile: 'blue', Icon: Users },
+  planningDensity: { tile: 'yellow', Icon: ListChecks },
+  moneyMood: { tile: 'green', Icon: Wallet },
+  household: { tile: 'yellow', Icon: House },
+  commute: { tile: 'blue', Icon: Car },
 };
 
 /** The three things worth knowing before answering anything. */

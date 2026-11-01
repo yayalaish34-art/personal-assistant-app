@@ -87,6 +87,20 @@ export type Profile = {
   primaryGoal: 'balance' | 'productivity' | 'lessStress' | 'health' | 'finances';
   sleepQuality: 'rested' | 'tired' | 'irregular' | 'unspecified';
   assistanceStyle: 'brief' | 'guided' | 'proactive';
+  /** When the day gets heavy. Lets her avoid loading demanding work into that window. */
+  energyLow: 'lateMorning' | 'afternoon' | 'afterDinner' | 'steady' | 'unspecified';
+  /** What the weekend is actually for. Shapes weekend suggestions. */
+  weekendRhythm: 'rest' | 'catchUp' | 'family' | 'adventure' | 'mixed' | 'unspecified';
+  /** People time: fills them up, or drains them. Shapes meeting pacing. */
+  socialBattery: 'fills' | 'drains' | 'depends' | 'balanced' | 'unspecified';
+  /** How dense a good day feels. Controls how many suggestions she makes at once. */
+  planningDensity: 'theHour' | 'looseAnchors' | 'shortList' | 'justNext' | 'unspecified';
+  /** What they want to see first when they open finances. */
+  moneyMood: 'safeToSpend' | 'whatIsComing' | 'fullPicture' | 'noSurprises' | 'unspecified';
+  /** Who else counts in a day — multi-select by key. */
+  household: Array<'partner' | 'kids' | 'parents' | 'roommates' | 'justMe'>;
+  /** Primary way of getting around. Improves travel-time math. */
+  commute: 'car' | 'transit' | 'walk' | 'mix' | 'unspecified';
 };
 
 export const defaultProfile: Profile = {
@@ -111,6 +125,16 @@ export const defaultProfile: Profile = {
   // Someone who prefers quieter nudges will pick 'brief' explicitly and that
   // save keeps precedence over this default.
   assistanceStyle: 'proactive',
+  // The eight deeper questions default to 'unspecified' / empty so a skipped
+  // onboarding leaves the agent with no false signal — a wrong answer here
+  // changes her behavior in ways a missing one does not.
+  energyLow: 'unspecified',
+  weekendRhythm: 'unspecified',
+  socialBattery: 'unspecified',
+  planningDensity: 'unspecified',
+  moneyMood: 'unspecified',
+  household: [],
+  commute: 'unspecified',
 };
 
 async function getJSON<T>(key: string, fallback: T): Promise<T> {

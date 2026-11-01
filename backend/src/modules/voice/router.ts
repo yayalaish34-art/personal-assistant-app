@@ -6,7 +6,7 @@ import { voiceTurnLimiter, voiceMediaLimiter } from '../../middleware/rateLimit.
 import { ValidationError } from '../../lib/errors.js';
 import { config } from '../../config.js';
 import { logger } from '../../lib/logger.js';
-import { runVoiceTurn, snapshotSchema, profileSchema, didNotCatchThat } from './agent.js';
+import { runVoiceTurn, snapshotSchema, profileSchema, didNotCatchThat, computeOpportunityNudge } from './agent.js';
 import { synthesizeStream, prewarmSpeech, servePrewarmed, isSpeechConfigured, MAX_SPEECH_CHARS } from './tts.js';
 
 /**
@@ -170,6 +170,57 @@ voiceRouter.post(
       canSpeak: isSpeechConfigured(),
       ...(speakToken ? { speakToken } : {}),
     });
+  }),
+);
+
+// ── POST /voice/opportunity-nudge ───────────────────────────────────────────
+//
+// The push-notification half of "stop at the mall on the way". The device's
+// background job polls every so often; when a free window ≥ 45 min opens up,
+// it posts the current snapshot here. We cross-reference GPS + agenda + tasks
+// + the local places index and either return a pre-rendered body for the
+// push (`shouldNudge: true`) or signal the client to fall back to its plain
+// "N minutes free" message.
+//
+// Shares the same rate limiter as /voice/turn: the device fires at most once
+// an hour, so we treat it as part of the voice budget.
+const opportunityBody = z.object({
+  language: languageCode.default('he'),
+  timezone: z.string().min(1).max(64).default('UTC'),
+  now: z.string().datetime({ offset: true }).optional(),
+  snapshot: snapshotSchema.default({
+    tasks: [],
+    events: [],
+    shopping: [],
+    money: [],
+    debts: [],
+    budgets: {},
+  }),
+  profile: profileSchema.optional(),
+  location: z.object({
+    latitude: z.number().finite(),
+    longitude: z.number().finite(),
+    city: z.string().max(120).optional(),
+    country: z.string().max(120).optional(),
+  }),
+});
+
+voiceRouter.post(
+  '/voice/opportunity-nudge',
+  voiceTurnLimiter,
+  asyncHandler(async (req, res) => {
+    const body = parseBody(opportunityBody, req);
+    const nudge = await computeOpportunityNudge({
+      text: '',
+      language: body.language,
+      timezone: body.timezone,
+      now: body.now ? new Date(body.now) : new Date(),
+      history: [],
+      snapshot: body.snapshot,
+      profile: body.profile,
+      location: body.location,
+    });
+    res.json(nudge);
   }),
 );
 

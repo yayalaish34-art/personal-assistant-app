@@ -1,4 +1,6 @@
 import { logger } from '../../lib/logger.js';
+import { distanceKm as geoDistanceKm, type Point as GeoPoint } from './travel-geo.js';
+import { findNearby } from './places-index.js';
 
 /**
  * Can someone actually get from one meeting to the next?
@@ -40,10 +42,7 @@ const PER_ATTEMPT_TIMEOUT_MS = 1_500;
 /** Names repeat constantly across a snapshot; each one is looked up once. */
 const cache = new Map<string, Point | null>();
 
-export interface Point {
-  latitude: number;
-  longitude: number;
-}
+export type Point = GeoPoint;
 
 export interface TravelLeg {
   fromTitle: string;
@@ -151,17 +150,8 @@ async function tryNominatim(name: string): Promise<Point | null> {
   }
 }
 
-/** Great-circle distance in kilometres. */
-export function distanceKm(a: Point, b: Point): number {
-  const R = 6371;
-  const rad = (d: number) => (d * Math.PI) / 180;
-  const dLat = rad(b.latitude - a.latitude);
-  const dLon = rad(b.longitude - a.longitude);
-  const s =
-    Math.sin(dLat / 2) ** 2 +
-    Math.cos(rad(a.latitude)) * Math.cos(rad(b.latitude)) * Math.sin(dLon / 2) ** 2;
-  return 2 * R * Math.asin(Math.min(1, Math.sqrt(s)));
-}
+/** Great-circle distance in kilometres. Re-export for existing callers. */
+export const distanceKm = geoDistanceKm;
 
 /**
  * The least time the journey could take, in minutes.
@@ -242,25 +232,18 @@ export async function findImpossibleLeg(
   return null;
 }
 
-// ── Nearby places via OpenStreetMap Overpass ────────────────────────────────
-
-const OVERPASS_URL = 'https://overpass-api.de/api/interpreter';
-const OVERPASS_TIMEOUT_MS = 6_000;
-
-const CATEGORY_TAGS: Record<string, string[]> = {
-  shopping:     ['"shop"="mall"', '"shop"="department_store"', '"shop"="supermarket"'],
-  supermarket:  ['"shop"="supermarket"'],
-  mall:         ['"shop"="mall"', '"shop"="department_store"'],
-  restaurant:   ['"amenity"="restaurant"'],
-  cafe:         ['"amenity"="cafe"'],
-  pharmacy:     ['"amenity"="pharmacy"'],
-  gas_station:  ['"amenity"="fuel"'],
-  gym:          ['"leisure"="fitness_centre"'],
-  park:         ['"leisure"="park"'],
-  hospital:     ['"amenity"="hospital"'],
-  bank:         ['"amenity"="bank"'],
-  hotel:        ['"tourism"="hotel"'],
-};
+// ── Nearby places via the local OSM snapshot ────────────────────────────────
+//
+// We used to ask the public Overpass API at voice-turn time. In practice the
+// endpoint is at capacity more often than not — ~90% of lookups came back as
+// HTTP 502 or a connect timeout, so the agent "could not find any malls"
+// most of the time even though the data existed. The fix was to lift the
+// network out of the hot path entirely: a one-shot script dumps every shop,
+// pharmacy, café and restaurant in Israel into `backend/data/places-il.json`
+// at build time, and runtime does a plain haversine over that array.
+//
+// See `scripts/dump-il-places.ts` to refresh the snapshot, and
+// `places-index.ts` for the lookup itself.
 
 export interface NearbyPlace {
   name: string;
@@ -276,67 +259,10 @@ export async function searchNearby(
   radiusMeters = 3000,
   limit = 8,
 ): Promise<NearbyPlace[]> {
-  const tags = CATEGORY_TAGS[category];
-  if (!tags) return [];
-
-  const unions = tags
-    .flatMap((tag) => [
-      `node[${tag}](around:${radiusMeters},${center.latitude},${center.longitude});`,
-      `way[${tag}](around:${radiusMeters},${center.latitude},${center.longitude});`,
-    ])
-    .join('\n');
-
-  const query = `[out:json][timeout:5];(\n${unions}\n);out center ${limit * 2};`;
-
-  const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), OVERPASS_TIMEOUT_MS);
   try {
-    const res = await fetch(OVERPASS_URL, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-      body: `data=${encodeURIComponent(query)}`,
-      signal: controller.signal,
-    });
-    if (!res.ok) return [];
-
-    const body = (await res.json()) as {
-      elements?: Array<{
-        tags?: Record<string, string>;
-        lat?: number;
-        lon?: number;
-        center?: { lat: number; lon: number };
-      }>;
-    };
-
-    const seen = new Set<string>();
-    const results: NearbyPlace[] = [];
-
-    for (const el of body.elements ?? []) {
-      const name = el.tags?.name;
-      if (!name) continue;
-      const key = name.toLowerCase();
-      if (seen.has(key)) continue;
-      seen.add(key);
-
-      const lat = el.lat ?? el.center?.lat;
-      const lon = el.lon ?? el.center?.lon;
-      if (lat == null || lon == null) continue;
-
-      results.push({
-        name,
-        category,
-        distanceKm: Math.round(distanceKm(center, { latitude: lat, longitude: lon }) * 10) / 10,
-        latitude: lat,
-        longitude: lon,
-      });
-    }
-
-    results.sort((a, b) => a.distanceKm - b.distanceKm);
-    return results.slice(0, limit);
+    return findNearby(center, category, radiusMeters, limit);
   } catch (err) {
-    logger.warn({ err, category }, 'nearby search failed');
+    logger.warn({ err: String(err), category }, 'nearby search failed');
     return [];
-  } finally {
-    clearTimeout(timer);
   }
 }

@@ -7,6 +7,7 @@ import { logger } from '../../lib/logger.js';
 import { reviewSchedule, type KnownEvent, type ProposedEvent } from './schedule.js';
 import { findTime, today, type AvailabilityEvent } from './availability.js';
 import { geocode, distanceKm, travelMinutes, searchNearby } from './travel.js';
+import { classifyErrand } from './errand-classifier.js';
 
 // The voice assistant's turn: what she heard in, what she says back plus the
 // changes to apply.
@@ -132,6 +133,15 @@ export const profileSchema = z.object({
   primaryGoal: z.enum(['balance', 'productivity', 'lessStress', 'health', 'finances']).optional(),
   sleepQuality: z.enum(['rested', 'tired', 'irregular', 'unspecified']).optional(),
   assistanceStyle: z.enum(['brief', 'guided', 'proactive']).optional(),
+  // The eight deeper personalization answers. All optional; 'unspecified'
+  // means the question was skipped and the agent should not infer a bias.
+  energyLow: z.enum(['lateMorning', 'afternoon', 'afterDinner', 'steady', 'unspecified']).optional(),
+  weekendRhythm: z.enum(['rest', 'catchUp', 'family', 'adventure', 'mixed', 'unspecified']).optional(),
+  socialBattery: z.enum(['fills', 'drains', 'depends', 'balanced', 'unspecified']).optional(),
+  planningDensity: z.enum(['theHour', 'looseAnchors', 'shortList', 'justNext', 'unspecified']).optional(),
+  moneyMood: z.enum(['safeToSpend', 'whatIsComing', 'fullPicture', 'noSurprises', 'unspecified']).optional(),
+  household: z.array(z.enum(['partner', 'kids', 'parents', 'roommates', 'justMe'])).max(5).optional(),
+  commute: z.enum(['car', 'transit', 'walk', 'mix', 'unspecified']).optional(),
 });
 
 export type Profile = z.infer<typeof profileSchema>;
@@ -1688,6 +1698,29 @@ function describeProfile(p: Profile): string {
   if (p.primaryGoal) lines.push(`- Main planning goal: ${p.primaryGoal}. Tailor suggestions to this goal.`);
   if (p.sleepQuality) lines.push(`- Self-reported sleep: ${p.sleepQuality}. Protect their chosen sleep window; offer practical routine suggestions when relevant, without diagnosis or promises.`);
   if (p.assistanceStyle) lines.push(`- Preferred help style: ${p.assistanceStyle}. Brief = direct answers; guided = one step or question at a time; proactive = one relevant optional suggestion, never unsolicited changes.`);
+  // ── Eight deeper personalisation signals. Each becomes one actionable line
+  //    in the system prompt so a chosen answer actually changes behaviour.
+  if (p.energyLow && p.energyLow !== 'unspecified') {
+    lines.push(`- Low-energy window: ${p.energyLow}. Avoid loading demanding or novel work into this window; prefer a reset, a light task, or a short break there.`);
+  }
+  if (p.weekendRhythm && p.weekendRhythm !== 'unspecified') {
+    lines.push(`- Weekend rhythm: ${p.weekendRhythm}. Keep weekend suggestions in that character — e.g. 'rest' means do not spill weekday leftovers into Saturday; 'adventure' means outings get priority and check the weather first.`);
+  }
+  if (p.socialBattery && p.socialBattery !== 'unspecified') {
+    lines.push(`- Social battery: ${p.socialBattery}. 'drains' = leave ≥20 min between meetings and offer a quiet window after a packed day; 'fills' = stacking meetings is fine; 'depends' = check with them before adding a new meeting.`);
+  }
+  if (p.planningDensity && p.planningDensity !== 'unspecified') {
+    lines.push(`- Planning density: ${p.planningDensity}. Match suggestion volume per day — 'justNext' = one next thing; 'shortList' = 2–3; 'looseAnchors' = 3–4 anchors; 'theHour' = schedule the full day.`);
+  }
+  if (p.moneyMood && p.moneyMood !== 'unspecified') {
+    lines.push(`- Finance view preference: ${p.moneyMood}. Lead with this on money questions — 'safeToSpend' = one number first; 'whatIsComing' = upcoming debits first; 'fullPicture' = full picture up front; 'noSurprises' = stay quiet except for flags before overruns or big charges.`);
+  }
+  if (p.household && p.household.length > 0) {
+    lines.push(`- Household: ${p.household.join(', ')}. Factor these people into schedules — pickups, meals, hosting, shared errands. Before proposing shared tasks or outings, note that another person's availability may matter.`);
+  }
+  if (p.commute && p.commute !== 'unspecified') {
+    lines.push(`- Primary transport: ${p.commute}. Use this when estimating travel — 'car' = add parking; 'transit' = add wait and walk-to-stop time, so leave-by is earlier; 'walk' = prefer nearby errands and flag anything beyond ~20 min; 'mix' = ask the first time.`);
+  }
   lines.push('- The app detects arrival at meeting locations automatically (geofencing). If an event has a location, the user gets a heads-up on arrival. Encourage adding locations to events.');
   lines.push(`- Notifications respect the sleep window (${hour(p.sleepStartHour)}–${hour(p.sleepEndHour)}). Anything scheduled during sleep is pushed to wake time.`);
   return lines.join('\n');
@@ -2764,14 +2797,56 @@ export async function answerSuggestOpportunity(
   });
   const windowText = `until ${clock.format(new Date(currentWindow.endsAt))}, about ${currentWindow.minutes} minutes`;
 
+  // ── Task-based errand opportunity (NEW) ────────────────────────────────
+  // Walk the open tasks for errand patterns ("gift for Ronit", "pick up
+  // prescription", "haircut"). If a task maps to a category we have within
+  // five kilometres and the window fits round-trip + a flat in-store slot,
+  // offer that specific errand. This is the piece the stakeholder flagged
+  // as missing — the user's shopping list is for groceries; a gift is a
+  // task, not a list item, and the old code never saw it.
+  const here = { latitude: input.location.latitude, longitude: input.location.longitude };
+  const errandMinWindow = 25;
+  if (currentWindow.minutes >= errandMinWindow) {
+    const openTasks = input.snapshot.tasks.filter((t) => !t.isDone);
+    for (const task of openTasks) {
+      const match = classifyErrand(task.title);
+      if (!match) continue;
+      const [place] = await searchNearby(here, match.category, 5000);
+      if (!place) continue;
+      const roundTripMin = travelMinutes(place.distanceKm) * 2;
+      // One task, one quick stop. Shorter than the grocery-run budget — a
+      // user grabbing a gift or picking up a prescription isn't filling a
+      // cart.
+      const inStoreMin = 10;
+      const buffer = input.profile?.bufferMinutes ?? 15;
+      const totalMin = roundTripMin + inStoreMin;
+      if (totalMin + buffer > currentWindow.minutes) continue;
+      return JSON.stringify({
+        ok: true,
+        fit: {
+          kind: 'errand_detour',
+          window: windowText,
+          windowMinutes: currentWindow.minutes,
+          nextEvent: currentWindow.nextTitle ?? null,
+          place: { name: place.name, distanceKm: Math.round(place.distanceKm * 10) / 10 },
+          task: { id: task.id, title: task.title },
+          errandType: match.keyword,
+          estimatedMinutes: totalMin,
+        },
+        instruction:
+          'Make one short, specific offer naming the place, roughly how long it will take, and the task. Example shape: "You have about 55 min before Eliran; Dizengoff Center is 3 min away — want to pick up the gift for Ronit now?" Do not list other tasks.',
+      });
+    }
+  }
+
   // Shopping that's a short detour from where they stand is the strongest fit:
   // one place, many items, no scheduling.
   const openShopping = input.snapshot.shopping.filter((s) => !s.isBought);
   if (openShopping.length > 0 && currentWindow.minutes >= 25) {
-    const here = { latitude: input.location.latitude, longitude: input.location.longitude };
     // Grocery first, then general shopping — matches how the list is written.
-    const market = (await searchNearby(here, 'supermarket', 2500))[0]
-      ?? (await searchNearby(here, 'shopping', 2500))[0];
+    // Radius widened to 5 km to match a real "5-minute drive" budget.
+    const market = (await searchNearby(here, 'supermarket', 5000))[0]
+      ?? (await searchNearby(here, 'shopping', 5000))[0];
     if (market) {
       const roundTripMin = travelMinutes(market.distanceKm) * 2;
       const buffer = input.profile?.bufferMinutes ?? 15;
@@ -2834,6 +2909,143 @@ export async function answerSuggestOpportunity(
     instruction:
       'No concrete errand fits. Say the window is clear and offer two options briefly: get ahead on something, or just take a breather. Do not invent an errand.',
   });
+}
+
+/**
+ * The payload the mobile client uses to render a proactive push notification.
+ * `shouldNudge` is false whenever the backend has nothing specific worth
+ * interrupting the user for — the client should then fall back to a plain
+ * "you have N min open" message, not fabricate a place.
+ */
+export interface OpportunityNudge {
+  shouldNudge: boolean;
+  windowMinutes: number;
+  nextEvent: string | null;
+  title: string;
+  body: string;
+  /** The task the nudge was built around, so a tap can open it. */
+  taskId?: string;
+  placeName?: string;
+  distanceKm?: number;
+  errandType?: string;
+}
+
+/** Minutes a free window must span before the backend will ever nudge. */
+const NUDGE_MIN_WINDOW = 45;
+
+/**
+ * The mobile-side half of the "stop at the mall on the way" moment.
+ *
+ * The device's background job polls every so often, and when a free window
+ * ≥ 45 min appears, it hits this function with the current GPS, agenda and
+ * tasks. We run the same errand/shopping detection as the voice turn and,
+ * if something concrete lines up, hand back a pre-rendered push body in the
+ * user's language. The device just displays it.
+ */
+export async function computeOpportunityNudge(input: VoiceTurnInput): Promise<OpportunityNudge> {
+  if (!input.location) {
+    return { shouldNudge: false, windowMinutes: 0, nextEvent: null, title: '', body: '' };
+  }
+
+  const zone = input.timezone;
+  const nowMs = input.now.getTime();
+  const fromDate = today(zone, nowMs);
+
+  const events: AvailabilityEvent[] = input.snapshot.events.map((e) => ({
+    title: e.title,
+    startsAt: e.startsAt,
+    endsAt: e.endsAt ?? null,
+    location: e.location ?? null,
+  }));
+  const { days } = await findTime({
+    fromDate,
+    events,
+    timeZone: zone,
+    now: nowMs,
+    prefs: input.profile
+      ? {
+          sleepStartHour: input.profile.sleepStartHour,
+          sleepEndHour: input.profile.sleepEndHour,
+          bufferMinutes: input.profile.bufferMinutes,
+        }
+      : undefined,
+    wantDays: 1,
+    searchDays: 1,
+    currentPosition: { latitude: input.location.latitude, longitude: input.location.longitude },
+  });
+
+  const windows = days[0]?.windows ?? [];
+  const windowNow = windows.find(
+    (w) => new Date(w.endsAt).getTime() > nowMs && w.minutes >= NUDGE_MIN_WINDOW,
+  );
+  if (!windowNow) {
+    return { shouldNudge: false, windowMinutes: 0, nextEvent: null, title: '', body: '' };
+  }
+
+  const nextEvent = windowNow.nextTitle ?? null;
+  const lang: 'he' | 'en' = input.language === 'he' ? 'he' : 'en';
+  const here = { latitude: input.location.latitude, longitude: input.location.longitude };
+  const buffer = input.profile?.bufferMinutes ?? 15;
+
+  // 1) An errand-flavoured task with a place within 5 km.
+  const openTasks = input.snapshot.tasks.filter((t) => !t.isDone);
+  for (const task of openTasks) {
+    const match = classifyErrand(task.title);
+    if (!match) continue;
+    const [place] = await searchNearby(here, match.category, 5000);
+    if (!place) continue;
+    const roundTripMin = travelMinutes(place.distanceKm) * 2;
+    const totalMin = roundTripMin + 10; // one task, quick stop
+    if (totalMin + buffer > windowNow.minutes) continue;
+    const km = Math.round(place.distanceKm * 10) / 10;
+    const title = lang === 'he' ? 'יש לך חלון פנוי' : 'A window just opened';
+    const body = lang === 'he'
+      ? `${windowNow.minutes} דק פנויות${nextEvent ? ` לפני ${nextEvent}` : ''} — ${place.name} ${km} ק"מ ממך, רוצה לקפוץ ל"${task.title}"?`
+      : `${windowNow.minutes} min free${nextEvent ? ` before ${nextEvent}` : ''} — ${place.name} is ${km} km away. Want to stop for "${task.title}"?`;
+    return {
+      shouldNudge: true,
+      windowMinutes: windowNow.minutes,
+      nextEvent,
+      title,
+      body,
+      taskId: task.id,
+      placeName: place.name,
+      distanceKm: km,
+      errandType: match.keyword,
+    };
+  }
+
+  // 2) Groceries on the shopping list.
+  const openShopping = input.snapshot.shopping.filter((s) => !s.isBought);
+  if (openShopping.length > 0) {
+    const market = (await searchNearby(here, 'supermarket', 5000))[0]
+      ?? (await searchNearby(here, 'shopping', 5000))[0];
+    if (market) {
+      const roundTripMin = travelMinutes(market.distanceKm) * 2;
+      const inStoreMin = Math.max(10, Math.min(35, openShopping.length * 3));
+      const totalMin = roundTripMin + inStoreMin;
+      if (totalMin + buffer <= windowNow.minutes) {
+        const km = Math.round(market.distanceKm * 10) / 10;
+        const title = lang === 'he' ? 'יש לך חלון פנוי' : 'A window just opened';
+        const body = lang === 'he'
+          ? `${windowNow.minutes} דק פנויות${nextEvent ? ` לפני ${nextEvent}` : ''} — ${market.name} ${km} ק"מ ממך, ${openShopping.length} פריטים מהרשימה. לקפוץ עכשיו?`
+          : `${windowNow.minutes} min free${nextEvent ? ` before ${nextEvent}` : ''} — ${market.name} is ${km} km away, ${openShopping.length} items on the list. Go now?`;
+        return {
+          shouldNudge: true,
+          windowMinutes: windowNow.minutes,
+          nextEvent,
+          title,
+          body,
+          placeName: market.name,
+          distanceKm: km,
+          errandType: 'grocery',
+        };
+      }
+    }
+  }
+
+  // Nothing specific — let the client use its plain "you have N min" fallback.
+  return { shouldNudge: false, windowMinutes: windowNow.minutes, nextEvent, title: '', body: '' };
 }
 
 /**

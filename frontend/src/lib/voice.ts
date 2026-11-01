@@ -28,6 +28,7 @@ const API_BASE = (process.env.EXPO_PUBLIC_API_URL || 'https://personal-assistant
 const TRANSCRIBE_URL = `${API_BASE}/transcribe`;
 const TURN_URL = `${API_BASE}/voice/turn`;
 const SPEAK_URL = `${API_BASE}/voice/speak`;
+const OPPORTUNITY_NUDGE_URL = `${API_BASE}/voice/opportunity-nudge`;
 const IMAGE_URL = `${API_BASE}/image`;
 
 // The user picks their language in onboarding. That language is sent as a hint
@@ -697,6 +698,52 @@ export async function voiceTurn(
   }
 
   return (await res.json()) as TurnResult;
+}
+
+/** What the server returns to the background job that polls for a free-window nudge. */
+export interface OpportunityNudgeResult {
+  shouldNudge: boolean;
+  windowMinutes: number;
+  nextEvent: string | null;
+  title: string;
+  body: string;
+  taskId?: string;
+  placeName?: string;
+  distanceKm?: number;
+  errandType?: string;
+}
+
+/**
+ * Ask the server whether this is a "stop at the mall on the way" moment.
+ *
+ * Called from the background fetch task when a ≥45-min window opens up. The
+ * backend cross-references the snapshot + GPS + the local places index and
+ * either hands back a pre-rendered push body (`shouldNudge: true`) or signals
+ * that nothing concrete fits — in which case the caller falls back to its own
+ * plain task-only nudge.
+ */
+export async function fetchOpportunityNudge(): Promise<OpportunityNudgeResult | null> {
+  const location = getLocation();
+  if (!location) return null; // no GPS → nothing to say about "near you"
+  const { snapshot, profile } = await buildSnapshotWithProfile();
+  try {
+    const res = await fetch(OPPORTUNITY_NUDGE_URL, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        language: getVoiceLanguage(),
+        timezone: Intl.DateTimeFormat().resolvedOptions().timeZone || 'UTC',
+        now: new Date().toISOString(),
+        snapshot,
+        profile,
+        location,
+      }),
+    });
+    if (!res.ok) return null;
+    return (await res.json()) as OpportunityNudgeResult;
+  } catch {
+    return null; // never let a nudge failure spill out of the background job
+  }
 }
 
 // ── Applying what she decided ───────────────────────────────────────────────

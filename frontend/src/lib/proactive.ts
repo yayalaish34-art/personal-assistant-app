@@ -6,6 +6,7 @@ import { t } from './i18n';
 import { scheduleReminder } from './notifications';
 import { storage, type Profile } from './storage';
 import { estimateTravelMinutes } from './travel';
+import { fetchOpportunityNudge } from './voice';
 
 // Proactive pattern-based notifications.
 //
@@ -228,6 +229,24 @@ TaskManager.defineTask(PROACTIVE_TASK, async () => {
 
         const openTasks = agenda.tasks.filter((task) => !task.deletedAt && !task.isDone);
         if (gapMin >= 45 && openTasks.length > 0) {
+          // First ask the backend whether this is a "stop at the mall on
+          // the way" moment: it joins GPS + the local places index + the
+          // open tasks and either hands back a pre-rendered push body
+          // naming a concrete place, or signals nothing-specific. We only
+          // fall through to the plain "you have N min — task" nudge when
+          // nothing concrete fits.
+          const opp = await fetchOpportunityNudge();
+          if (opp?.shouldNudge) {
+            await scheduleReminder({
+              rowId: `proactive-${slot}`,
+              title: opp.title,
+              body: opp.body,
+              at: new Date(now + 2000),
+            });
+            await setLastRun(today, slot);
+            return BackgroundFetch.BackgroundFetchResult.NewData;
+          }
+
           const nextLabel = next
             ? `${new Date(next.startsAt).toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit' })} ${next.title}`
             : null;

@@ -1,6 +1,11 @@
 node_modules/
 dist/
-data/
+# Ignore the whole data/ directory EXCEPT places-il.json, which is a committed
+# artefact that the runtime index reads at boot. Regenerate with
+# `pnpm tsx scripts/dump-il-places.ts`. (Can't just `!data/places-il.json`
+# while `data/` is excluded — git won't recurse into an excluded directory.)
+data/*
+!data/places-il.json
 *.log
 .DS_Store
 .env

@@ -7,8 +7,11 @@ dist/
 web-build/
 .qa/
 
-# Backend local data
-backend/data/
+# Backend local data — ignore the dir but keep the committed places snapshot.
+# The runtime index reads places-il.json at boot; regenerate it with
+# `pnpm tsx backend/scripts/dump-il-places.ts`.
+backend/data/*
+!backend/data/places-il.json
 
 # Logs & OS
 *.log

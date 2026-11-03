@@ -16,15 +16,17 @@ const DEV_PROVIDER_USER_ID = 'local-dev-user';
  * client id and a device flow. Until that is configured this endpoint lets the
  * app authenticate against the seeded dev account.
  *
- * Mounted ONLY when NODE_ENV !== 'production' (see app.ts) so it cannot become
- * an authentication bypass in a deployed environment.
+ * Mounted ONLY when NODE_ENV === 'development' AND ENABLE_DEV_AUTH === 'true'
+ * (see app.ts) so it cannot become an authentication bypass in a deployed
+ * environment. The same pair is re-checked here: the mount is one line in
+ * app.ts, and a route that hands out tokens should not depend on it alone.
  *
  * Create the account first:  npx tsx --env-file=.env scripts/dev-user.mjs
  */
 devAuthRouter.post(
   '/dev',
   asyncHandler(async (_req, res) => {
-    if (config.NODE_ENV === 'production') {
+    if (config.NODE_ENV !== 'development' || config.ENABLE_DEV_AUTH !== 'true') {
       throw new NotFound('Not found');
     }
 

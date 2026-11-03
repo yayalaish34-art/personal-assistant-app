@@ -1881,6 +1881,10 @@ export function buildSystemPrompt(input: {
     '  below. Everything on it already exists — reading an entry out loud is',
     '  never a reason to create it.',
     '- Ids come only from the agenda below. Never invent one.',
+    '- An entry marked (done) is finished business. Asking for the same thing',
+    '  again means they want it again: call create_task for a new one. Never',
+    '  reopen, rename or re-complete the finished entry — "buy milk" done last',
+    '  week and "buy milk" today are two different errands.',
     '- Act on an entry only when its title is clearly the one the user named.',
     '  If nothing in the agenda matches, say so — never fall back to the closest',
     '  entry, and never delete something they did not ask about.',
@@ -2291,7 +2295,13 @@ export async function runVoiceTurn(input: VoiceTurnInput): Promise<VoiceTurnResu
       'voice turn round completed',
     );
     if (toolCalls.length === 0) {
-      reply = message.content?.trim() ?? '';
+      // An empty closing round must not erase what she already said. It
+      // happens after a tool call — she says "adding that now", acts, and the
+      // narrating round comes back blank — and overwriting left the device
+      // with no line to show and nothing to speak, so a change landed in
+      // total silence.
+      const said = message.content?.trim();
+      if (said) reply = said;
       break;
     }
 

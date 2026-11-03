@@ -100,7 +100,8 @@ Copy `.env.example` to `.env` and fill in the values below. The app will fail fa
 | `OPENAI_API_KEY` | For chat + speech | Required for `POST /chat/message` and `/speech/transcribe` |
 | `EXPO_ACCESS_TOKEN` | For push | Expo account token for sending push notifications |
 | `PORT` | No | Default `5000` |
-| `NODE_ENV` | No | `development` / `production` / `test` |
+| `NODE_ENV` | No | `development` / `production` / `test`. **Defaults to `production`** — an unset environment is a locked one, not an open one. |
+| `ENABLE_DEV_AUTH` | No | `true` mounts `POST /auth/dev`, the OAuth-free sign-in shortcut. Takes `NODE_ENV=development` as well. Never set it in a deployment. |
 | `LOG_LEVEL` | No | Default `info`. Pino log level. |
 
 Generate a strong secret:

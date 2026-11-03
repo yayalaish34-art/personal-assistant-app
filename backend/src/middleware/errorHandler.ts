@@ -72,13 +72,17 @@ export function errorHandler(
   // 3. Unexpected errors
   logger.error({ err, url: req.url, method: req.method }, 'Unhandled error');
 
+  // The detail goes to the log unconditionally and to the caller only where a
+  // developer is the caller. Deployed, this returned the full Prisma error
+  // including a line number from schema.prisma to anyone unauthenticated.
+  const exposeDetail = config.NODE_ENV === 'development' || config.NODE_ENV === 'test';
   const message =
-    config.NODE_ENV === 'production' ? 'Internal error' : (err instanceof Error ? err.message : 'Internal error');
+    exposeDetail && err instanceof Error ? err.message : 'Internal error';
 
   res.status(500).json({
     error: {
       code: 'INTERNAL',
-      message: config.NODE_ENV === 'production' ? 'Internal error' : message,
+      message,
       details: {},
     },
   });

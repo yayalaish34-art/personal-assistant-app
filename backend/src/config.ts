@@ -1,9 +1,17 @@
 import { z } from 'zod';
 
 export const configSchema = z.object({
+  // Defaults to production, not development. A deploy that forgets to set this
+  // used to get the development behaviour — the dev sign-in shortcut mounted
+  // and internal error messages returned to the caller — which is exactly
+  // backwards: the environment nobody configured is the one that must be shut.
   NODE_ENV: z
     .enum(['development', 'test', 'production'])
-    .default('development'),
+    .default('production'),
+  // The dev sign-in shortcut needs saying out loud. It used to ride on
+  // `NODE_ENV !== 'production'`, so it appeared wherever the environment was
+  // merely unset; now it takes a development environment AND this flag.
+  ENABLE_DEV_AUTH: z.enum(['true', 'false']).default('false'),
   PORT: z.coerce.number().default(5000),
   LOG_LEVEL: z
     .enum(['fatal', 'error', 'warn', 'info', 'debug', 'trace'])

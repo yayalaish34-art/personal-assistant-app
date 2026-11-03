@@ -555,7 +555,7 @@ export const he: Dict = {
   'onboarding.buffer.none': 'ברצף',
   'onboarding.buffer.minutes': '{{count}} דק׳',
   'onboarding.reminder.title': 'כמה זמן לפני משימה להזכיר?',
-  'onboarding.reminder.body': 'ההתראה תגיע מראש, לפי הזמן שבחרת.',
+  'onboarding.reminder.body': 'ההמלצה שלנו: 15 דקות לפני — מספיק זמן להתארגן, בלי לשכוח עד שזה מגיע.',
   'onboarding.reminder.onTime': 'בזמן',
   'onboarding.reminder.minutes': '{{count}} דק׳',
   'onboarding.reminder.hours': '{{count}} שע׳',

@@ -571,7 +571,7 @@ export const en = {
   'onboarding.buffer.none': 'Back to back',
   'onboarding.buffer.minutes': '{{count}} min',
   'onboarding.reminder.title': 'How long before a task should I remind you?',
-  'onboarding.reminder.body': 'The notification will fire ahead of the due time, by the lead you choose.',
+  'onboarding.reminder.body': 'We recommend 15 minutes before — enough time to get ready, not so early you forget by the time it comes.',
   'onboarding.reminder.onTime': 'On time',
   'onboarding.reminder.minutes': '{{count}} min',
   'onboarding.reminder.hours': '{{count}} hr',

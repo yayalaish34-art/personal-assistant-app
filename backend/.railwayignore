@@ -4,7 +4,9 @@
 !.env.example
 node_modules/
 dist/
-data/
+# The places snapshot is read at runtime by places-index.ts; the rest of data/ is local-only.
+data/*
+!data/places-il.json
 *.log
 *.m4a
 tests/

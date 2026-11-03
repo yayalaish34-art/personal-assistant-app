@@ -9,7 +9,9 @@ import {
   Easing,
   Image,
   ActivityIndicator,
-  KeyboardAvoidingView,
+  Dimensions,
+  Keyboard,
+  LayoutAnimation,
   Platform,
   useWindowDimensions,
   type StyleProp,
@@ -65,6 +67,49 @@ function whenLabel(iso: string): string {
   return days < 7
     ? d.toLocaleDateString(locale(), { weekday: 'long' })
     : d.toLocaleDateString(locale(), { weekday: 'short', day: 'numeric', month: 'short' });
+}
+
+/**
+ * How far the keyboard reaches up into the page, in points; 0 while it is down.
+ *
+ * Not `KeyboardAvoidingView`: the page is an iOS sheet that starts below the
+ * top of the screen, and KAV compares the sheet's own frame against the
+ * keyboard's screen position, so it fell short by exactly that gap and the
+ * composer stayed under the keys. It also overwrote the page's bottom padding,
+ * which dropped the home-indicator inset. The sheet ends at the bottom of the
+ * screen, so the overlap is simply how far the keyboard's top sits above it.
+ * Android resizes the window itself (soft-input mode), so nothing is done there.
+ */
+function useKeyboardLift(onShow?: () => void): number {
+  const [lift, setLift] = useState(0);
+  const onShowRef = useRef(onShow);
+  onShowRef.current = onShow;
+
+  useEffect(() => {
+    if (Platform.OS !== 'ios') return;
+    const follow = (next: number, duration: number) => {
+      // Move with the keyboard, on its own curve, rather than jumping after it.
+      if (duration > 0) {
+        LayoutAnimation.configureNext({
+          duration,
+          update: { type: LayoutAnimation.Types.keyboard },
+        });
+      }
+      setLift(next);
+    };
+    const change = Keyboard.addListener('keyboardWillChangeFrame', (e) => {
+      const overlap = Math.max(Dimensions.get('screen').height - e.endCoordinates.screenY, 0);
+      follow(overlap, e.duration);
+      if (overlap > 0) onShowRef.current?.();
+    });
+    const hide = Keyboard.addListener('keyboardWillHide', (e) => follow(0, e.duration));
+    return () => {
+      change.remove();
+      hide.remove();
+    };
+  }, []);
+
+  return lift;
 }
 
 /** The clock under a bubble. */
@@ -268,6 +313,10 @@ export default function AssistantScreen() {
   const { width } = useWindowDimensions();
   const [name, setName] = useState<string>('');
   const scrollRef = useRef<ScrollView>(null);
+  // The thread shrinks as the keyboard comes up; keep the newest line in view.
+  const keyboardLift = useKeyboardLift(() =>
+    setTimeout(() => scrollRef.current?.scrollToEnd({ animated: true }), 60),
+  );
 
   useEffect(() => {
     let active = true;
@@ -843,19 +892,15 @@ export default function AssistantScreen() {
   };
 
   return (
-    <KeyboardAvoidingView
-      // The composer sits at the bottom of the screen; without this, the
-      // system keyboard slides up and covers the input and the send button,
-      // so the user can neither see what they're typing nor press send. On
-      // iOS the whole view lifts by the keyboard's height; on Android the
-      // insets adjust automatically from the window soft-input mode and no
-      // behavior is needed.
-      behavior={Platform.OS === 'ios' ? 'padding' : undefined}
+    <View
       style={[
         styles.root,
         {
           paddingTop: Math.max(insets.top, spacing.md) + spacing.xs,
-          paddingBottom: Math.max(insets.bottom, spacing.md),
+          // With the keyboard up the composer rides just above it; the
+          // home-indicator inset is under the keys then and does not count.
+          paddingBottom:
+            keyboardLift > 0 ? keyboardLift + spacing.sm : Math.max(insets.bottom, spacing.md),
           direction: rtl ? 'rtl' : 'ltr',
         },
       ]}
@@ -1068,7 +1113,7 @@ export default function AssistantScreen() {
           </Pressable>
         </PopIn>
       ) : null}
-    </KeyboardAvoidingView>
+    </View>
   );
 }
 

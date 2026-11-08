@@ -144,7 +144,6 @@ export const fa: Dict = {
   'voice.listening': 'در حال گوش دادن',
   'voice.thinking': 'در حال فکر کردن…',
   'voice.speaking': 'در حال صحبت',
-  'voice.tapToStop': 'وقتی تمام شد، ضربه بزن',
   'voice.tapToInterrupt': 'برای قطع صحبتش ضربه بزن',
   'voice.hint': 'فقط حرف بزن — بقیه‌اش با اوست',
   'voice.ended': 'فعلاً کارمان تمام شد',

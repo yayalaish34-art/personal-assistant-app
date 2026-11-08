@@ -144,7 +144,6 @@ export const bn: Dict = {
   'voice.listening': 'শুনছি',
   'voice.thinking': 'ভাবছি…',
   'voice.speaking': 'বলছে',
-  'voice.tapToStop': 'শেষ হলে চাপুন',
   'voice.tapToInterrupt': 'মাঝখানে বলতে চাপুন',
   'voice.hint': 'শুধু বলুন — বাকিটা সে সামলে নেবে',
   'voice.ended': 'আপাতত আমাদের কথা শেষ',

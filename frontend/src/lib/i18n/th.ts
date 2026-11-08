@@ -144,7 +144,6 @@ export const th: Dict = {
   'voice.listening': 'กำลังฟังอยู่',
   'voice.thinking': 'กำลังคิด…',
   'voice.speaking': 'กำลังพูด',
-  'voice.tapToStop': 'แตะเมื่อพูดเสร็จ',
   'voice.tapToInterrupt': 'แตะเพื่อแทรก',
   'voice.hint': 'พูดได้เลย เดี๋ยวเธอจัดการให้',
   'voice.ended': 'พอแค่นี้ก่อนนะ',

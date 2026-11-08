@@ -144,7 +144,6 @@ export const uk: Dict = {
   'voice.listening': 'Слухаю',
   'voice.thinking': 'Думаю…',
   'voice.speaking': 'Говорю',
-  'voice.tapToStop': 'Натисни, коли закінчиш',
   'voice.tapToInterrupt': 'Натисни, щоб перервати',
   'voice.hint': 'Просто говори — решту вона зробить сама',
   'voice.ended': 'На разі все',

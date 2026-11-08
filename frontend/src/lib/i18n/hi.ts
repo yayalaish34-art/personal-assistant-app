@@ -144,7 +144,6 @@ export const hi: Dict = {
   'voice.listening': 'सुन रही हूँ',
   'voice.thinking': 'सोच रही हूँ…',
   'voice.speaking': 'बोल रही हूँ',
-  'voice.tapToStop': 'हो जाए तो टैप करें',
   'voice.tapToInterrupt': 'बीच में बोलने के लिए टैप करें',
   'voice.hint': 'बस बोलिए — बाकी वह संभाल लेगी',
   'voice.ended': 'फ़िलहाल के लिए बस इतना ही',

@@ -144,7 +144,6 @@ export const vi: Dict = {
   'voice.listening': 'Đang nghe',
   'voice.thinking': 'Đang suy nghĩ…',
   'voice.speaking': 'Đang nói',
-  'voice.tapToStop': 'Nhấn khi bạn xong',
   'voice.tapToInterrupt': 'Nhấn để chen vào',
   'voice.hint': 'Cứ nói thôi — cô ấy sẽ lo phần còn lại',
   'voice.ended': 'Tạm thời xong rồi',

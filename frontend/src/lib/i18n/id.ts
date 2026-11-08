@@ -144,7 +144,6 @@ export const id: Dict = {
   'voice.listening': 'Mendengarkan',
   'voice.thinking': 'Berpikir…',
   'voice.speaking': 'Berbicara',
-  'voice.tapToStop': 'Ketuk kalau sudah selesai',
   'voice.tapToInterrupt': 'Ketuk untuk menyela',
   'voice.hint': 'Bicara saja — dia yang mengurus sisanya',
   'voice.ended': 'Sekian dulu untuk sekarang',

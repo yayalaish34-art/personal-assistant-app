@@ -144,7 +144,6 @@ export const ro: Dict = {
   'voice.listening': 'Te ascult',
   'voice.thinking': 'Se gândește…',
   'voice.speaking': 'Vorbește',
-  'voice.tapToStop': 'Apasă când ai terminat',
   'voice.tapToInterrupt': 'Apasă ca să intervii',
   'voice.hint': 'Doar vorbește — se ocupă ea de rest',
   'voice.ended': 'Am terminat pentru moment',

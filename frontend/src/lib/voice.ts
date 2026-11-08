@@ -18,71 +18,20 @@ import { sameItem } from './shopping';
 
 // The voice assistant's side of the wire.
 //
-// The device owns the data, so every turn carries a snapshot of it: what she
-// can see is what is on this phone. The server owns the keys — OpenAI for
-// understanding, ElevenLabs for the voice — and hands back what she said plus
-// the changes to make. Those changes are applied here, locally, by
-// `applyActions`.
+// The conversation itself — hearing, deciding when the user has finished, the
+// model, the voice — runs live between this phone and an ElevenLabs agent (see
+// useVoiceSession). What goes through our server is what cannot live in the
+// app: the token that opens a conversation, the system prompt built from this
+// phone's data, and every tool she calls. The device owns the data, so each of
+// those requests carries a snapshot of it, and the changes that come back are
+// applied here, locally, by `applyActions`.
 
 const API_BASE = (process.env.EXPO_PUBLIC_API_URL || 'https://personal-assistant-api-production-618a.up.railway.app').replace(/\/$/, '');
-const TRANSCRIBE_URL = `${API_BASE}/transcribe`;
-const TURN_URL = `${API_BASE}/voice/turn`;
-const SPEAK_URL = `${API_BASE}/voice/speak`;
+const AGENT_URL = `${API_BASE}/voice/agent`;
 const OPPORTUNITY_NUDGE_URL = `${API_BASE}/voice/opportunity-nudge`;
 const IMAGE_URL = `${API_BASE}/image`;
 
-// The user picks their language in onboarding. That language is sent as a hint
-// to the transcriber to avoid wrong-language guesses from room
-// echo, and to the model so it always answers in the right language.
-
-// ── Speech in ───────────────────────────────────────────────────────────────
-
-/**
- * Uploads a recording and returns what was said.
- *
- * Speech-to-text runs on the server because it needs the OpenAI key. The audio
- * is streamed to the provider and not stored. Multipart is built by hand
- * rather than through a JSON helper: setting Content-Type manually would drop
- * the boundary fetch generates, and the upload would be rejected.
- */
-export async function transcribe(uri: string): Promise<string> {
-  const form = new FormData();
-
-  const blob = await (await fetch(uri)).blob();
-  const name = uri.split('/').pop() || 'recording.m4a';
-  const ext = name.split('.').pop()?.toLowerCase() || 'm4a';
-  form.append('audio', blob, ext === 'webm' ? 'recording.webm' : 'recording.m4a');
-
-  // Send the user's chosen language to avoid guessing random
-  // languages from room echo or short utterances.
-  form.append('language', getVoiceLanguage());
-
-  const res = await fetch(TRANSCRIBE_URL, { method: 'POST', body: form });
-  if (!res.ok) {
-    const body = await res.json().catch(() => null);
-    const message = body?.error?.message ?? `Transcription failed (${res.status})`;
-    // Hearing and thinking are billed to the same account, so an exhausted
-    // quota surfaces here first — and is just as final here as it is there.
-    throw classifyFailure(message, res.status) ?? new Error(message);
-  }
-  const { text } = (await res.json()) as { text: string };
-  return text;
-}
-
-// ── Speech out ──────────────────────────────────────────────────────────────
-
-/**
- * Where to fetch the spoken version of a line.
- *
- * A URL rather than downloaded bytes: the audio player takes a source it can
- * stream, and the device has nowhere useful to put an mp3 anyway.
- */
-export function speechUrl(text: string, token?: string): string {
-  const base = `${SPEAK_URL}?text=${encodeURIComponent(text)}`;
-  return token ? `${base}&token=${encodeURIComponent(token)}` : base;
-}
-
-// ── The turn ────────────────────────────────────────────────────────────────
+// ── The agent's actions ─────────────────────────────────────────────────────
 
 export type VoiceAction = { tool: string; arguments: Record<string, unknown> };
 
@@ -506,7 +455,7 @@ const RESUME_WINDOW_MS = 6 * 60 * 60 * 1000;
 /** How much of the thread is kept on the device. */
 const KEEP_TURNS = 60;
 
-/** How much of it rides along with each request. */
+/** How much of it is handed to a new conversation as what was said before. */
 const SEND_TURNS = 24;
 
 type StoredConversation = { at: number; history: TurnMessage[] };
@@ -542,26 +491,6 @@ export async function clearConversation(): Promise<void> {
   } catch {
     /* nothing to do */
   }
-}
-
-export interface TurnResult {
-  reply: string;
-  actions: VoiceAction[];
-  canSpeak: boolean;
-  /**
-   * Whether there were words in the turn at all.
-   *
-   * False when the audio carried nothing the transcriber would commit to — a
-   * word said too quietly, a cough, a sentence the room swallowed. The reply
-   * is then a request to say it again, and it belongs to no one: it is not an
-   * answer to anything the user said, so it must stay out of the history or
-   * she will read it back as though it were part of the conversation.
-   *
-   * Optional because a server from before this field existed simply omits it,
-   * and a turn with words in it is the safe assumption.
-   */
-  heard?: boolean;
-  speakToken?: string;
 }
 
 /**
@@ -680,39 +609,85 @@ export async function buildSnapshot() {
   };
 }
 
-/** Sends one spoken turn and returns what she says back, plus what to change. */
-export async function voiceTurn(
-  text: string,
-  history: TurnMessage[],
-  userName?: string,
-  prebuiltSnapshot?: { snapshot: Awaited<ReturnType<typeof buildSnapshot>>; profile: unknown },
-): Promise<TurnResult> {
-  const { snapshot, profile } = prebuiltSnapshot ?? await buildSnapshotWithProfile();
+/**
+ * What every request about the conversation says about this phone: its data,
+ * where it is, what time it is there, and who is holding it.
+ *
+ * Rebuilt for each request rather than once per conversation. A tool call
+ * that lands after she has added a task has to see that task, or "move it to
+ * five" would point at nothing.
+ */
+async function deviceContext(userName?: string) {
+  const { snapshot, profile } = await buildSnapshotWithProfile();
   const location = getLocation();
+  return {
+    language: getVoiceLanguage(),
+    timezone: Intl.DateTimeFormat().resolvedOptions().timeZone || 'UTC',
+    now: new Date().toISOString(),
+    ...(userName ? { userName } : {}),
+    snapshot,
+    profile,
+    ...(location ? { location } : {}),
+  };
+}
 
-  const res = await fetch(TURN_URL, {
+async function postAgent<T>(path: string, body: unknown): Promise<T> {
+  const res = await fetch(`${AGENT_URL}${path}`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({
-      text,
-      language: getVoiceLanguage(),
-      timezone: Intl.DateTimeFormat().resolvedOptions().timeZone || 'UTC',
-      now: new Date().toISOString(),
-      ...(userName ? { userName } : {}),
-      history: history.slice(-SEND_TURNS),
-      snapshot,
-      profile,
-      ...(location ? { location } : {}),
-    }),
+    body: JSON.stringify(body),
   });
-
   if (!res.ok) {
-    const body = await res.json().catch(() => null);
-    const message = body?.error?.message ?? `The assistant is unavailable (${res.status})`;
+    const failure = await res.json().catch(() => null);
+    const message = failure?.error?.message ?? `The assistant is unavailable (${res.status})`;
     throw classifyFailure(message, res.status) ?? new Error(message);
   }
+  return (await res.json()) as T;
+}
 
-  return (await res.json()) as TurnResult;
+export interface AgentSession {
+  /** Opens one WebRTC conversation with the agent; good for that one only. */
+  conversationToken: string;
+  /** The system prompt for this conversation, built from this phone's data. */
+  prompt: string;
+  /** Every tool she may call, each of which the session must answer. */
+  tools: string[];
+}
+
+/**
+ * Everything needed to open a conversation.
+ *
+ * A resumed thread goes along so the server can write it into the prompt: an
+ * ElevenLabs conversation starts with no memory of the one before it.
+ */
+export async function openAgentSession(
+  history: TurnMessage[],
+  userName?: string,
+): Promise<AgentSession> {
+  return postAgent<AgentSession>('/session', {
+    ...(await deviceContext(userName)),
+    history: history.slice(-SEND_TURNS),
+  });
+}
+
+/**
+ * Runs one tool she called, on the server, against this phone's data.
+ *
+ * `result` is what she reads back; `actions` are the changes and cards for the
+ * device — the same list a text turn used to return.
+ */
+export async function runAgentTool(
+  name: string,
+  args: Record<string, unknown>,
+  userName?: string,
+): Promise<{ result: string; actions: VoiceAction[] }> {
+  return postAgent('/tool', { ...(await deviceContext(userName)), name, arguments: args });
+}
+
+/** The agenda as her prompt describes it, for telling her it has changed. */
+export async function agentAgenda(userName?: string): Promise<string> {
+  const { agenda } = await postAgent<{ agenda: string }>('/context', await deviceContext(userName));
+  return agenda;
 }
 
 /** What the server returns to the background job that polls for a free-window nudge. */

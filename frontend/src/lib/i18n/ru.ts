@@ -138,7 +138,6 @@ export const ru: Dict = {
   'voice.listening': 'Слушаю',
   'voice.thinking': 'Думаю…',
   'voice.speaking': 'Говорит',
-  'voice.tapToStop': 'Нажмите, когда закончите',
   'voice.tapToInterrupt': 'Нажмите, чтобы перебить',
   'voice.hint': 'Просто говорите — остальное она сделает сама',
   'voice.ended': 'На этом пока всё',

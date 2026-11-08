@@ -385,7 +385,9 @@ export default function AssistantScreen() {
 
   useEffect(() => {
     Animated.timing(pulse, {
-      toValue: state === 'listening' ? level : state === 'speaking' ? 0.55 : 0,
+      // The session reports her voice as well as the mic, so the orb follows
+      // whoever is talking.
+      toValue: state === 'listening' || state === 'speaking' ? level : 0,
       duration: 120,
       useNativeDriver: true,
     }).start();
@@ -434,14 +436,14 @@ export default function AssistantScreen() {
               ? t('voice.ended')
               : t('voice.starting');
 
+  // No "tap when you're done" while listening: she hears the end of a sentence
+  // on her own now.
   const hint =
-    state === 'listening'
-      ? t('voice.tapToStop')
-      : state === 'speaking'
-        ? t('voice.tapToInterrupt')
-        : state === 'starting' || state === 'thinking'
-          ? t('voice.hint')
-          : '';
+    state === 'speaking'
+      ? t('voice.tapToInterrupt')
+      : state === 'listening' || state === 'starting' || state === 'thinking'
+        ? t('voice.hint')
+        : '';
 
   const orbScale = Animated.add<number>(
     breath.interpolate({ inputRange: [0, 1], outputRange: [1, 1.04] }),

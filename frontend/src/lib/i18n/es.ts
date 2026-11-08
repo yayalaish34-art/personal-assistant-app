@@ -138,7 +138,6 @@ export const es: Dict = {
   'voice.listening': 'Te escucho',
   'voice.thinking': 'Pensando…',
   'voice.speaking': 'Hablando',
-  'voice.tapToStop': 'Toca cuando termines',
   'voice.tapToInterrupt': 'Toca para interrumpir',
   'voice.hint': 'Solo habla: ella se encarga',
   'voice.ended': 'Por ahora hemos terminado',

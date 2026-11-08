@@ -144,7 +144,6 @@ export const sv: Dict = {
   'voice.listening': 'Lyssnar',
   'voice.thinking': 'Tänker…',
   'voice.speaking': 'Pratar',
-  'voice.tapToStop': 'Tryck när du är klar',
   'voice.tapToInterrupt': 'Tryck för att avbryta',
   'voice.hint': 'Bara prata — hon fixar resten',
   'voice.ended': 'Vi är klara för den här gången',

@@ -21,7 +21,10 @@
         "NSMicrophoneUsageDescription": "The assistant needs the microphone to hear what you say.",
         "NSLocationWhenInUseUsageDescription": "The assistant uses your location to give directions, suggest meeting places, and know which city you are in.",
         "NSLocationAlwaysAndWhenInUseUsageDescription": "The assistant detects when you arrive at a meeting location to give you a timely heads-up.",
-        "UIBackgroundModes": ["location", "fetch"]
+        "UIBackgroundModes": [
+          "location",
+          "fetch"
+        ]
       }
     },
     "android": {
@@ -57,7 +60,9 @@
       "expo-notifications",
       "expo-font",
       "expo-status-bar",
-      "expo-task-manager"
+      "expo-task-manager",
+      "@livekit/react-native-expo-plugin",
+      "@config-plugins/react-native-webrtc"
     ],
     "extra": {
       "eas": {

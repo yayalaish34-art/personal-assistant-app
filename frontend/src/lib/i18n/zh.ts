@@ -144,7 +144,6 @@ export const zh: Dict = {
   'voice.listening': '聆听中',
   'voice.thinking': '思考中…',
   'voice.speaking': '说话中',
-  'voice.tapToStop': '说完后点一下',
   'voice.tapToInterrupt': '点一下可以打断',
   'voice.hint': '尽管说，剩下的交给她',
   'voice.ended': '这次先聊到这里',

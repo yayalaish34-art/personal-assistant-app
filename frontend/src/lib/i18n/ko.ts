@@ -144,7 +144,6 @@ export const ko: Dict = {
   'voice.listening': '듣고 있어요',
   'voice.thinking': '생각 중…',
   'voice.speaking': '말하는 중',
-  'voice.tapToStop': '끝나면 탭하세요',
   'voice.tapToInterrupt': '끼어들려면 탭하세요',
   'voice.hint': '말씀만 하시면 나머지는 알아서 해드릴게요',
   'voice.ended': '오늘은 여기까지예요',

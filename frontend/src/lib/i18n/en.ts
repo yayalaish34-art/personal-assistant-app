@@ -381,7 +381,6 @@ export const en = {
   'voice.listening': 'Listening',
   'voice.thinking': 'Thinking…',
   'voice.speaking': 'Speaking',
-  'voice.tapToStop': 'Tap when you’re done',
   'voice.tapToInterrupt': 'Tap to cut in',
   'voice.hint': 'Just talk — she’ll do the rest',
   'voice.canDo': 'What I can help with',

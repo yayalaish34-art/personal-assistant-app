@@ -144,7 +144,6 @@ export const pl: Dict = {
   'voice.listening': 'Słucham',
   'voice.thinking': 'Myślę…',
   'voice.speaking': 'Mówię',
-  'voice.tapToStop': 'Dotknij, gdy skończysz',
   'voice.tapToInterrupt': 'Dotknij, aby przerwać',
   'voice.hint': 'Po prostu mów — ona zajmie się resztą',
   'voice.ended': 'Na razie to wszystko',

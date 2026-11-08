@@ -372,7 +372,6 @@ export const he: Dict = {
   'voice.listening': 'מקשיבה',
   'voice.thinking': 'חושבת…',
   'voice.speaking': 'מדברת',
-  'voice.tapToStop': 'לחצי כשסיימת',
   'voice.tapToInterrupt': 'לחצי כדי להתערב',
   'voice.hint': 'פשוט תדברי — היא תעשה את השאר',
   'voice.canDo': 'מה אני יודעת לעשות',

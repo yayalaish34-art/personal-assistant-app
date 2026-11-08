@@ -144,7 +144,6 @@ export const nl: Dict = {
   'voice.listening': 'Ik luister',
   'voice.thinking': 'Aan het denken…',
   'voice.speaking': 'Spreekt',
-  'voice.tapToStop': 'Tik als je klaar bent',
   'voice.tapToInterrupt': 'Tik om in te breken',
   'voice.hint': 'Praat gewoon — ze doet de rest',
   'voice.ended': 'We zijn klaar voor nu',

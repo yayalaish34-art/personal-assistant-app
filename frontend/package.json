@@ -9,8 +9,14 @@
     "web": "expo start --web"
   },
   "dependencies": {
+    "@config-plugins/react-native-webrtc": "^15.0.2",
+    "@elevenlabs/client": "1.35.0",
+    "@elevenlabs/react-native": "^1.2.38",
     "@expo-google-fonts/urbanist": "^0.4.2",
     "@expo/metro-runtime": "~57.0.15",
+    "@livekit/react-native": "^2.12.0",
+    "@livekit/react-native-expo-plugin": "^1.1.0",
+    "@livekit/react-native-webrtc": "^144.2.0",
     "@react-native-async-storage/async-storage": "2.2.0",
     "@react-native-masked-view/masked-view": "0.3.2",
     "@react-navigation/bottom-tabs": "^7.3.10",

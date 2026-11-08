@@ -144,7 +144,6 @@ export const tr: Dict = {
   'voice.listening': 'Dinliyor',
   'voice.thinking': 'Düşünüyor…',
   'voice.speaking': 'Konuşuyor',
-  'voice.tapToStop': 'Bitirince dokun',
   'voice.tapToInterrupt': 'Araya girmek için dokun',
   'voice.hint': 'Sen konuş, gerisini o halleder',
   'voice.ended': 'Şimdilik bu kadar',

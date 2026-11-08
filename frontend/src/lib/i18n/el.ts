@@ -144,7 +144,6 @@ export const el: Dict = {
   'voice.listening': 'Σε ακούω',
   'voice.thinking': 'Σκέφτομαι…',
   'voice.speaking': 'Μιλάω',
-  'voice.tapToStop': 'Πάτησε όταν τελειώσεις',
   'voice.tapToInterrupt': 'Πάτησε για να διακόψεις',
   'voice.hint': 'Απλά μίλα — αυτή αναλαμβάνει τα υπόλοιπα',
   'voice.ended': 'Τελειώσαμε προς το παρόν',

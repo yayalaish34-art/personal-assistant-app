@@ -138,7 +138,6 @@ export const ar: Dict = {
   'voice.listening': 'أستمع إليك',
   'voice.thinking': 'أفكّر…',
   'voice.speaking': 'تتحدث',
-  'voice.tapToStop': 'اضغط عند الانتهاء',
   'voice.tapToInterrupt': 'اضغط لمقاطعتها',
   'voice.hint': 'تحدّث فقط — هي تتكفّل بالباقي',
   'voice.ended': 'انتهينا في الوقت الحالي',

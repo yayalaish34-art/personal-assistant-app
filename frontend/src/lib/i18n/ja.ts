@@ -144,7 +144,6 @@ export const ja: Dict = {
   'voice.listening': '聞いています',
   'voice.thinking': '考えています…',
   'voice.speaking': '話しています',
-  'voice.tapToStop': '終わったらタップしてください',
   'voice.tapToInterrupt': 'タップして割り込む',
   'voice.hint': '話すだけで、あとは彼女にお任せ',
   'voice.ended': '今日はここまでです',

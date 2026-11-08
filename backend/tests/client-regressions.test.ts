@@ -4,7 +4,6 @@ import { resolve, dirname } from 'node:path';
 import ts from 'typescript';
 import { calendarStats } from '../../frontend/src/lib/stats';
 import { estimateCart, unitPrice } from '../../frontend/src/lib/prices';
-import { createSpeechActivity } from '../../frontend/src/lib/speechActivity';
 import { en } from '../../frontend/src/lib/i18n/en';
 import { he } from '../../frontend/src/lib/i18n/he';
 import type { Event } from '../../frontend/src/lib/api';
@@ -165,24 +164,5 @@ describe('shopping price honesty', () => {
     const fruit = { ...juice, name: 'ענבים' };
     expect(unitPrice(juice)).not.toBe(unitPrice(fruit));
     expect(estimateCart([juice, { ...juice, name: 'פריט לא מוכר' }], 'ILS').total).toBe(unitPrice(juice));
-  });
-});
-
-describe('speech activity', () => {
-  it('ignores silence and isolated noises instead of sending them for transcription', () => {
-    const mic = createSpeechActivity();
-    expect(mic.sample(-60, 0).heardSpeech).toBe(false);
-    expect(mic.sample(-20, 150).heardSpeech).toBe(false);
-    expect(mic.sample(-60, 300).heardSpeech).toBe(false);
-    expect(mic.sample(-20, 450).heardSpeech).toBe(false);
-  });
-
-  it('recognizes sustained speech and measures silence only after it', () => {
-    const mic = createSpeechActivity();
-    mic.sample(-20, 0);
-    expect(mic.sample(-20, 150).heardSpeech).toBe(true);
-    mic.sample(-60, 300);
-    expect(mic.sample(-60, 1950).quietMs).toBe(1650);
-    expect(mic.sample(-20, 2100).quietMs).toBe(0);
   });
 });

@@ -6,8 +6,20 @@ import { voiceTurnLimiter, voiceMediaLimiter } from '../../middleware/rateLimit.
 import { ValidationError } from '../../lib/errors.js';
 import { config } from '../../config.js';
 import { logger } from '../../lib/logger.js';
-import { runVoiceTurn, snapshotSchema, profileSchema, didNotCatchThat, computeOpportunityNudge } from './agent.js';
+import {
+  runVoiceTurn,
+  snapshotSchema,
+  profileSchema,
+  didNotCatchThat,
+  computeOpportunityNudge,
+  buildSystemPrompt,
+  describeSnapshot,
+  describeHousehold,
+  executeToolCall,
+  type VoiceAction,
+} from './agent.js';
 import { synthesizeStream, prewarmSpeech, servePrewarmed, isSpeechConfigured, MAX_SPEECH_CHARS } from './tts.js';
+import { AGENT_TOOL_NAMES, conversationToken } from './elevenlabs.js';
 
 /**
  * The voice assistant (stateless).
@@ -170,6 +182,122 @@ voiceRouter.post(
       canSpeak: isSpeechConfigured(),
       ...(speakToken ? { speakToken } : {}),
     });
+  }),
+);
+
+// ── The ElevenLabs agent ────────────────────────────────────────────────────
+//
+// The live conversation runs between the phone and ElevenLabs. These three
+// routes are what it needs from us: a token and a system prompt to open with,
+// a place to run each tool call, and a fresh agenda after the phone changes
+// something. /voice/turn above stays for builds that predate the agent.
+
+/** What the phone sends about itself: the turn body without a sentence in it. */
+const contextBody = turnBody.omit({ text: true, history: true });
+
+function turnInput(body: z.infer<typeof contextBody>) {
+  return {
+    text: '',
+    language: body.language,
+    timezone: body.timezone,
+    now: body.now ? new Date(body.now) : new Date(),
+    userName: body.userName,
+    history: [],
+    snapshot: body.snapshot,
+    profile: body.profile,
+    location: body.location,
+  };
+}
+
+/** The agenda and household she is told about, in the system prompt's words. */
+function describeData(input: ReturnType<typeof turnInput>): string {
+  return [
+    describeSnapshot(input.snapshot, input.timezone),
+    '',
+    describeHousehold(input.snapshot, input.timezone, input.now),
+  ].join('\n');
+}
+
+const sessionBody = contextBody.extend({
+  /** The thread so far, when the phone is picking one back up. */
+  history: turnBody.shape.history,
+});
+
+voiceRouter.post(
+  '/voice/agent/session',
+  voiceTurnLimiter,
+  asyncHandler(async (req, res) => {
+    const body = parseBody(sessionBody, req);
+    const input = turnInput(body);
+
+    // The prompt is built here, from the phone's data, exactly as a text turn
+    // builds it, and handed to the agent as a per-conversation override. An
+    // ElevenLabs session starts with no memory, so a resumed thread rides
+    // along at the end — otherwise "move that one too" would point at nothing.
+    const earlier = body.history
+      .slice(-24)
+      .map((m) => `${m.role === 'user' ? 'User' : 'You'}: ${m.content}`);
+    const prompt = [
+      buildSystemPrompt(input),
+      ...(earlier.length > 0
+        ? [
+            '',
+            'EARLIER IN THIS CONVERSATION (already said — carry on from here,',
+            'do not greet again or repeat it):',
+            ...earlier,
+          ]
+        : []),
+    ].join('\n');
+
+    const token = await conversationToken();
+    logger.info(
+      { historyLen: body.history.length, promptChars: prompt.length },
+      'voice agent session opened',
+    );
+    res.json({ conversationToken: token, prompt, tools: AGENT_TOOL_NAMES });
+  }),
+);
+
+const toolBody = contextBody.extend({
+  name: z.string().min(1).max(64),
+  arguments: z.record(z.string(), z.unknown()).default({}),
+});
+
+voiceRouter.post(
+  '/voice/agent/tool',
+  // Several calls can land in one spoken turn, so this shares the roomier
+  // media budget rather than the one-per-turn limit.
+  voiceMediaLimiter,
+  asyncHandler(async (req, res) => {
+    const body = parseBody(toolBody, req);
+    const actions: VoiceAction[] = [];
+    const { content } = await executeToolCall(
+      body.name,
+      JSON.stringify(body.arguments),
+      turnInput(body),
+      actions,
+    );
+    // The same line /voice/turn writes, per call: what she asked for, what she
+    // was told, and what the phone is about to change.
+    logger.info(
+      {
+        tool: body.name,
+        arguments: body.arguments,
+        result: content.slice(0, 400),
+        actions: actions.map((a) => ({ tool: a.tool, arguments: a.arguments })),
+      },
+      'voice agent tool call',
+    );
+    res.json({ result: content, actions });
+  }),
+);
+
+voiceRouter.post(
+  '/voice/agent/context',
+  voiceMediaLimiter,
+  asyncHandler(async (req, res) => {
+    const body = parseBody(contextBody, req);
+    res.json({ agenda: describeData(turnInput(body)) });
   }),
 );
 

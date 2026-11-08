@@ -53,6 +53,14 @@ export const configSchema = z.object({
   // and Cyrillic scripts at lower latency. See voice/tts.ts for the choice.
   ELEVENLABS_MODEL_ID: z.string().default('eleven_v3'),
   ELEVENLABS_FAST_MODEL_ID: z.string().default('eleven_flash_v2_5'),
+  // The ElevenLabs agent the app talks to live (voice in, voice out, and the
+  // model in between). Created and kept in sync by scripts/elevenlabs-agent.ts,
+  // which also prints the id to put here. Without it /voice/agent/* answers
+  // "not configured" and the app cannot open a conversation.
+  ELEVENLABS_AGENT_ID: z.string().optional(),
+  // The model the agent thinks with, on ElevenLabs' side. Read by the sync
+  // script only; changing it takes a re-run of the script, not a deploy.
+  ELEVENLABS_AGENT_LLM: z.string().default('gemini-3.5-flash'),
   EXPO_ACCESS_TOKEN: z.string().optional(),
   CORS_ORIGINS: z
     .string()

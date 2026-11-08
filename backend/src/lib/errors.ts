@@ -62,6 +62,12 @@ export class UnsupportedMedia extends AppError {
   readonly code = 'UNSUPPORTED_MEDIA';
 }
 
+/** A provider we depend on answered with something we cannot pass off as ours. */
+export class BadGateway extends AppError {
+  readonly statusCode = 502;
+  readonly code = 'BAD_GATEWAY';
+}
+
 export function isAppError(e: unknown): e is AppError {
   return e instanceof AppError;
 }

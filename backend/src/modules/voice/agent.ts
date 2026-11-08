@@ -1520,7 +1520,7 @@ export function didNotCatchThat(language: string): string {
  * already has it, and one round trip is the difference between a conversation
  * and a wait.
  */
-function describeSnapshot(snapshot: Snapshot, timezone: string): string {
+export function describeSnapshot(snapshot: Snapshot, timezone: string): string {
   const when = (iso: string | null | undefined) => {
     if (!iso) return 'no date';
     const d = new Date(iso);
@@ -2313,173 +2313,15 @@ export async function runVoiceTurn(input: VoiceTurnInput): Promise<VoiceTurnResu
 
     for (const call of toolCalls) {
       if (call.type !== 'function') continue;
-      const outcome = collectAction(
+      const { content, consultedFreeTime } = await executeToolCall(
         call.function.name,
         call.function.arguments,
-        input.snapshot,
-        input.timezone,
+        input,
+        actions,
       );
-
-      // Asking when someone is free is a question, not a change. It is
-      // answered here, into the conversation, and never reaches the device as
-      // an action — there is nothing for the device to apply.
-      if (outcome.action?.tool === 'find_nearby') {
-        messages.push({
-          role: 'tool',
-          tool_call_id: call.id,
-          content: await answerNearbySearch(outcome.action.arguments, input),
-        });
-        continue;
-      }
-
-      if (outcome.action?.tool === 'check_travel') {
-        messages.push({
-          role: 'tool',
-          tool_call_id: call.id,
-          content: await answerTravelCheck(outcome.action.arguments, input),
-        });
-        continue;
-      }
-
-      if (outcome.action?.tool === 'suggest_opportunity') {
-        messages.push({
-          role: 'tool',
-          tool_call_id: call.id,
-          content: await answerSuggestOpportunity(outcome.action.arguments, input, actions),
-        });
-        continue;
-      }
-
-      if (outcome.action?.tool === 'check_weather') {
-        messages.push({
-          role: 'tool',
-          tool_call_id: call.id,
-          content: await answerCheckWeather(outcome.action.arguments, input),
-        });
-        continue;
-      }
-
-      if (outcome.action?.tool === 'plan_recurring_goal') {
-        messages.push({
-          role: 'tool',
-          tool_call_id: call.id,
-          content: await answerPlanRecurringGoal(outcome.action.arguments, input, actions),
-        });
-        continue;
-      }
-
-      if (outcome.action?.tool === 'cluster_errands') {
-        messages.push({
-          role: 'tool',
-          tool_call_id: call.id,
-          content: answerClusterErrands(outcome.action.arguments, input),
-        });
-        continue;
-      }
-
-      if (outcome.action?.tool === 'end_of_day') {
-        messages.push({
-          role: 'tool',
-          tool_call_id: call.id,
-          content: answerEndOfDay(outcome.action.arguments, input, actions),
-        });
-        continue;
-      }
-
-      if (outcome.action?.tool === 'replan_remainder') {
-        messages.push({
-          role: 'tool',
-          tool_call_id: call.id,
-          content: await answerReplanRemainder(outcome.action.arguments, input),
-        });
-        continue;
-      }
-
-      if (outcome.action?.tool === 'budget_alert') {
-        messages.push({
-          role: 'tool',
-          tool_call_id: call.id,
-          content: answerBudgetAlert(outcome.action.arguments, input, actions),
-        });
-        continue;
-      }
-
-      if (outcome.action?.tool === 'weekly_summary') {
-        messages.push({
-          role: 'tool',
-          tool_call_id: call.id,
-          content: answerWeeklySummary(outcome.action.arguments, input, actions),
-        });
-        continue;
-      }
-
-      if (outcome.action?.tool === 'spending_trends') {
-        messages.push({
-          role: 'tool',
-          tool_call_id: call.id,
-          content: answerSpendingTrends(outcome.action.arguments, input),
-        });
-        continue;
-      }
-
-      if (outcome.action?.tool === 'upcoming_debits') {
-        messages.push({
-          role: 'tool',
-          tool_call_id: call.id,
-          content: answerUpcomingDebits(outcome.action.arguments, input),
-        });
-        continue;
-      }
-
-      if (outcome.action?.tool === 'create_savings_goal') {
-        messages.push({
-          role: 'tool',
-          tool_call_id: call.id,
-          content: answerCreateSavingsGoal(outcome.action.arguments, input, actions),
-        });
-        continue;
-      }
-
-      if (outcome.action?.tool === 'find_free_time') {
-        logger.info(
-          { args: outcome.action.arguments },
-          'voice agent asked for free time',
-        );
-        consulted = true;
-        messages.push({
-          role: 'tool',
-          tool_call_id: call.id,
-          content: await answerFreeTime(outcome.action.arguments, input, actions),
-        });
-        continue;
-      }
-
-      // A time that survives the gate still has to be a time the person can
-      // keep. That check reaches a geocoder, so it cannot live inside
-      // `collectAction`, which is synchronous and stays that way.
-      const reviewed = outcome.action
-        ? await reviewProposedTime(
-            outcome.action,
-            input.snapshot,
-            input.timezone,
-            input.now.getTime(),
-            input.profile,
-          )
-        : null;
-
-      if (reviewed) {
-        actions.push(reviewed.action);
-        messages.push({ role: 'tool', tool_call_id: call.id, content: reviewed.result });
-        continue;
-      }
-
-      if (outcome.action) actions.push(outcome.action);
+      if (consultedFreeTime) consulted = true;
       // Every tool_call must be answered or the next request is rejected.
-      messages.push({
-        role: 'tool',
-        tool_call_id: call.id,
-        content: outcome.result,
-      });
+      messages.push({ role: 'tool', tool_call_id: call.id, content });
     }
 
     // Anything she said alongside the calls is a partial thought; the closing
@@ -2488,6 +2330,82 @@ export async function runVoiceTurn(input: VoiceTurnInput): Promise<VoiceTurnResu
   }
 
   return { reply, actions, consultedFreeTime: consulted };
+}
+
+/**
+ * Runs one tool call the model made and returns what goes back to it.
+ *
+ * The same path serves both conversations: `runVoiceTurn`, where the model is
+ * ours, and the ElevenLabs agent, whose client tools the device forwards here
+ * one at a time (see /voice/agent/tool). Changes for the device to apply and
+ * cards for it to show are pushed onto `actions`; the returned `content` is
+ * what the model reads.
+ */
+export async function executeToolCall(
+  name: string,
+  argumentsJson: string,
+  input: VoiceTurnInput,
+  actions: VoiceAction[],
+): Promise<{ content: string; consultedFreeTime: boolean }> {
+  const answered = (content: string) => ({ content, consultedFreeTime: false });
+  const outcome = collectAction(name, argumentsJson, input.snapshot, input.timezone);
+  const tool = outcome.action?.tool;
+  const args = outcome.action?.arguments ?? {};
+
+  // Asking when someone is free is a question, not a change. It is answered
+  // here, into the conversation, and never reaches the device as an action —
+  // there is nothing for the device to apply.
+  switch (tool) {
+    case 'find_nearby':
+      return answered(await answerNearbySearch(args, input));
+    case 'check_travel':
+      return answered(await answerTravelCheck(args, input));
+    case 'suggest_opportunity':
+      return answered(await answerSuggestOpportunity(args, input, actions));
+    case 'check_weather':
+      return answered(await answerCheckWeather(args, input));
+    case 'plan_recurring_goal':
+      return answered(await answerPlanRecurringGoal(args, input, actions));
+    case 'cluster_errands':
+      return answered(answerClusterErrands(args, input));
+    case 'end_of_day':
+      return answered(answerEndOfDay(args, input, actions));
+    case 'replan_remainder':
+      return answered(await answerReplanRemainder(args, input));
+    case 'budget_alert':
+      return answered(answerBudgetAlert(args, input, actions));
+    case 'weekly_summary':
+      return answered(answerWeeklySummary(args, input, actions));
+    case 'spending_trends':
+      return answered(answerSpendingTrends(args, input));
+    case 'upcoming_debits':
+      return answered(answerUpcomingDebits(args, input));
+    case 'create_savings_goal':
+      return answered(answerCreateSavingsGoal(args, input, actions));
+    case 'find_free_time':
+      logger.info({ args }, 'voice agent asked for free time');
+      return { content: await answerFreeTime(args, input, actions), consultedFreeTime: true };
+  }
+
+  // A time that survives the gate still has to be a time the person can keep.
+  // That check reaches a geocoder, so it cannot live inside `collectAction`,
+  // which is synchronous and stays that way.
+  const reviewed = outcome.action
+    ? await reviewProposedTime(
+        outcome.action,
+        input.snapshot,
+        input.timezone,
+        input.now.getTime(),
+        input.profile,
+      )
+    : null;
+  if (reviewed) {
+    actions.push(reviewed.action);
+    return answered(reviewed.result);
+  }
+
+  if (outcome.action) actions.push(outcome.action);
+  return answered(outcome.result);
 }
 
 /**

@@ -34,7 +34,7 @@ const imageBody = z.object({
   shape: z.enum(['square', 'portrait', 'landscape']).default('square'),
 });
 
-const IMAGE_MODEL = 'gpt-image-1';
+const IMAGE_MODEL = config.OPENAI_IMAGE_MODEL;
 
 imageRouter.post(
   '/image',

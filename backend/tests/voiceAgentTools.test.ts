@@ -23,6 +23,7 @@ import {
   answerReplanRemainder,
   type Snapshot,
   type VoiceTurnInput,
+  type VoiceAction,
 } from '../src/modules/voice/agent.js';
 
 const ZONE = 'Asia/Jerusalem';
@@ -155,7 +156,7 @@ describe('answerBudgetAlert', () => {
     snap.money.push(
       { id: '1', kind: 'expense', description: 'market', amount: 600, date: '2026-07-20', category: 'food' },
     );
-    const result = JSON.parse(answerBudgetAlert({}, baseInput({ snapshot: snap })));
+    const result = JSON.parse(answerBudgetAlert({}, baseInput({ snapshot: snap }), []));
     expect(result.ok).toBe(true);
     expect(result.findings.length).toBe(1);
     expect(result.findings[0].category).toBe('food');
@@ -172,13 +173,13 @@ describe('answerBudgetAlert', () => {
     snap.money.push(
       { id: '1', kind: 'expense', description: 'market', amount: 450, date: '2026-07-15', category: 'food' },
     );
-    const result = JSON.parse(answerBudgetAlert({}, baseInput({ snapshot: snap })));
+    const result = JSON.parse(answerBudgetAlert({}, baseInput({ snapshot: snap }), []));
     expect(result.findings.length).toBe(1);
     expect(result.findings[0].severity).toBe('risk');
   });
 
   it('stays quiet when there are no budgets set at all', () => {
-    const result = JSON.parse(answerBudgetAlert({}, baseInput()));
+    const result = JSON.parse(answerBudgetAlert({}, baseInput(), []));
     expect(result.findings).toEqual([]);
   });
 
@@ -188,7 +189,7 @@ describe('answerBudgetAlert', () => {
     snap.money.push(
       { id: '1', kind: 'expense', description: 'market', amount: 100, date: '2026-07-10', category: 'food' },
     );
-    const result = JSON.parse(answerBudgetAlert({}, baseInput({ snapshot: snap })));
+    const result = JSON.parse(answerBudgetAlert({}, baseInput({ snapshot: snap }), []));
     expect(result.findings).toEqual([]);
   });
 });
@@ -204,7 +205,7 @@ describe('answerWeeklySummary', () => {
       { id: '2', kind: 'expense', description: 'rent', amount: 4000, date: '2026-07-28', category: 'housing' },
       { id: '3', kind: 'expense', description: 'market', amount: 200, date: '2026-07-29', category: 'food' },
     );
-    const result = JSON.parse(answerWeeklySummary({}, baseInput({ snapshot: snap })));
+    const result = JSON.parse(answerWeeklySummary({}, baseInput({ snapshot: snap }), []));
     expect(result.ok).toBe(true);
     expect(result.weekStart).toBe('2026-07-26');
     expect(result.weekEnd).toBe('2026-08-01');
@@ -219,7 +220,7 @@ describe('answerWeeklySummary', () => {
       { id: '1', title: 'Call dentist', dueAt: '2026-07-27T10:00:00+03:00', isDone: true },
       { id: '2', title: 'Email Dad', dueAt: '2026-07-28T10:00:00+03:00', isDone: false },
     );
-    const result = JSON.parse(answerWeeklySummary({}, baseInput({ snapshot: snap })));
+    const result = JSON.parse(answerWeeklySummary({}, baseInput({ snapshot: snap }), []));
     expect(result.tasks.finished).toBe(1);
     expect(result.tasks.stillOpen).toBe(1);
   });
@@ -286,7 +287,7 @@ describe('answerEndOfDay', () => {
       { id: '2', title: 'Draft deck', dueAt: '2026-07-29T15:00:00+03:00', isDone: true },
       { id: '3', title: 'Call plumber', dueAt: '2026-07-29T17:00:00+03:00', isDone: false },
     );
-    const result = JSON.parse(answerEndOfDay({}, baseInput({ snapshot: snap })));
+    const result = JSON.parse(answerEndOfDay({}, baseInput({ snapshot: snap }), []));
     expect(result.ok).toBe(true);
     expect(result.today.tasksDone).toBe(2);
     expect(result.today.tasksOpen).toBe(1);
@@ -307,13 +308,13 @@ describe('answerEndOfDay', () => {
         startsAt: '2026-07-30T13:00:00+03:00',
       },
     );
-    const result = JSON.parse(answerEndOfDay({}, baseInput({ snapshot: snap })));
+    const result = JSON.parse(answerEndOfDay({}, baseInput({ snapshot: snap }), []));
     expect(result.tomorrow.first.title).toBe('Dentist');
     expect(result.tomorrow.eventCount).toBe(2);
   });
 
   it('reports a quiet day plainly', () => {
-    const result = JSON.parse(answerEndOfDay({}, baseInput()));
+    const result = JSON.parse(answerEndOfDay({}, baseInput(), []));
     expect(result.ok).toBe(true);
     expect(result.today.tasksDone).toBe(0);
     expect(result.today.tasksOpen).toBe(0);
@@ -346,24 +347,28 @@ describe('answerCheckWeather', () => {
 
 describe('answerPlanRecurringGoal', () => {
   it('finds slots on an empty calendar and spreads them across days', async () => {
+    const actions: VoiceAction[] = [];
     const result = JSON.parse(
       await answerPlanRecurringGoal(
         { title: 'workout', timesPerWeek: 3, durationMinutes: 45 },
         baseInput(),
+        actions,
       ),
     );
     expect(result.ok).toBe(true);
     expect(result.goalTitle).toBe('workout');
-    expect(result.proposed.length).toBeGreaterThanOrEqual(1);
-    // Each proposed slot should be on a distinct day until the count forces a
+    // It books the slots itself now, rather than proposing them.
+    expect(result.created.length).toBeGreaterThanOrEqual(1);
+    expect(actions.filter((a) => a.tool === 'create_event')).toHaveLength(result.created.length);
+    // Each slot should be on a distinct day until the count forces a
     // double-up — with an empty calendar, 3 distinct days is the expectation.
-    const days = new Set(result.proposed.map((p: { date: string }) => p.date));
-    expect(days.size).toBe(result.proposed.length);
+    const days = new Set(result.created.map((p: { date: string }) => p.date));
+    expect(days.size).toBe(result.created.length);
   });
 
   it('rejects a request with an empty title', async () => {
     const result = JSON.parse(
-      await answerPlanRecurringGoal({ title: '', timesPerWeek: 2 }, baseInput()),
+      await answerPlanRecurringGoal({ title: '', timesPerWeek: 2 }, baseInput(), []),
     );
     expect(result.ok).toBe(false);
   });

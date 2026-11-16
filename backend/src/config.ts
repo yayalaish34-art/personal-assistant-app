@@ -44,6 +44,9 @@ export const configSchema = z.object({
   // reliably — roughly a sixth of the price of gpt-4o per turn. Free rounds
   // keep the stronger model.
   OPENAI_FORCED_TOOL_MODEL: z.string().default('gpt-4o-mini'),
+  // The agent's drawings. gpt-image-1 was retired; its successor takes the
+  // same request.
+  OPENAI_IMAGE_MODEL: z.string().default('gpt-image-1.5'),
   // Text-to-speech for the voice assistant. Without a key the app still works;
   // the assistant answers in text and simply does not speak.
   ELEVENLABS_API_KEY: z.string().optional(),

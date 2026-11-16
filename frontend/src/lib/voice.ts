@@ -19,15 +19,17 @@ import { sameItem } from './shopping';
 // The voice assistant's side of the wire.
 //
 // The conversation itself — hearing, deciding when the user has finished, the
-// model, the voice — runs live between this phone and an ElevenLabs agent (see
-// useVoiceSession). What goes through our server is what cannot live in the
-// app: the token that opens a conversation, the system prompt built from this
-// phone's data, and every tool she calls. The device owns the data, so each of
+// model, the voice — runs live between this phone and Gemini Live, over one
+// WebSocket (see geminiLive.ts and useVoiceSession). What goes through our
+// server is what cannot live in the app: the token that opens a conversation
+// (with the system prompt built from this phone's data locked inside it), and
+// every tool she calls. The device owns the data, so each of
 // those requests carries a snapshot of it, and the changes that come back are
 // applied here, locally, by `applyActions`.
 
 const API_BASE = (process.env.EXPO_PUBLIC_API_URL || 'https://personal-assistant-api-production-618a.up.railway.app').replace(/\/$/, '');
 const AGENT_URL = `${API_BASE}/voice/agent`;
+const LIVE_URL = `${API_BASE}/voice/live`;
 const OPPORTUNITY_NUDGE_URL = `${API_BASE}/voice/opportunity-nudge`;
 const IMAGE_URL = `${API_BASE}/image`;
 
@@ -631,8 +633,8 @@ async function deviceContext(userName?: string) {
   };
 }
 
-async function postAgent<T>(path: string, body: unknown): Promise<T> {
-  const res = await fetch(`${AGENT_URL}${path}`, {
+async function postJson<T>(url: string, body: unknown): Promise<T> {
+  const res = await fetch(url, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(body),
@@ -645,28 +647,38 @@ async function postAgent<T>(path: string, body: unknown): Promise<T> {
   return (await res.json()) as T;
 }
 
-export interface AgentSession {
-  /** Opens one WebRTC conversation with the agent; good for that one only. */
-  conversationToken: string;
-  /** The system prompt for this conversation, built from this phone's data. */
-  prompt: string;
-  /** Every tool she may call, each of which the session must answer. */
-  tools: string[];
+const postAgent = <T,>(path: string, body: unknown) => postJson<T>(`${AGENT_URL}${path}`, body);
+
+/** What opens one Gemini Live connection. Good for that one connection only. */
+export interface LiveTicket {
+  /** The socket to open, with `token` as its `access_token`. */
+  url: string;
+  /** Single use, with the whole setup — prompt, tools, voice — locked inside. */
+  token: string;
+  /** All the setup message carries; the rest is in the token. */
+  model: string;
+  /** What the model hears and speaks: 16-bit mono PCM at these rates. */
+  inputRate: number;
+  outputRate: number;
 }
 
 /**
- * Everything needed to open a conversation.
+ * A ticket for one live connection.
  *
- * A resumed thread goes along so the server can write it into the prompt: an
- * ElevenLabs conversation starts with no memory of the one before it.
+ * A resumed thread goes along so the server can write it into the prompt —
+ * a fresh session starts with no memory of the one before it. `resumeHandle`
+ * is for the other case: Google retired the connection mid-conversation and
+ * the same session carries on over a new one.
  */
-export async function openAgentSession(
+export async function openLiveSession(
   history: TurnMessage[],
   userName?: string,
-): Promise<AgentSession> {
-  return postAgent<AgentSession>('/session', {
+  resumeHandle?: string,
+): Promise<LiveTicket> {
+  return postJson<LiveTicket>(`${LIVE_URL}/session`, {
     ...(await deviceContext(userName)),
     history: history.slice(-SEND_TURNS),
+    ...(resumeHandle ? { resumeHandle } : {}),
   });
 }
 

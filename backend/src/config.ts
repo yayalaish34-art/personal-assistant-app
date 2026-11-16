@@ -64,6 +64,20 @@ export const configSchema = z.object({
   // The model the agent thinks with, on ElevenLabs' side. Read by the sync
   // script only; changing it takes a re-run of the script, not a deploy.
   ELEVENLABS_AGENT_LLM: z.string().default('gemini-3.5-flash'),
+  // The live voice agent: Gemini Live, over one WebSocket from the phone. The
+  // key never leaves this server — each conversation gets a single-use token
+  // with the whole setup (prompt, tools, voice) locked inside it. Without the
+  // key /voice/live/session answers "not configured".
+  GEMINI_API_KEY: z.string().optional(),
+  // gemini-3.8-live is the newer model; it also runs tools without pausing
+  // the conversation. Switching is this variable alone, no deploy of the app.
+  GEMINI_LIVE_MODEL: z.string().trim().min(1).default('gemini-3.1-flash-live-preview'),
+  // One of the prebuilt voices (the same set as Gemini TTS). Kore is a calm
+  // female voice; she speaks of herself in the feminine.
+  GEMINI_LIVE_VOICE: z.string().trim().min(1).default('Kore'),
+  // minimal | low | medium | high, for the 3.1 model (it defaults to minimal,
+  // the fastest). Unset sends nothing: 3.8 refuses the setting outright.
+  GEMINI_LIVE_THINKING: z.enum(['minimal', 'low', 'medium', 'high']).optional(),
   EXPO_ACCESS_TOKEN: z.string().optional(),
   CORS_ORIGINS: z
     .string()

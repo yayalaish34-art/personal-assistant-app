@@ -293,9 +293,17 @@ export default function EntryFormScreen() {
 
   return (
     <Screen clearTabBar={false}>
+      {/* Keyboard-aware on iOS: while the keys are up the form gets room under
+          its last field and the one being typed in is brought above them; when
+          they go down that room goes with them and the form settles back to
+          the top. Without it, iOS scrolled the form up to follow the caret into
+          space that wasn't there, and left it there — the top of the form gone
+          until it was dragged back down. A drag on the form takes the keys down. */}
       <ScrollView
         showsVerticalScrollIndicator={false}
         keyboardShouldPersistTaps="handled"
+        automaticallyAdjustKeyboardInsets
+        keyboardDismissMode="interactive"
         style={styles.scroll}
         contentContainerStyle={styles.scrollContent}
       >

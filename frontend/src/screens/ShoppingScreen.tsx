@@ -59,6 +59,7 @@ import {
 import { estimateCart, learnFactor } from '../lib/prices';
 import { formatMoney } from '../lib/currency';
 import { storage } from '../lib/storage';
+import { useKeyboardLift } from '../lib/useKeyboardLift';
 import { toDateStr } from '../lib/tasks';
 import type { RootStackParamList } from '../navigation';
 import {
@@ -375,6 +376,8 @@ export default function ShoppingScreen() {
 
   // The checkout sheet: open while clearing the trolley asks what it cost.
   const [checkout, setCheckout] = useState(false);
+  /** The sheets sit above the keys while they're up, rather than under them. */
+  const keyboardLift = useKeyboardLift(undefined, editing !== null || checkout);
   const [spent, setSpent] = useState('');
 
   /**
@@ -1113,7 +1116,7 @@ export default function ShoppingScreen() {
         animationType="fade"
         onRequestClose={() => setEditing(null)}
       >
-        <Pressable style={[styles.backdrop, { direction: isRTL() ? 'rtl' : 'ltr' }]} onPress={() => setEditing(null)}>
+        <Pressable style={[styles.backdrop, { direction: isRTL() ? 'rtl' : 'ltr' }, keyboardLift > 0 && { paddingBottom: spacing.lg + keyboardLift }]} onPress={() => setEditing(null)}>
           {/* The card springs up out of the dim as the dim fades in — every
               time, since the Modal mounts what is in it each time it opens.
               The spring holds the card's size (see `sheetFrame`); the card
@@ -1225,7 +1228,7 @@ export default function ShoppingScreen() {
         animationType="fade"
         onRequestClose={() => setCheckout(false)}
       >
-        <Pressable style={[styles.backdrop, { direction: isRTL() ? 'rtl' : 'ltr' }]} onPress={() => setCheckout(false)}>
+        <Pressable style={[styles.backdrop, { direction: isRTL() ? 'rtl' : 'ltr' }, keyboardLift > 0 && { paddingBottom: spacing.lg + keyboardLift }]} onPress={() => setCheckout(false)}>
           <PopIn from={0.92} style={styles.sheetFrame}>
             <Pressable style={styles.sheet} onPress={() => {}} pressScale={1}>
               <View style={styles.sheetHead}>

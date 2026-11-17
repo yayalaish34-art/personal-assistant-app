@@ -249,7 +249,7 @@ export const ACTION_TOOLS = [
     type: 'function' as const,
     function: {
       name: 'delete_task',
-      description: 'Delete a task for good. Only when the user asks to remove, delete or cancel it — never because it was done; that is complete_task.',
+      description: 'Delete a task for good. Only when the user asks to remove, delete or cancel it — never because it was done; that is complete_task. Only when it is clear which task they mean; if more than one could fit, ask which first. More than two deletions in one request need the user\'s yes first; the app refuses them otherwise.',
       parameters: {
         type: 'object',
         properties: {
@@ -345,7 +345,7 @@ export const ACTION_TOOLS = [
     type: 'function' as const,
     function: {
       name: 'remove_shopping_item',
-      description: 'Take something off the shopping list because it is no longer needed.',
+      description: 'Take something off the shopping list because it is no longer needed. More than two deletions in one request need the user\'s yes first; the app refuses them otherwise.',
       parameters: {
         type: 'object',
         properties: {
@@ -361,7 +361,7 @@ export const ACTION_TOOLS = [
     function: {
       name: 'delete_money_entry',
       description:
-        'Remove an income or expense that was recorded by mistake. The id must come from the money list you were given.',
+        "Remove an income or expense that was recorded by mistake. The id must come from the money list you were given. More than two deletions in one request need the user's yes first; the app refuses them otherwise.",
       parameters: {
         type: 'object',
         properties: {
@@ -654,7 +654,7 @@ export const ACTION_TOOLS = [
     function: {
       name: 'present_weather',
       description:
-        'Show a weather forecast as a visual card. Use whenever the user asks about the weather.',
+        'Show a weather forecast as a visual card — only with the figures check_weather returned in this conversation. Call check_weather first; never fill this in from a guess.',
       parameters: {
         type: 'object',
         properties: {
@@ -804,7 +804,7 @@ export const ACTION_TOOLS = [
     function: {
       name: 'check_weather',
       description:
-        "Fetch the current weather and the next-24h forecast for the user's area. Call this when the user asks about the weather, when an outdoor errand is on the schedule and conditions could matter, or whenever a plan would read differently in rain. Returns temperature, precipitation chance by hour, and a short condition code. Prefer present_weather to show the forecast; use the fetched facts to decide whether to suggest moving an outdoor plan.",
+        "The only source for anything about the weather: never say a forecast, rain or a temperature without calling this first in the same turn — not from memory, not from an earlier day. Fetch the current weather and the next-24h forecast for the user's area. Call this when the user asks about the weather, when an outdoor errand is on the schedule and conditions could matter, or whenever a plan would read differently in rain. Returns temperature, precipitation chance by hour, and a short condition code. Prefer present_weather to show the forecast; use the fetched facts to decide whether to suggest moving an outdoor plan.",
       parameters: {
         type: 'object',
         properties: {
@@ -954,7 +954,8 @@ export const ACTION_TOOLS = [
         properties: {
           destination: {
             type: 'string',
-            description: 'The place to travel to — a city, a venue, an address.',
+            description:
+              'The place to travel to — a city, a venue, an address. For a calendar entry, its title or its address exactly as the agenda writes it, in the same language: do not translate it.',
           },
         },
         required: ['destination'],
@@ -1034,7 +1035,8 @@ export const ACTION_TOOLS = [
     type: 'function' as const,
     function: {
       name: 'delete_event',
-      description: 'Remove an event from the calendar.',
+      description:
+        'Remove an event from the calendar. Only when it is clear which event the user means — they named it by title, person, place or time. If they said only "the meeting" and more than one upcoming event could fit, ask which one instead of picking. More than two deletions in one request need the user\'s yes first; the app refuses them otherwise.',
       parameters: {
         type: 'object',
         properties: {
@@ -2034,7 +2036,9 @@ export function buildSystemPrompt(input: {
     '  and ask once. A misheard sentence must not be able to empty a list.',
     '- If a request is missing a time you cannot reasonably guess, ask one short question.',
     '- After acting, say what you did in one sentence.',
-    '- For anything about their schedule, answer from the agenda below.',
+    '- For anything about their schedule, answer from the agenda below. Asked',
+    '  what is on a day ("what do I have tomorrow"), name that day\'s events AND',
+    '  the tasks due that day.',
     '- The turn "[SESSION START]" is not something they said: they have just',
     '  opened you. Be proactive and personal:',
     '  1. Greet them by name. Give a short, insightful daily briefing: what is',
@@ -2638,7 +2642,16 @@ async function answerTravelCheck(
   const place = named?.location?.trim() ?? destination;
 
   const from = { latitude: input.location.latitude, longitude: input.location.longitude };
-  const to = await geocode(place);
+  let to = await geocode(place);
+  // A street the map cannot place — often one she translated, "Bialik 20,
+  // Ramat Gan" for "ביאליק 20, רמת גן" — still ends in a city. An estimate
+  // to the city beats telling the user the dentist cannot be found.
+  let approximate: string | undefined;
+  const parts = place.split(',').map((p) => p.trim()).filter(Boolean);
+  for (let i = parts.length - 1; !to && i >= 1; i--) {
+    to = await geocode(parts[i]!);
+    if (to) approximate = parts[i];
+  }
   if (!to) {
     return JSON.stringify({ ok: false, error: `Could not find "${place}" on the map.` });
   }
@@ -2652,7 +2665,10 @@ async function answerTravelCheck(
     to: named ? `${named.title} (${place})` : destination,
     distanceKm: Math.round(km),
     estimatedMinutes: mins,
-    instruction: 'This is a minimum estimate (straight-line distance + fixed overhead). Real driving may take longer in traffic. Say the estimate naturally, e.g. "about 40 minutes from where you are".',
+    ...(approximate ? { approximateTo: approximate } : {}),
+    instruction: approximate
+      ? `The exact address was not on the map, so this is to ${approximate} in general. Say it as a rough estimate to ${approximate}, e.g. "about 20 minutes to Ramat Gan".`
+      : 'This is a minimum estimate (straight-line distance + fixed overhead). Real driving may take longer in traffic. Say the estimate naturally, e.g. "about 40 minutes from where you are".',
   });
 }
 

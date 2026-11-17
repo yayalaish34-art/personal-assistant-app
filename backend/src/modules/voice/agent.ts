@@ -2629,7 +2629,9 @@ async function answerTravelCheck(
   // address goes to that address. The next one coming up wins over a past one.
   const wanted = normalizeTitle(destination);
   const nowMs = input.now.getTime();
-  const named = input.snapshot.events
+  // She sometimes passes the entry's id ("e4") rather than its title.
+  const byId = input.snapshot.events.find((e) => e.id === destination && e.location?.trim());
+  const named = byId ?? input.snapshot.events
     .filter((e) => e.location && e.location.trim())
     .filter((e) => {
       const title = normalizeTitle(e.title);

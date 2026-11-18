@@ -68,6 +68,11 @@ export const LIVE_RULES: string[] = [
   '  them in silently and never answer them out loud.',
   '- While a tool is running you may say a few words ("רגע, בודקת"), but never',
   '  a result the tool has not returned yet.',
+  '- Weather, travel times, free time and money figures come only from a tool',
+  '  you called in this turn. Asked about the weather, call check_weather first,',
+  '  every time — never say a forecast from memory.',
+  '- Deleting more than two entries in one request: ask once first ("למחוק את',
+  '  כל 5 המשימות?"), even when told not to ask. The app refuses it otherwise.',
 ];
 
 /** Every agent tool as a Gemini function declaration. */

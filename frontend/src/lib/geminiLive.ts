@@ -6,6 +6,7 @@ import {
   type GainNode,
 } from 'react-native-audio-api';
 
+import { DeleteGuard } from './deleteGuard';
 import type { LiveTicket } from './voice';
 
 // One live conversation with Gemini, over one WebSocket.
@@ -191,6 +192,10 @@ export class LiveSession {
   private phase: LivePhase = 'listening';
   private thinkingTimer: ReturnType<typeof setTimeout> | null = null;
   private toolsRunning = 0;
+  /** More than two deletions in one request wait for a yes (see deleteGuard.ts). */
+  private guard = new DeleteGuard();
+  /** What the user last said or typed, for the guard to read a yes in. */
+  private lastWords = '';
   private cancelled = new Set<string>();
 
   private constructor(
@@ -511,6 +516,8 @@ export class LiveSession {
     if (activity === 'ACTIVITY_START') {
       this.utterance += 1;
       this.userText = '';
+      this.lastWords = '';
+      this.guard.userTurn();
       this.cutOff();
     } else if (activity === 'ACTIVITY_END' && this.phase !== 'speaking') {
       this.setPhase('thinking');
@@ -528,6 +535,7 @@ export class LiveSession {
     const heard = content.inputTranscription?.text;
     if (heard) {
       this.userText += heard;
+      this.lastWords = this.userText;
       this.cb.onUserText(this.utterance, this.userText.trim());
     }
 
@@ -579,6 +587,16 @@ export class LiveSession {
   private async runTools(calls: { id: string; name: string; args?: Record<string, unknown> }[]): Promise<void> {
     if (this.phase !== 'speaking') this.setPhase('thinking');
     const responses: { id: string; name: string; response: { result: string } }[] = [];
+    const screened = this.guard.screen(calls, this.lastWords);
+    if (!screened.allowed) {
+      for (const call of calls) {
+        if (!this.cancelled.has(call.id)) {
+          responses.push({ id: call.id, name: call.name, response: { result: screened.refusal(call) } });
+        }
+      }
+      this.send({ toolResponse: { functionResponses: responses } });
+      return;
+    }
     for (const call of calls) {
       if (this.cancelled.has(call.id)) continue;
       let result: string;
@@ -601,6 +619,8 @@ export class LiveSession {
   /** A typed line, in the same conversation. Typing means she should stop talking. */
   sendText(text: string): void {
     this.hush();
+    this.guard.userTurn();
+    this.lastWords = text;
     this.send({ realtimeInput: { text } });
     this.setPhase('thinking');
   }

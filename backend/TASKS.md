@@ -946,7 +946,7 @@ in `../docs/hebrew-voice-qa.md`. Code is still uncommitted. UI language changes
 do not rewrite stored user data.
 
 ### T13 — Google Maps: travel times, time to leave, places near you, cheaply
-DONE (local, uncommitted) — branch `feature/google-maps`
+DONE (commit 55c4d6d) — branch `feature/google-maps`, not merged
 
 Explicit user request, 2026-11-16: implement item 6 of the quote (travel time
 between events as a scheduling constraint, "time to leave", navigation), plus

@@ -419,6 +419,12 @@ export const he: Dict = {
   'profile.notificationsBlockedBody':
     'לאפליקציה אין הרשאה לשלוח לך התראות, אז תזכורות לא יגיעו. אפשר להפעיל אותן בהגדרות המכשיר.',
   'profile.openSettings': 'פתח הגדרות',
+  'profile.errandAlerts': 'התראה כשעוברים ליד חנות',
+  'profile.errandAlertsBody':
+    'כשיש לך משימה כמו "לקנות מתנה" ואת עוברת ליד חנות מתאימה, אזכיר לך. דורש הרשאת מיקום "תמיד".',
+  'profile.errandAlertsBlocked': 'אין הרשאת מיקום ברקע',
+  'profile.errandAlertsBlockedBody':
+    'כדי לדעת שעברת ליד חנות, האפליקציה צריכה הרשאת מיקום "תמיד". אפשר להפעיל אותה בהגדרות המכשיר. ההצעות לפי היומן ממשיכות לעבוד גם בלי.',
   'profile.week': 'השבוע שלך',
   'profile.weekBody': 'מה שהיא מתכננת סביבו. אפשר לשנות מתי שזה משתנה.',
   'profile.language': 'שפה',
@@ -463,6 +469,12 @@ export const he: Dict = {
   'notify.arrivedTitle': 'הגעת',
   'notify.arrivedBody': 'את ליד {{title}} — מתחיל בעוד {{minutes}} דקות.',
   'notify.arrivedBodyNow': '{{title}} מתחיל עכשיו. את במקום הנכון.',
+  'notify.errandNearTitle': 'את ליד {{place}}',
+  'notify.errandNearBody': 'זה הזמן ל"{{task}}"?',
+  'notify.errandNearBodyMinutes': 'יש לך {{minutes}} דקות פנויות. זה הזמן ל"{{task}}"?',
+  'calendar.navigate': 'נווט',
+  'calendar.navigateGoogle': 'Google Maps',
+  'calendar.navigateWaze': 'Waze',
   'notify.morningTitle': 'בוקר טוב',
   'notify.morningPacked': 'יום עמוס לפניך: {{events}} פגישות ו-{{tasks}} משימות. תכנני הפסקות.',
   'notify.morningModerate': '{{events}} פגישות ו-{{tasks}} משימות היום. יום טוב!',

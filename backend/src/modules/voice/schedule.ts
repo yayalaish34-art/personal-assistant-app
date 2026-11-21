@@ -20,12 +20,17 @@ export interface ProposedEvent {
   startsAt: string;
   endsAt?: string | null;
   location?: string | null;
+  /** Carried over when the place itself is unchanged, so it is never re-geocoded. */
+  locationLat?: number | null;
+  locationLng?: number | null;
 }
 
 export interface KnownEvent extends SlotEvent {
   id: string;
   title: string;
   location?: string | null;
+  locationLat?: number | null;
+  locationLng?: number | null;
 }
 
 export type ScheduleVerdict =
@@ -71,6 +76,8 @@ function withProposal(
     {
       title: proposed.title,
       location: proposed.location ?? null,
+      locationLat: proposed.locationLat ?? null,
+      locationLng: proposed.locationLng ?? null,
       startsAt,
       endsAt: new Date(start + minutes * MINUTE).toISOString(),
     },

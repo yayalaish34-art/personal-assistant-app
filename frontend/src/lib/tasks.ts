@@ -89,6 +89,11 @@ export type AgendaItem = {
   endsAt?: string;
   /** Events only: how far ahead it rings, or null for no reminder. */
   reminderMinutesBefore?: number | null;
+  /** Events only: where, as typed, and where it resolved to — for "Navigate". */
+  location?: string | null;
+  locationLat?: number | null;
+  locationLng?: number | null;
+  locationPlaceId?: string | null;
 };
 
 /** Wire event → local-time agenda item. */
@@ -103,6 +108,10 @@ export function eventToItem(e: Event): AgendaItem {
     notes: e.note ?? '',
     endsAt: e.endedAt ?? e.endsAt,
     reminderMinutesBefore: e.reminderMinutesBefore,
+    location: e.location ?? null,
+    locationLat: e.locationLat ?? null,
+    locationLng: e.locationLng ?? null,
+    locationPlaceId: e.locationPlaceId ?? null,
   };
 }
 

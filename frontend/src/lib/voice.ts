@@ -576,6 +576,15 @@ export async function buildSnapshot() {
         // Without this the server cannot tell Jerusalem from Haifa, and every
         // journey looks possible.
         location: e.location ?? null,
+        // Resolved once when the event was saved. With these the server never
+        // geocodes the text — and the calendar can stand in for GPS.
+        ...(typeof e.locationLat === 'number' && typeof e.locationLng === 'number'
+          ? {
+              locationLat: e.locationLat,
+              locationLng: e.locationLng,
+              locationPlaceId: e.locationPlaceId ?? null,
+            }
+          : {}),
         startsAt: e.startsAt,
         endsAt: e.endsAt,
       })),
@@ -714,8 +723,14 @@ export interface OpportunityNudgeResult {
  */
 export async function fetchOpportunityNudge(): Promise<OpportunityNudgeResult | null> {
   const location = getLocation();
-  if (!location) return null; // no GPS → nothing to say about "near you"
   const { snapshot, profile } = await buildSnapshotWithProfile();
+  // No GPS is fine when a meeting with a saved place can stand in for it —
+  // "after Ramat Gan you have an hour, the mall is next to it". Neither means
+  // there is nowhere to measure from.
+  const calendarKnowsWhere = snapshot.events.some(
+    (e) => 'locationLat' in e && typeof (e as { locationLat?: unknown }).locationLat === 'number',
+  );
+  if (!location && !calendarKnowsWhere) return null;
   try {
     const res = await fetch(OPPORTUNITY_NUDGE_URL, {
       method: 'POST',
@@ -726,7 +741,8 @@ export async function fetchOpportunityNudge(): Promise<OpportunityNudgeResult | 
         now: new Date().toISOString(),
         snapshot,
         profile,
-        location,
+        // Omitted rather than null: the server takes an absent position.
+        ...(location ? { location } : {}),
       }),
     });
     if (!res.ok) return null;

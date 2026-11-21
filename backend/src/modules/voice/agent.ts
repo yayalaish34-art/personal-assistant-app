@@ -6,8 +6,21 @@ import { config } from '../../config.js';
 import { logger } from '../../lib/logger.js';
 import { reviewSchedule, type KnownEvent, type ProposedEvent } from './schedule.js';
 import { findTime, today, type AvailabilityEvent } from './availability.js';
-import { geocode, distanceKm, travelMinutes, searchNearby } from './travel.js';
+import {
+  geocode,
+  distanceKm,
+  travelMinutes,
+  searchNearby,
+  findNearbySmart,
+  drivingMinutes,
+  eventPoint,
+  type Point,
+} from './travel.js';
 import { classifyErrand } from './errand-classifier.js';
+import { CATEGORY_OSM_TAGS } from './places-index.js';
+
+/** Every category the local snapshot knows, so the tool can ask for any of them. */
+const NEARBY_CATEGORIES = Object.keys(CATEGORY_OSM_TAGS) as [string, ...string[]];
 
 // The voice assistant's turn: what she heard in, what she says back plus the
 // changes to apply.
@@ -48,6 +61,14 @@ export const snapshotSchema = z.object({
         endsAt: z.string().nullish(),
         /** Free text, as the user typed it. Geocoded when a journey is checked. */
         location: z.string().nullish(),
+        /**
+         * Where `location` was resolved to, once, when the event was saved.
+         * When present the server uses these and never geocodes the text —
+         * that single lookup is the cheapest one there is.
+         */
+        locationLat: z.number().finite().min(-90).max(90).nullish(),
+        locationLng: z.number().finite().min(-180).max(180).nullish(),
+        locationPlaceId: z.string().max(300).nullish(),
       }),
     )
     .max(200)
@@ -931,12 +952,17 @@ export const ACTION_TOOLS = [
         properties: {
           category: {
             type: 'string',
-            enum: ['shopping', 'supermarket', 'mall', 'restaurant', 'cafe', 'pharmacy', 'gas_station', 'gym', 'park', 'hospital', 'bank', 'hotel'],
+            enum: [...NEARBY_CATEGORIES],
             description: 'What kind of place to search for.',
           },
           radiusMeters: {
             type: 'number',
             description: 'Search radius in meters. Default 3000 (3km). Use larger for sparse areas.',
+          },
+          openNow: {
+            type: 'boolean',
+            description:
+              'True ONLY when the user explicitly asks what is open now / still open / open at this hour. Costs more, so never set it otherwise.',
           },
         },
         required: ['category'],
@@ -1291,8 +1317,9 @@ const ARG_SCHEMAS = {
     horizonDays: z.number().positive().max(90).optional(),
   }),
   find_nearby: z.object({
-    category: z.enum(['shopping', 'supermarket', 'mall', 'restaurant', 'cafe', 'pharmacy', 'gas_station', 'gym', 'park', 'hospital', 'bank', 'hotel']),
+    category: z.enum(NEARBY_CATEGORIES),
     radiusMeters: z.number().positive().max(50_000).optional(),
+    openNow: z.boolean().optional(),
   }),
   check_travel: z.object({
     destination: z.string().min(1).max(200),
@@ -2558,14 +2585,18 @@ async function answerNearbySearch(
 
   const center = { latitude: input.location.latitude, longitude: input.location.longitude };
   const radius = typeof args.radiusMeters === 'number' ? args.radiusMeters : 3000;
+  const openNow = args.openNow === true;
 
-  const places = await searchNearby(center, category, radius);
+  const found = await findNearbySmart(center, category, { radiusMeters: radius, openNow });
+  const places = found.places;
 
   if (places.length === 0) {
     return JSON.stringify({
       ok: true,
       places: [],
-      note: `No ${category} places found within ${radius / 1000} km.`,
+      note: openNow && found.openNowChecked
+        ? `No ${category} places open right now within ${radius / 1000} km.`
+        : `No ${category} places found within ${radius / 1000} km.`,
     });
   }
 
@@ -2574,8 +2605,13 @@ async function answerNearbySearch(
     places: places.map((p) => ({
       name: p.name,
       distanceKm: p.distanceKm,
+      ...(p.openNow !== undefined ? { openNow: p.openNow } : {}),
     })),
-    instruction: 'List the closest 3–4 places naturally, with approximate distance. Mention there are more if the list is longer.',
+    instruction:
+      'List the closest 3–4 places naturally, with approximate distance. Mention there are more if the list is longer.' +
+      (openNow && !found.openNowChecked
+        ? ' Opening hours could not be checked — say so honestly and do not claim any of them is open.'
+        : ''),
   });
 }
 
@@ -2599,15 +2635,23 @@ async function answerTravelCheck(
   }
 
   const km = distanceKm(from, to);
-  const mins = travelMinutes(km);
+  const floor = travelMinutes(km);
+  // The user asked about leaving from here, now — the one question where live
+  // traffic is the whole answer, so this is the place the Pro request is
+  // spent. Under ~1 km it is not worth paying for.
+  const live = km >= 1 ? await drivingMinutes(from, to, { traffic: true }) : null;
 
   return JSON.stringify({
     ok: true,
     from: input.location.city ?? `${from.latitude.toFixed(3)}, ${from.longitude.toFixed(3)}`,
     to: destination,
     distanceKm: Math.round(km),
-    estimatedMinutes: mins,
-    instruction: 'This is a minimum estimate (straight-line distance + fixed overhead). Real driving may take longer in traffic. Say the estimate naturally, e.g. "about 40 minutes from where you are".',
+    estimatedMinutes: live ?? floor,
+    withTraffic: live !== null,
+    instruction:
+      live !== null
+        ? 'This is a real driving time with current traffic. Say it naturally, e.g. "about 40 minutes with traffic right now".'
+        : 'This is a minimum estimate (straight-line distance + fixed overhead). Real driving may take longer in traffic. Say the estimate naturally, e.g. "about 40 minutes from where you are".',
   });
 }
 
@@ -2635,7 +2679,10 @@ export async function answerSuggestOpportunity(
   // from their task list alone — pick what fits and surface it as a tappable
   // checklist. This was the whole miss of 5.3: the handler bailed early
   // because no GPS, so the device got nothing to render.
-  if (!input.location) {
+  //
+  // A calendar with placed meetings is a location source too (see
+  // `windowOrigin`), so only a turn with neither takes this path.
+  if (!input.location && !input.snapshot.events.some((e) => eventPoint(e))) {
     const open = input.snapshot.tasks
       .filter((t) => !t.isDone)
       .slice(0, 5);
@@ -2697,7 +2744,9 @@ export async function answerSuggestOpportunity(
       : undefined,
     wantDays: 1,
     searchDays: 1,
-    currentPosition: { latitude: input.location.latitude, longitude: input.location.longitude },
+    currentPosition: input.location
+      ? { latitude: input.location.latitude, longitude: input.location.longitude }
+      : undefined,
   });
 
   const todayWindows = days[0]?.windows ?? [];
@@ -2732,9 +2781,14 @@ export async function answerSuggestOpportunity(
   // offer that specific errand. This is the piece the stakeholder flagged
   // as missing — the user's shopping list is for groceries; a gift is a
   // task, not a list item, and the old code never saw it.
-  const here = { latitude: input.location.latitude, longitude: input.location.longitude };
+  const origin = windowOrigin(currentWindow, input, nowMs);
+  const here = origin?.point ?? null;
+  const nearEvent = origin?.fromEvent ?? null;
+  const nearNote = nearEvent
+    ? ` The distance is from the place of "${nearEvent}", which ends just before this window — say it that way ("near your meeting"), not "from where you are".`
+    : '';
   const errandMinWindow = 25;
-  if (currentWindow.minutes >= errandMinWindow) {
+  if (here && currentWindow.minutes >= errandMinWindow) {
     const openTasks = input.snapshot.tasks.filter((t) => !t.isDone);
     for (const task of openTasks) {
       const match = classifyErrand(task.title);
@@ -2760,9 +2814,11 @@ export async function answerSuggestOpportunity(
           task: { id: task.id, title: task.title },
           errandType: match.keyword,
           estimatedMinutes: totalMin,
+          nearEvent,
         },
         instruction:
-          'Make one short, specific offer naming the place, roughly how long it will take, and the task. Example shape: "You have about 55 min before Eliran; Dizengoff Center is 3 min away — want to pick up the gift for Ronit now?" Do not list other tasks.',
+          'Make one short, specific offer naming the place, roughly how long it will take, and the task. Example shape: "You have about 55 min before Eliran; Dizengoff Center is 3 min away — want to pick up the gift for Ronit now?" Do not list other tasks.' +
+          nearNote,
       });
     }
   }
@@ -2770,7 +2826,7 @@ export async function answerSuggestOpportunity(
   // Shopping that's a short detour from where they stand is the strongest fit:
   // one place, many items, no scheduling.
   const openShopping = input.snapshot.shopping.filter((s) => !s.isBought);
-  if (openShopping.length > 0 && currentWindow.minutes >= 25) {
+  if (here && openShopping.length > 0 && currentWindow.minutes >= 25) {
     // Grocery first, then general shopping — matches how the list is written.
     // Radius widened to 5 km to match a real "5-minute drive" budget.
     const market = (await searchNearby(here, 'supermarket', 5000))[0]
@@ -2794,9 +2850,11 @@ export async function answerSuggestOpportunity(
             items: openShopping.slice(0, 5).map((s) => s.name),
             itemCount: openShopping.length,
             estimatedMinutes: totalMin,
+            nearEvent,
           },
           instruction:
-            'Make one short, specific offer. Name the place, say roughly how long it will take, and name one or two items from the list. Example shape: "You have about 45 min before Eliran; Shufersal is 2 minutes away and you have 5 things on the list — want to go now?" Do not list every item.',
+            'Make one short, specific offer. Name the place, say roughly how long it will take, and name one or two items from the list. Example shape: "You have about 45 min before Eliran; Shufersal is 2 minutes away and you have 5 things on the list — want to go now?" Do not list every item.' +
+            nearNote,
         });
       }
     }
@@ -2862,6 +2920,49 @@ export interface OpportunityNudge {
 const NUDGE_MIN_WINDOW = 45;
 
 /**
+ * Where the user will actually be when a free window opens.
+ *
+ * The "by the calendar" half of the opportunity feature, and free: a window
+ * that opens right after a meeting with a known place starts *at that place*.
+ * "After Ramat Gan at four you have an hour, and Ayalon Mall is 2 km from it"
+ * needs no location permission and no paid lookup — the coordinates came
+ * with the event. A window already open uses the phone's GPS when there is
+ * one; otherwise the meeting that just ended stands in for it.
+ */
+export function windowOrigin(
+  window: { startsAt: string },
+  input: Pick<VoiceTurnInput, 'location' | 'snapshot' | 'profile'>,
+  nowMs: number,
+): { point: Point; fromEvent?: string } | null {
+  const start = Date.parse(window.startsAt);
+  const gps = input.location
+    ? { latitude: input.location.latitude, longitude: input.location.longitude }
+    : null;
+  const alreadyOpen = Number.isFinite(start) && start <= nowMs + 5 * 60_000;
+  if (alreadyOpen && gps) return { point: gps };
+
+  // The latest placed meeting that ends within buffer + 30 min of the window
+  // opening — i.e. the thing the user is walking out of.
+  const slackMs = ((input.profile?.bufferMinutes ?? 15) + 30) * 60_000;
+  let best: { end: number; point: Point; title: string } | null = null;
+  if (Number.isFinite(start)) {
+    for (const e of input.snapshot.events) {
+      const point = eventPoint(e);
+      if (!point) continue;
+      const s = Date.parse(e.startsAt);
+      const rawEnd = e.endsAt ? Date.parse(e.endsAt) : NaN;
+      const end = Number.isFinite(rawEnd) ? rawEnd : s + 60 * 60_000;
+      if (!Number.isFinite(end)) continue;
+      const gap = start - end;
+      if (gap < -60_000 || gap > slackMs) continue;
+      if (!best || end > best.end) best = { end, point, title: e.title };
+    }
+  }
+  if (best) return { point: best.point, fromEvent: best.title };
+  return gps ? { point: gps } : null;
+}
+
+/**
  * The mobile-side half of the "stop at the mall on the way" moment.
  *
  * The device's background job polls every so often, and when a free window
@@ -2871,7 +2972,9 @@ const NUDGE_MIN_WINDOW = 45;
  * user's language. The device just displays it.
  */
 export async function computeOpportunityNudge(input: VoiceTurnInput): Promise<OpportunityNudge> {
-  if (!input.location) {
+  // No GPS is fine when the calendar knows where the user will be; neither
+  // means there is nothing to measure a distance from.
+  if (!input.location && !input.snapshot.events.some((e) => eventPoint(e))) {
     return { shouldNudge: false, windowMinutes: 0, nextEvent: null, title: '', body: '' };
   }
 
@@ -2899,7 +3002,9 @@ export async function computeOpportunityNudge(input: VoiceTurnInput): Promise<Op
       : undefined,
     wantDays: 1,
     searchDays: 1,
-    currentPosition: { latitude: input.location.latitude, longitude: input.location.longitude },
+    currentPosition: input.location
+      ? { latitude: input.location.latitude, longitude: input.location.longitude }
+      : undefined,
   });
 
   const windows = days[0]?.windows ?? [];
@@ -2912,7 +3017,21 @@ export async function computeOpportunityNudge(input: VoiceTurnInput): Promise<Op
 
   const nextEvent = windowNow.nextTitle ?? null;
   const lang: 'he' | 'en' = input.language === 'he' ? 'he' : 'en';
-  const here = { latitude: input.location.latitude, longitude: input.location.longitude };
+  const origin = windowOrigin(windowNow, input, nowMs);
+  if (!origin) {
+    return { shouldNudge: false, windowMinutes: windowNow.minutes, nextEvent, title: '', body: '' };
+  }
+  const here = origin.point;
+  // "1.3 km from you" when measured from the phone; "from <meeting>" when the
+  // window opens after a meeting and the distance is measured from there.
+  const fromWhere = (km: number): string =>
+    origin.fromEvent
+      ? lang === 'he'
+        ? `${km} ק"מ מ"${origin.fromEvent}"`
+        : `${km} km from "${origin.fromEvent}"`
+      : lang === 'he'
+        ? `${km} ק"מ ממך`
+        : `${km} km away`;
   const buffer = input.profile?.bufferMinutes ?? 15;
 
   // 1) An errand-flavoured task with a place within 5 km.
@@ -2928,8 +3047,8 @@ export async function computeOpportunityNudge(input: VoiceTurnInput): Promise<Op
     const km = Math.round(place.distanceKm * 10) / 10;
     const title = lang === 'he' ? 'יש לך חלון פנוי' : 'A window just opened';
     const body = lang === 'he'
-      ? `${windowNow.minutes} דק פנויות${nextEvent ? ` לפני ${nextEvent}` : ''} — ${place.name} ${km} ק"מ ממך, רוצה לקפוץ ל"${task.title}"?`
-      : `${windowNow.minutes} min free${nextEvent ? ` before ${nextEvent}` : ''} — ${place.name} is ${km} km away. Want to stop for "${task.title}"?`;
+      ? `${windowNow.minutes} דק פנויות${nextEvent ? ` לפני ${nextEvent}` : ''} — ${place.name} ${fromWhere(km)}, רוצה לקפוץ ל"${task.title}"?`
+      : `${windowNow.minutes} min free${nextEvent ? ` before ${nextEvent}` : ''} — ${place.name} is ${fromWhere(km)}. Want to stop for "${task.title}"?`;
     return {
       shouldNudge: true,
       windowMinutes: windowNow.minutes,
@@ -2956,8 +3075,8 @@ export async function computeOpportunityNudge(input: VoiceTurnInput): Promise<Op
         const km = Math.round(market.distanceKm * 10) / 10;
         const title = lang === 'he' ? 'יש לך חלון פנוי' : 'A window just opened';
         const body = lang === 'he'
-          ? `${windowNow.minutes} דק פנויות${nextEvent ? ` לפני ${nextEvent}` : ''} — ${market.name} ${km} ק"מ ממך, ${openShopping.length} פריטים מהרשימה. לקפוץ עכשיו?`
-          : `${windowNow.minutes} min free${nextEvent ? ` before ${nextEvent}` : ''} — ${market.name} is ${km} km away, ${openShopping.length} items on the list. Go now?`;
+          ? `${windowNow.minutes} דק פנויות${nextEvent ? ` לפני ${nextEvent}` : ''} — ${market.name} ${fromWhere(km)}, ${openShopping.length} פריטים מהרשימה. לקפוץ עכשיו?`
+          : `${windowNow.minutes} min free${nextEvent ? ` before ${nextEvent}` : ''} — ${market.name} is ${fromWhere(km)}, ${openShopping.length} items on the list. Go now?`;
         return {
           shouldNudge: true,
           windowMinutes: windowNow.minutes,
@@ -4364,11 +4483,20 @@ async function reviewProposedTime(
     startsAt: e.startsAt,
     endsAt: e.endsAt ?? null,
     location: e.location ?? null,
+    locationLat: e.locationLat ?? null,
+    locationLng: e.locationLng ?? null,
   }));
 
   const movingId = action.tool === 'update_event' && typeof args.id === 'string' ? args.id : undefined;
   const moving = movingId ? known.find((e) => e.id === movingId) : undefined;
 
+  const newPlace = typeof args.location === 'string' && args.location ? args.location : null;
+  // Moving a meeting in time keeps its place, and the place keeps the
+  // coordinates the device already resolved — no second geocode for a re-time.
+  const keepsPlace =
+    !newPlace ||
+    (moving?.location != null &&
+      newPlace.trim().toLowerCase() === moving.location.trim().toLowerCase());
   const proposed: ProposedEvent = {
     title:
       (typeof args.title === 'string' && args.title) ||
@@ -4376,8 +4504,10 @@ async function reviewProposedTime(
       (typeof args.matchTitle === 'string' ? args.matchTitle : 'the meeting'),
     startsAt,
     endsAt: typeof args.endsAt === 'string' ? args.endsAt : null,
-    location:
-      (typeof args.location === 'string' && args.location) || moving?.location || null,
+    location: newPlace || moving?.location || null,
+    ...(keepsPlace && moving
+      ? { locationLat: moving.locationLat ?? null, locationLng: moving.locationLng ?? null }
+      : {}),
   };
 
   const verdict = await reviewSchedule(

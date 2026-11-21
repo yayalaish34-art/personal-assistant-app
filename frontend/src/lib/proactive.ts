@@ -3,9 +3,10 @@ import * as BackgroundFetch from 'expo-background-fetch';
 
 import { api, type Event, type Task } from './api';
 import { t } from './i18n';
-import { scheduleReminder } from './notifications';
+import { refineLeaveRemindersWithTraffic, scheduleReminder } from './notifications';
+import { refreshGeofences } from './geofencing';
 import { storage, type Profile } from './storage';
-import { estimateTravelMinutes } from './travel';
+import { estimateTravelMinutes, eventPoint } from './travel';
 import { fetchOpportunityNudge } from './voice';
 
 // Proactive pattern-based notifications.
@@ -123,6 +124,19 @@ TaskManager.defineTask(PROACTIVE_TASK, async () => {
     const profile = await storage.getProfile();
     if (isDuringSleep(profile)) return BackgroundFetch.BackgroundFetchResult.NoData;
 
+    // Housekeeping that never notifies by itself, so it runs before the
+    // branches below can return: one live-traffic check per placed meeting
+    // about to start (moves its "time to leave" buzz), and the store
+    // geofences kept in step with where the phone now is. Both are cheap when
+    // nothing changed — refined meetings and unmoved fences are skipped.
+    try {
+      const { events } = await api.listEvents();
+      await refineLeaveRemindersWithTraffic(events);
+    } catch { /* never let housekeeping cost the nudges below */ }
+    try {
+      await refreshGeofences();
+    } catch { /* same */ }
+
     const last = await getLastRun();
     const today = todayStr();
     const tomorrow = tomorrowStr();
@@ -148,7 +162,7 @@ TaskManager.defineTask(PROACTIVE_TASK, async () => {
       const first = liveEvents[0];
       if (first) {
         const startMs = new Date(first.startsAt).getTime();
-        const travelMin = await estimateTravelMinutes(first.location) ?? 0;
+        const travelMin = await estimateTravelMinutes(first.location, eventPoint(first)) ?? 0;
         const prepMin = profile.prepTimeMinutes ?? 30;
         const leaveReadyMs = startMs - (travelMin + prepMin) * 60_000;
         // Only schedule if the nudge still has somewhere to land ahead of

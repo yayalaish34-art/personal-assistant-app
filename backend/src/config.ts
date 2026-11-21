@@ -61,6 +61,29 @@ export const configSchema = z.object({
   // The model the agent thinks with, on ElevenLabs' side. Read by the sync
   // script only; changing it takes a re-run of the script, not a deploy.
   ELEVENLABS_AGENT_LLM: z.string().default('gemini-3.5-flash'),
+  // Google Maps Platform (Geocoding, Routes, Places). Optional: without a key
+  // every lookup stays on the free path (OSM snapshot, Open-Meteo/Nominatim,
+  // straight-line estimate) exactly as before. Restrict the key in Cloud
+  // Console to those three APIs and set daily quotas there as well — this
+  // server's budget is the first fence, Google's quotas the second.
+  // An empty value (as copied from .env.example) means "not set", never a
+  // startup failure.
+  GOOGLE_MAPS_API_KEY: z
+    .string()
+    .optional()
+    .transform((s) => (s?.trim() ? s.trim() : undefined)),
+  // Kill switch. 'false' sends nothing to Google even with a key set.
+  GOOGLE_MAPS_ENABLED: z.preprocess(
+    (v) => (v === '' ? undefined : v),
+    z.enum(['true', 'false']).default('true'),
+  ),
+  // Daily ceiling at list price (free monthly allowance not subtracted, so
+  // this is an upper bound). Past it, lookups fall back to the free path.
+  // Empty means the default, not zero — zero would silently switch Google off.
+  GOOGLE_MAPS_DAILY_BUDGET_USD: z.preprocess(
+    (v) => (v === '' ? undefined : v),
+    z.coerce.number().nonnegative().default(5),
+  ),
   EXPO_ACCESS_TOKEN: z.string().optional(),
   CORS_ORIGINS: z
     .string()

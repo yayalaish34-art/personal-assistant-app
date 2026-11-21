@@ -5,7 +5,7 @@ import { Platform } from 'react-native';
 import { t } from './i18n';
 import { REMINDER_CHANNEL, requestNotifications } from './permissions';
 import { storage } from './storage';
-import { estimateTravelMinutes } from './travel';
+import { estimateTravelMinutes, estimateWithTraffic, eventPoint } from './travel';
 
 // Reminders, scheduled on the device.
 //
@@ -215,6 +215,8 @@ export async function scheduleEventReminder(event: {
   title: string;
   startsAt: string;
   location?: string | null;
+  locationLat?: number | null;
+  locationLng?: number | null;
   reminderMinutesBefore: number | null;
 }): Promise<void> {
   if (event.reminderMinutesBefore === null || event.reminderMinutesBefore === undefined) {
@@ -253,12 +255,21 @@ export async function scheduleEventReminder(event: {
  * null estimate (no permission, no fix, unknown place, nearby) cancels this
  * one silently and leaves the ordinary prep reminder in place.
  */
-export async function scheduleEventLeaveReminder(event: {
-  id: string;
-  title: string;
-  startsAt: string;
-  location?: string | null;
-}): Promise<void> {
+export async function scheduleEventLeaveReminder(
+  event: {
+    id: string;
+    title: string;
+    startsAt: string;
+    location?: string | null;
+    locationLat?: number | null;
+    locationLng?: number | null;
+  },
+  /**
+   * A travel time already worked out — the live-traffic one from
+   * `refineLeaveReminderWithTraffic`. Omitted, the free local estimate is used.
+   */
+  knownTravelMin?: number,
+): Promise<void> {
   const leaveId = `leave-${event.id}`;
   const loc = event.location?.trim();
   if (!loc) {
@@ -268,7 +279,7 @@ export async function scheduleEventLeaveReminder(event: {
   const starts = new Date(event.startsAt).getTime();
   if (Number.isNaN(starts)) return;
 
-  const travelMin = await estimateTravelMinutes(loc);
+  const travelMin = knownTravelMin ?? (await estimateTravelMinutes(loc, eventPoint(event)));
   if (travelMin === null) {
     await cancelReminder(leaveId);
     return;
@@ -290,6 +301,65 @@ export async function scheduleEventLeaveReminder(event: {
     at: leaveAt,
     notAfter: new Date(starts),
   });
+}
+
+const REFINED_KEY = '@pa/leaveRefined';
+
+/**
+ * The one live-traffic check per meeting.
+ *
+ * Called by the background job. For a placed meeting starting in the next
+ * 40–150 minutes, ask the server once for the drive with traffic and move the
+ * "time to leave" buzz to match. Once per event and start time, so a meeting
+ * that gets moved is checked again but one that does not is never paid for
+ * twice. A short drive, no fix or no answer leaves the free estimate alone.
+ */
+export async function refineLeaveRemindersWithTraffic(
+  events: {
+    id: string;
+    title: string;
+    startsAt: string;
+    location?: string | null;
+    locationLat?: number | null;
+    locationLng?: number | null;
+    deletedAt?: string | null;
+    endedAt?: string | null;
+    reminderMinutesBefore?: number | null;
+  }[],
+): Promise<void> {
+  const now = Date.now();
+  const due = events.filter((e) => {
+    if (e.deletedAt || e.endedAt || !e.location?.trim() || !eventPoint(e)) return false;
+    // The leave buzz only exists alongside an ordinary reminder.
+    if (e.reminderMinutesBefore === null || e.reminderMinutesBefore === undefined) return false;
+    const lead = new Date(e.startsAt).getTime() - now;
+    return lead > 40 * 60_000 && lead < 150 * 60_000;
+  });
+  if (due.length === 0) return;
+
+  let done: Record<string, string> = {};
+  try {
+    done = JSON.parse((await AsyncStorage.getItem(REFINED_KEY)) ?? '{}');
+  } catch {
+    done = {};
+  }
+
+  for (const e of due) {
+    if (done[e.id] === e.startsAt) continue;
+    // Marked before asking: a failed request is not retried every 15 minutes.
+    done[e.id] = e.startsAt;
+    const minutes = await estimateWithTraffic(e);
+    if (minutes !== null) await scheduleEventLeaveReminder(e, minutes);
+  }
+
+  // Keep the map from growing forever: only events still ahead matter.
+  const ahead = new Set(events.filter((e) => new Date(e.startsAt).getTime() > now).map((e) => e.id));
+  for (const id of Object.keys(done)) if (!ahead.has(id)) delete done[id];
+  try {
+    await AsyncStorage.setItem(REFINED_KEY, JSON.stringify(done));
+  } catch {
+    /* best effort */
+  }
 }
 
 /**

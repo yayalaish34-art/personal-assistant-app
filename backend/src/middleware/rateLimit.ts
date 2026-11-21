@@ -296,3 +296,39 @@ export const authLimiter: RequestHandler = rateLimit({
   handler: makeHandler('Too many authentication requests'),
   skip: disabledForTests,
 });
+
+// ---------------------------------------------------------------------------
+// mapsLimiter — 20 req/min AND 150 req/day, for /maps/*
+// ---------------------------------------------------------------------------
+//
+// Unauthenticated like /voice/*, so keyed by IP in practice. A device asks a
+// handful of these a day — one resolve per new event whose name its own
+// geocoder missed, one eta per event about an hour before leaving, a fence
+// refresh when tasks change — so the daily ceiling is generous for a person
+// and tight for a script. The dollar budget in maps/budget.ts is the fence
+// behind this one.
+
+const mapsMinuteLimiter: RequestHandler = rateLimit({
+  windowMs: 60 * 1000,
+  limit: 20,
+  keyGenerator: userKey,
+  standardHeaders: true,
+  legacyHeaders: false,
+  validate: { keyGeneratorIpFallback: false },
+  handler: makeHandler('Maps rate limit exceeded'),
+  skip: disabledForTests,
+});
+
+const mapsDayLimiter: RequestHandler = rateLimit({
+  windowMs: 24 * 60 * 60 * 1000,
+  limit: 150,
+  keyGenerator: userKey,
+  standardHeaders: true,
+  legacyHeaders: false,
+  validate: { keyGeneratorIpFallback: false },
+  handler: makeHandler('Maps daily rate limit exceeded'),
+  skip: disabledForTests,
+});
+
+/** mapsLimiter — apply to every /maps/* route. */
+export const mapsLimiter: RequestHandler[] = [mapsMinuteLimiter, mapsDayLimiter];

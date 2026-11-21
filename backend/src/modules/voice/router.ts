@@ -325,12 +325,16 @@ const opportunityBody = z.object({
     budgets: {},
   }),
   profile: profileSchema.optional(),
-  location: z.object({
-    latitude: z.number().finite(),
-    longitude: z.number().finite(),
-    city: z.string().max(120).optional(),
-    country: z.string().max(120).optional(),
-  }),
+  // Optional since the calendar can stand in for GPS: a window that opens
+  // after a meeting with coordinates is measured from that meeting.
+  location: z
+    .object({
+      latitude: z.number().finite(),
+      longitude: z.number().finite(),
+      city: z.string().max(120).optional(),
+      country: z.string().max(120).optional(),
+    })
+    .optional(),
 });
 
 voiceRouter.post(

@@ -35,6 +35,7 @@ import {
   ChevronRight,
   ChevronDown,
   CalendarClock,
+  MapPin,
   X,
 } from 'lucide-react-native';
 
@@ -66,7 +67,7 @@ import {
 } from '../lib/storage';
 import { getNotificationState, requestNotifications } from '../lib/permissions';
 import { cancelAllReminders } from '../lib/notifications';
-import { stopGeofencing } from '../lib/geofencing';
+import { refreshGeofences, requestBackgroundLocation, stopGeofencing } from '../lib/geofencing';
 import { unregisterProactiveTask } from '../lib/proactive';
 import { getAppearance, setAppearance } from '../lib/appearance';
 import { PersonalizationField, PERSONALIZATION_QUESTIONS } from '../components/PersonalizationFields';
@@ -361,6 +362,30 @@ export default function SettingsScreen() {
    * "on" above notifications that never arrived. Now the switch asks, and
    * refuses to claim it is on when it is not.
    */
+  /**
+   * Takes effect at once, outside the Save button: the background geofence
+   * job reads stored settings, not this screen. Only this one field is
+   * written, so an unsaved name edit is not saved along with it.
+   */
+  const toggleErrandAlerts = async (on: boolean) => {
+    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+    let granted = false;
+    if (on) {
+      granted = await requestBackgroundLocation();
+      if (!granted) {
+        Alert.alert(t('profile.errandAlertsBlocked'), t('profile.errandAlertsBlockedBody'), [
+          { text: t('common.cancel'), style: 'cancel' },
+          { text: t('profile.openSettings'), onPress: () => Linking.openSettings() },
+        ]);
+      }
+    }
+    const value = on && granted;
+    setSettings((s) => ({ ...s, errandAlerts: value }));
+    const stored = await storage.getSettings();
+    await storage.saveSettings({ ...stored, errandAlerts: value });
+    void refreshGeofences();
+  };
+
   const toggleNotifications = async (on: boolean) => {
     Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
     if (!on) {
@@ -629,6 +654,28 @@ export default function SettingsScreen() {
             <Switch
               value={settings.notifications}
               onValueChange={toggleNotifications}
+              trackColor={{ true: NIGHT.blue[1], false: NIGHT.cardAlt }}
+              ios_backgroundColor={NIGHT.cardAlt}
+              thumbColor={colors.primaryText}
+            />
+          </View>
+        </Card>
+
+        {/* ── Near a store ──
+             Opt-in on its own switch: it is the one feature that needs the
+             "Always" location permission, and asking for that on first launch
+             would be asking for trust before earning it. ── */}
+        <Card delay={415} style={styles.card}>
+          <View style={[styles.cardHeaderRow, { marginBottom: 0 }]}>
+            <IconDisc tile="green" Glyph={MapPin} />
+            <View style={{ flex: 1 }}>
+              <Text style={styles.cardTitle}>{t('profile.errandAlerts')}</Text>
+              <Text style={styles.mutedText}>{t('profile.errandAlertsBody')}</Text>
+            </View>
+            <Switch
+              value={settings.errandAlerts && settings.notifications}
+              onValueChange={toggleErrandAlerts}
+              disabled={!settings.notifications}
               trackColor={{ true: NIGHT.blue[1], false: NIGHT.cardAlt }}
               ios_backgroundColor={NIGHT.cardAlt}
               thumbColor={colors.primaryText}

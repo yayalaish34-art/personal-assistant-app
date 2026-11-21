@@ -944,3 +944,61 @@ purchase or mobile rebuild was needed. Physical-device layout/listening
 verification remains. Sources, cost estimates and release details are recorded
 in `../docs/hebrew-voice-qa.md`. Code is still uncommitted. UI language changes
 do not rewrite stored user data.
+
+### T13 — Google Maps: travel times, time to leave, places near you, cheaply
+DONE (local, uncommitted) — branch `feature/google-maps`
+
+Explicit user request, 2026-11-16: implement item 6 of the quote (travel time
+between events as a scheduling constraint, "time to leave", navigation), plus
+the client's ask that the assistant find nearby places to buy things, while
+spending as few paid Google requests as possible. Decisions taken with the
+user: "near a store" is detected **by the calendar by default** (free, no
+permission) **plus opt-in device geofences**; **live traffic only for
+"time to leave"** (and an explicit "how long from here" question).
+
+Scope note: nearby shopping via Google (opening hours, "open now") is not in
+the quote. The free OSM path already existed; the Google top-up is an
+estimated 6–8 h at ₪110/h, to be approved by the client separately.
+
+Backend: new `src/modules/maps/` (`google.ts` thin client with minimal field
+masks per SKU, `budget.ts` daily ceiling + per-SKU counters + `maps.spend` log,
+`cache.ts` TTL LRU, `router.ts` with `/maps/resolve`, `/maps/eta`,
+`/maps/errand-fences`). `travel.ts`: Google-first geocode with a 30-day cache,
+`drivingMinutes` (Essentials 7 days / Pro 20 min caches), `gateLeg`. The route
+is only asked when the straight-line floor cannot settle the question.
+`findNearbySmart`: OSM first, Google only below 2 hits or for `openNow`.
+`agent.ts`: snapshot events accept `locationLat/Lng/PlaceId`; `find_nearby`
+takes every snapshot category + `openNow`; `check_travel` uses live traffic;
+`windowOrigin` anchors opportunity offers/nudges to the meeting before a free
+window. `/voice/opportunity-nudge` `location` now optional. `config.ts`:
+`GOOGLE_MAPS_API_KEY`, `GOOGLE_MAPS_ENABLED`, `GOOGLE_MAPS_DAILY_BUDGET_USD`
+(empty values mean unset). `mapsLimiter` 20/min + 150/day.
+
+Frontend: `lib/places.ts` (OS geocoder first, then `/maps/resolve`; eta;
+errand fences; Waze/Google Maps deep links). Events store coordinates once
+after save (`ensureEventCoords`), cleared when the place changes. The voice
+snapshot carries them. The background job refines "time to leave" with one
+traffic check 40–150 min before a placed meeting (once per event+start).
+Geofencing registers store fences for errand tasks when
+`settings.errandAlerts` is on (opt-in switch in Settings, asks "Always"
+location). Calendar rows get a Navigate button.
+
+Deviation from plan: no Prisma migration. Events with locations live on the
+device (local-first). The DB `events` table has no location column at all and
+is not on this path, so coordinates travel in the snapshot instead.
+
+Validation: `npx tsc --noEmit` (backend) passes. New `tests/google-maps.test.ts`
+has 36 passing tests, asserting request counts against a fake transport.
+Full suite: 26 failed before and after with an identical failure list (237 → 273 passed; no local
+Postgres; unrelated pre-existing failures). Tests must run from an uppercase
+`C:` path. A lowercase `c:` cwd makes Vitest load twice and every file fails
+with "failed to find the runner". Frontend typecheck could not run cleanly:
+`node_modules` is missing `expo-location`, `expo-task-manager` and others.
+No live Google request was made.
+
+Remains: set `GOOGLE_MAPS_API_KEY` on Railway (restricted key + Cloud Console
+quotas); re-run `scripts/elevenlabs-agent.ts` so the live agent sees the new
+`find_nearby` schema; `npm install` in `frontend` and a device test of the
+store geofence, the leave-time refinement and the Navigate sheet; store
+review copy for background location (iOS `NSLocationAlwaysAndWhenInUse…`,
+Play Console background-location declaration).

@@ -23,6 +23,7 @@ import { parseRouter } from './modules/chat/parseRouter.js';
 import { speechRouter } from './modules/speech/router.js';
 import { voiceRouter } from './modules/voice/router.js';
 import { imageRouter } from './modules/image/router.js';
+import { mapsRouter } from './modules/maps/router.js';
 
 const require = createRequire(import.meta.url);
 const pkg = require('../package.json') as { version: string };
@@ -69,6 +70,9 @@ export function createApp(): Express {
   app.use('/', voiceRouter);
   // Also stateless: the device keeps the picture, the server keeps the key.
   app.use('/', imageRouter);
+  // Places and driving times: stateless too. The server keeps the Google key
+  // and the daily budget; the device keeps the coordinates it is given.
+  app.use('/', mapsRouter);
 
   app.use(notFoundHandler);
   app.use(errorHandler);

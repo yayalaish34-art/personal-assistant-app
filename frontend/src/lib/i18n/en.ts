@@ -429,6 +429,12 @@ export const en = {
   'profile.notificationsBlockedBody':
     'This app is not allowed to notify you, so reminders will not arrive. You can turn them on in the system settings.',
   'profile.openSettings': 'Open settings',
+  'profile.errandAlerts': 'Alert me near a store',
+  'profile.errandAlertsBody':
+    'When a task like "buy a gift" is open and you pass a store that fits, I\'ll remind you. Needs "Always" location access.',
+  'profile.errandAlertsBlocked': 'No background location access',
+  'profile.errandAlertsBlockedBody':
+    'To know you are passing a store, the app needs "Always" location access. You can allow it in the system settings. Calendar-based suggestions keep working without it.',
   'profile.week': 'Your week',
   'profile.weekBody': 'What she plans around. Change these whenever they change.',
   'profile.language': 'Assistant Language',
@@ -476,6 +482,12 @@ export const en = {
   'notify.arrivedTitle': 'You\'re here',
   'notify.arrivedBody': 'You\'re near {{title}} — it starts in {{minutes}} minutes.',
   'notify.arrivedBodyNow': '{{title}} is starting now. You\'re in the right place.',
+  'notify.errandNearTitle': 'You\'re near {{place}}',
+  'notify.errandNearBody': 'Good moment for "{{task}}"?',
+  'notify.errandNearBodyMinutes': 'You have {{minutes}} min free. Good moment for "{{task}}"?',
+  'calendar.navigate': 'Navigate',
+  'calendar.navigateGoogle': 'Google Maps',
+  'calendar.navigateWaze': 'Waze',
   'notify.morningTitle': 'Good morning',
   'notify.morningPacked': 'Packed day ahead: {{events}} meetings and {{tasks}} tasks. Plan your breaks.',
   'notify.morningModerate': '{{events}} meetings and {{tasks}} tasks today. You\'ve got this.',

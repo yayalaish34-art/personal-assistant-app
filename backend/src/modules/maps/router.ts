@@ -4,8 +4,9 @@ import { z } from 'zod';
 import { asyncHandler, parseBody } from '../../lib/http.js';
 import { mapsLimiter } from '../../middleware/rateLimit.js';
 import { classifyErrand } from '../voice/errand-classifier.js';
-import { searchNearby, distanceKm, travelMinutes, drivingMinutes } from '../voice/travel.js';
+import { searchNearby, distanceKm, travelMinutes, drivingRoute } from '../voice/travel.js';
 import { TtlCache, normalizePlaceText } from './cache.js';
+import { logMapsEvent } from './budget.js';
 import { googleGeocode, isGoogleEnabled, type ResolvedPlace } from './google.js';
 
 /**
@@ -48,7 +49,12 @@ mapsRouter.post(
     let place = resolveCache.get(key);
     if (place === undefined) {
       place = await googleGeocode(body.text, { language: body.language });
-      resolveCache.set(key, place, place ? undefined : 24 * 60 * 60_000);
+      // A miss is kept an hour, not a day: a refusal (no billing, API not
+      // enabled) looks the same as "no such place", and fixing the project
+      // should not take a day to show.
+      resolveCache.set(key, place, place ? undefined : 60 * 60_000);
+    } else if (place) {
+      logMapsEvent({ kind: 'cache', sku: 'geocoding', label: `כתובת: ${body.text}` });
     }
     res.json({ place, source: place ? 'google' : 'none' });
   }),
@@ -87,12 +93,13 @@ mapsRouter.post(
       : undefined;
     const live =
       km >= 1 && !tooEarly
-        ? await drivingMinutes(body.from, body.to, { traffic: true, departAt })
+        ? await drivingRoute(body.from, body.to, { traffic: true, departAt })
         : null;
     res.json({
-      minutes: live ?? floor,
+      minutes: live?.minutes ?? floor,
       withTraffic: live !== null,
-      distanceKm: Math.round(km * 10) / 10,
+      // Along the road when Google answered; the straight line otherwise.
+      distanceKm: live ? live.distanceKm : Math.round(km * 10) / 10,
     });
   }),
 );

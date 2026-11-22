@@ -18,7 +18,7 @@ import {
   NEARBY_FIELDS_PRO,
   NEARBY_FIELDS_ENTERPRISE,
 } from '../src/modules/maps/google.js';
-import { __resetBudgetForTest, spendReport } from '../src/modules/maps/budget.js';
+import { __resetBudgetForTest, recentMapsEvents, spendReport } from '../src/modules/maps/budget.js';
 import {
   __clearTravelCachesForTest,
   drivingMinutes,
@@ -442,6 +442,42 @@ describe('computeOpportunityNudge — by the calendar, without GPS', () => {
       },
     } as unknown as VoiceTurnInput);
     expect(nudge.shouldNudge).toBe(false);
+  });
+});
+
+// ── Dashboard feed ──────────────────────────────────────────────────────────
+
+describe('usage log for the dashboard', () => {
+  it('logs a paid request and its cached repeat, counting only the repeat as saved', async () => {
+    useFakeGoogle();
+    reply = () => routeReply(1800);
+    await drivingMinutes(TLV, JLM);
+    await drivingMinutes(TLV, JLM);
+    const kinds = recentMapsEvents().map((e) => e.kind);
+    expect(kinds).toEqual(['cache', 'google']); // newest first
+    expect(spendReport().monthSaved).toBe(1);
+    expect(spendReport().monthCount.routes_essentials).toBe(1);
+  });
+
+  it('logs a request the ceiling refused as blocked, and sends nothing', async () => {
+    useFakeGoogle();
+    __resetBudgetForTest(0.001);
+    await drivingMinutes(TLV, JLM);
+    expect(recentMapsEvents()[0]?.kind).toBe('blocked');
+    expect(sent).toHaveLength(0);
+  });
+
+  it('logs a geocode refused inside a 200 as failed, not as a success', async () => {
+    useFakeGoogle();
+    reply = () => ({ status: 'REQUEST_DENIED', error_message: 'billing' });
+    expect(await googleGeocode('עזריאלי')).toBeNull();
+    expect(recentMapsEvents()[0]).toMatchObject({ kind: 'google_failed' });
+    expect(recentMapsEvents()[0]!.label).toContain('REQUEST_DENIED');
+  });
+
+  it('is not mounted outside development', async () => {
+    expect((await request(app).get('/maps/dashboard')).status).toBe(404);
+    expect((await request(app).get('/maps/usage')).status).toBe(404);
   });
 });
 

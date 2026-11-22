@@ -1,6 +1,6 @@
 import { config } from '../../config.js';
 import { logger } from '../../lib/logger.js';
-import { tryCharge, type MapsSku } from './budget.js';
+import { logMapsEvent, tryCharge, type MapsSku } from './budget.js';
 
 /**
  * The only file that talks to Google Maps Platform.
@@ -50,10 +50,16 @@ export function isGoogleEnabled(): boolean {
   return apiKey() !== null;
 }
 
-async function send(sku: MapsSku, url: string, init: RequestInit): Promise<unknown | null> {
+async function send(
+  sku: MapsSku,
+  url: string,
+  init: RequestInit,
+  /** What was asked, for the dashboard's request log. */
+  label: string,
+): Promise<unknown | null> {
   const key = apiKey();
   if (!key) return null;
-  if (!tryCharge(sku)) return null;
+  if (!tryCharge(sku, new Date(), label)) return null;
 
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), TIMEOUT_MS);
@@ -65,11 +71,21 @@ async function send(sku: MapsSku, url: string, init: RequestInit): Promise<unkno
     });
     if (!res.ok) {
       logger.warn({ sku, status: res.status }, 'google maps request failed');
+      logMapsEvent({ kind: 'google_failed', sku, label: `${label} (HTTP ${res.status})` });
       return null;
     }
-    return await res.json();
+    const body = await res.json();
+    // The Geocoding web service reports refusals inside a 200.
+    const status = (body as { status?: string } | null)?.status;
+    if (status && status !== 'OK' && status !== 'ZERO_RESULTS') {
+      logMapsEvent({ kind: 'google_failed', sku, label: `${label} (${status})` });
+    } else {
+      logMapsEvent({ kind: 'google', sku, label });
+    }
+    return body;
   } catch (err) {
     logger.warn({ sku, err: String(err) }, 'google maps request errored');
+    logMapsEvent({ kind: 'google_failed', sku, label: `${label} (no answer)` });
     return null;
   } finally {
     clearTimeout(timer);
@@ -97,9 +113,12 @@ export async function googleGeocode(
     region: opts.region ?? 'il',
   });
   // The Geocoding web service takes the key as a query parameter.
-  const body = (await send('geocoding', `${GEOCODE_URL}?${params.toString()}&key={KEY}`, {
-    method: 'GET',
-  })) as {
+  const body = (await send(
+    'geocoding',
+    `${GEOCODE_URL}?${params.toString()}&key={KEY}`,
+    { method: 'GET' },
+    `כתובת: ${q}`,
+  )) as {
     status?: string;
     results?: {
       place_id?: string;
@@ -123,6 +142,11 @@ export async function googleGeocode(
 export interface LatLng {
   latitude: number;
   longitude: number;
+}
+
+/** "32.085,34.782" — enough to recognise a place in the log, no more. */
+function fmt(p: LatLng): string {
+  return `${p.latitude.toFixed(3)},${p.longitude.toFixed(3)}`;
 }
 
 export interface RouteResult {
@@ -157,14 +181,19 @@ export async function googleRoute(
   if (opts.traffic && opts.departAt && opts.departAt.getTime() > Date.now() + 60_000) {
     payload.departureTime = opts.departAt.toISOString();
   }
-  const body = (await send(opts.traffic ? 'routes_pro' : 'routes_essentials', ROUTES_URL, {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      'X-Goog-FieldMask': 'routes.duration,routes.distanceMeters',
+  const body = (await send(
+    opts.traffic ? 'routes_pro' : 'routes_essentials',
+    ROUTES_URL,
+    {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'X-Goog-FieldMask': 'routes.duration,routes.distanceMeters',
+      },
+      body: JSON.stringify(payload),
     },
-    body: JSON.stringify(payload),
-  })) as { routes?: { duration?: string; distanceMeters?: number }[] } | null;
+    `מסלול${opts.traffic ? ' עם פקקים' : ''}: ${fmt(from)} → ${fmt(to)}`,
+  )) as { routes?: { duration?: string; distanceMeters?: number }[] } | null;
   const route = body?.routes?.[0];
   const seconds = route?.duration ? Number.parseFloat(route.duration) : NaN;
   if (!route || !Number.isFinite(seconds)) return null;
@@ -258,7 +287,7 @@ export async function googleNearby(
         },
       },
     }),
-  })) as {
+  }, `מקומות${opts.withOpenNow ? ' פתוחים עכשיו' : ''}: ${category} ליד ${fmt(center)}`)) as {
     places?: {
       id?: string;
       displayName?: { text?: string };

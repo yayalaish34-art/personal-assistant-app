@@ -3,6 +3,7 @@ import { distanceKm as geoDistanceKm, type Point as GeoPoint } from './travel-ge
 import { findNearby } from './places-index.js';
 import { TtlCache, normalizePlaceText, roundCoord } from '../maps/cache.js';
 import { googleGeocode, googleNearby, googleRoute, isGoogleEnabled } from '../maps/google.js';
+import { logMapsEvent } from '../maps/budget.js';
 
 /**
  * Can someone actually get from one meeting to the next?
@@ -70,7 +71,10 @@ export async function geocode(place: string): Promise<Point | null> {
   const key = normalizePlaceText(place);
   if (!key) return null;
   const hit = cache.get(key);
-  if (hit !== undefined) return hit;
+  if (hit !== undefined) {
+    if (hit) logMapsEvent({ kind: 'cache', sku: 'geocoding', label: `כתובת: ${place.trim()}` });
+    return hit;
+  }
 
   const trimmed = place.trim();
 
@@ -93,6 +97,7 @@ export async function geocode(place: string): Promise<Point | null> {
   const primary = await tryOpenMeteo(trimmed);
   if (primary) {
     cache.set(key, primary);
+    logMapsEvent({ kind: 'free', sku: 'geocoding', label: `כתובת (Open-Meteo): ${trimmed}` });
     return primary;
   }
 
@@ -104,6 +109,7 @@ export async function geocode(place: string): Promise<Point | null> {
     const fallback = await tryNominatim(trimmed);
     if (fallback) {
       cache.set(key, fallback);
+      logMapsEvent({ kind: 'free', sku: 'geocoding', label: `כתובת (Nominatim): ${trimmed}` });
       return fallback;
     }
   }
@@ -207,7 +213,14 @@ export function travelMinutes(km: number): number {
  */
 const ROUTE_TTL_MS = 7 * 24 * 60 * 60_000;
 const TRAFFIC_ROUTE_TTL_MS = 20 * 60_000;
-const routeCache = new TtlCache<number | null>(5_000, ROUTE_TTL_MS);
+const routeCache = new TtlCache<DrivingRoute | null>(5_000, ROUTE_TTL_MS);
+
+export interface DrivingRoute {
+  /** Door to door, parking included. */
+  minutes: number;
+  /** Along the road, not the straight line. */
+  distanceKm: number;
+}
 
 function routeKey(from: Point, to: Point, traffic: boolean): string {
   const dp = traffic ? 2 : 3;
@@ -233,11 +246,29 @@ export async function drivingMinutes(
   to: Point,
   opts: { traffic?: boolean; departAt?: Date } = {},
 ): Promise<number | null> {
+  return (await drivingRoute(from, to, opts))?.minutes ?? null;
+}
+
+/** Same lookup and cache as `drivingMinutes`, with the road distance too. */
+export async function drivingRoute(
+  from: Point,
+  to: Point,
+  opts: { traffic?: boolean; departAt?: Date } = {},
+): Promise<DrivingRoute | null> {
   if (!isGoogleEnabled()) return null;
   const traffic = opts.traffic === true;
   const key = routeKey(from, to, traffic);
   const hit = routeCache.get(key);
-  if (hit !== undefined) return hit;
+  if (hit !== undefined) {
+    if (hit !== null) {
+      logMapsEvent({
+        kind: 'cache',
+        sku: traffic ? 'routes_pro' : 'routes_essentials',
+        label: `מסלול${traffic ? ' עם פקקים' : ''} מהזיכרון: ${hit.minutes} דק'`,
+      });
+    }
+    return hit;
+  }
   const route = await googleRoute(from, to, { traffic, departAt: opts.departAt });
   // A failure is remembered briefly so one bad pair cannot burn a request on
   // every candidate the scheduler tries.
@@ -245,9 +276,12 @@ export async function drivingMinutes(
     routeCache.set(key, null, 5 * 60_000);
     return null;
   }
-  const minutes = route.minutes + DOOR_TO_DOOR_MINUTES;
-  routeCache.set(key, minutes, traffic ? TRAFFIC_ROUTE_TTL_MS : ROUTE_TTL_MS);
-  return minutes;
+  const result: DrivingRoute = {
+    minutes: route.minutes + DOOR_TO_DOOR_MINUTES,
+    distanceKm: route.distanceKm,
+  };
+  routeCache.set(key, result, traffic ? TRAFFIC_ROUTE_TTL_MS : ROUTE_TTL_MS);
+  return result;
 }
 
 export type LegGate = 'impossible' | 'fits' | 'tight';
@@ -345,6 +379,17 @@ export async function findImpossibleLeg(
     const km = distanceKm(a, b);
     const floor = travelMinutes(km);
     const gate = gateLeg(floor, availableMinutes);
+    // A route Google would have been asked for, had the floor not settled it.
+    if (gate !== 'tight' && isGoogleEnabled()) {
+      logMapsEvent({
+        kind: 'gate',
+        sku: 'routes_essentials',
+        label:
+          gate === 'fits'
+            ? `${from.place} → ${to.place}: ${availableMinutes} דק' פנויות, מספיק בבירור`
+            : `${from.place} → ${to.place}: ${availableMinutes} דק' פנויות, בלתי אפשרי גם בקו אוויר`,
+      });
+    }
     if (gate === 'fits') continue;
 
     let neededMinutes = floor;
@@ -445,6 +490,13 @@ export async function findNearbySmart(
   const local = await searchNearby(center, category, radiusMeters, limit);
   const needGoogle = openNow || local.length < MIN_LOCAL_HITS;
   if (!needGoogle || !isGoogleEnabled()) {
+    if (isGoogleEnabled()) {
+      logMapsEvent({
+        kind: 'free',
+        sku: 'nearby_pro',
+        label: `מקומות מהקובץ המקומי: ${category} (${local.length} תוצאות)`,
+      });
+    }
     return { places: local, source: 'osm', openNowChecked: false };
   }
 
@@ -456,7 +508,14 @@ export async function findNearbySmart(
     Math.round(radiusMeters / 500),
   ].join(':');
   const hit = nearbyCache.get(key);
-  if (hit) return withDistances(hit, center, limit);
+  if (hit) {
+    logMapsEvent({
+      kind: 'cache',
+      sku: openNow ? 'nearby_enterprise' : 'nearby_pro',
+      label: `מקומות מהזיכרון: ${category}`,
+    });
+    return withDistances(hit, center, limit);
+  }
 
   const remote = await googleNearby(center, category, {
     radiusMeters,

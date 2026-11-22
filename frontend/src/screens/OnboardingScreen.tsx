@@ -720,7 +720,14 @@ export default function OnboardingScreen({ onDone }: { onDone: () => void }) {
           </StepIn>
         </View>
 
-        <ScrollView showsVerticalScrollIndicator={false} contentContainerStyle={styles.content}>
+        {/* Keyboard-aware on iOS, as on the entry form: room for the keys while
+            they're up, and back into place when they go. */}
+        <ScrollView
+          showsVerticalScrollIndicator={false}
+          contentContainerStyle={styles.content}
+          automaticallyAdjustKeyboardInsets
+          keyboardDismissMode="interactive"
+        >
           {/* The answers follow the question in, one beat behind it, and a list
               of them comes in row by row. Each step's answers are their own
               slot below, so a new step always mounts — which is what plays them. */}

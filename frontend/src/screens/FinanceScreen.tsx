@@ -58,6 +58,7 @@ import {
 } from '../lib/api';
 import { toDateStr } from '../lib/tasks';
 import { storage } from '../lib/storage';
+import { useKeyboardLift } from '../lib/useKeyboardLift';
 import { formatMoney } from '../lib/currency';
 import {
   debtTotals,
@@ -547,6 +548,8 @@ export default function FinanceScreen() {
   const [debts, setDebts] = useState<Debt[]>([]);
   const [budgets, setBudgets] = useState<Budgets>({});
   const [editor, setEditor] = useState<Editor | null>(null);
+  /** The sheet sits above the keys while they're up, rather than under them. */
+  const keyboardLift = useKeyboardLift(undefined, editor !== null);
   const [currency, setCurrency] = useState<string | null>(null);
   const [month, setMonth] = useState(monthKey());
   const [query, setQuery] = useState('');
@@ -1175,6 +1178,8 @@ export default function FinanceScreen() {
         showsVerticalScrollIndicator={false}
         contentContainerStyle={styles.content}
         keyboardShouldPersistTaps="handled"
+        automaticallyAdjustKeyboardInsets
+        keyboardDismissMode="interactive"
       >
         {/* ── Which month ── */}
         <Entrance delay={beat(1)} from={14}>
@@ -1348,7 +1353,7 @@ export default function FinanceScreen() {
         animationType="fade"
         onRequestClose={() => setEditor(null)}
       >
-        <Pressable style={[styles.backdrop, { direction: isRTL() ? 'rtl' : 'ltr' }]} onPress={() => setEditor(null)}>
+        <Pressable style={[styles.backdrop, { direction: isRTL() ? 'rtl' : 'ltr' }, keyboardLift > 0 && { paddingBottom: spacing.lg + keyboardLift }]} onPress={() => setEditor(null)}>
           {/* The panel springs up to its size on every open, over the
               backdrop's fade. Keyed on the opening rather than left to the
               modal's own mounting: iOS keeps the contents mounted until its

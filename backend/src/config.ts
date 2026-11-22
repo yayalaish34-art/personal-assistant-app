@@ -44,6 +44,9 @@ export const configSchema = z.object({
   // reliably — roughly a sixth of the price of gpt-4o per turn. Free rounds
   // keep the stronger model.
   OPENAI_FORCED_TOOL_MODEL: z.string().default('gpt-4o-mini'),
+  // The agent's drawings. gpt-image-1 was retired; its successor takes the
+  // same request.
+  OPENAI_IMAGE_MODEL: z.string().default('gpt-image-1.5'),
   // Text-to-speech for the voice assistant. Without a key the app still works;
   // the assistant answers in text and simply does not speak.
   ELEVENLABS_API_KEY: z.string().optional(),
@@ -84,6 +87,20 @@ export const configSchema = z.object({
     (v) => (v === '' ? undefined : v),
     z.coerce.number().nonnegative().default(5),
   ),
+  // The live voice agent: Gemini Live, over one WebSocket from the phone. The
+  // key never leaves this server — each conversation gets a single-use token
+  // with the whole setup (prompt, tools, voice) locked inside it. Without the
+  // key /voice/live/session answers "not configured".
+  GEMINI_API_KEY: z.string().optional(),
+  // gemini-3.8-live is the newer model; it also runs tools without pausing
+  // the conversation. Switching is this variable alone, no deploy of the app.
+  GEMINI_LIVE_MODEL: z.string().trim().min(1).default('gemini-3.1-flash-live-preview'),
+  // One of the prebuilt voices (the same set as Gemini TTS). Kore is a calm
+  // female voice; she speaks of herself in the feminine.
+  GEMINI_LIVE_VOICE: z.string().trim().min(1).default('Kore'),
+  // minimal | low | medium | high, for the 3.1 model (it defaults to minimal,
+  // the fastest). Unset sends nothing: 3.8 refuses the setting outright.
+  GEMINI_LIVE_THINKING: z.enum(['minimal', 'low', 'medium', 'high']).optional(),
   EXPO_ACCESS_TOKEN: z.string().optional(),
   CORS_ORIGINS: z
     .string()

@@ -1,21 +1,16 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import * as Haptics from 'expo-haptics';
-// For what importing it does, not for anything it exports: it installs the
-// WebRTC globals and the native audio session that the client below opens its
-// conversation over. The React Native package only re-exports the hooks; the
-// session object itself comes from the client it wraps (the same pinned copy).
-import '@elevenlabs/react-native';
-import { VoiceConversation, type Language } from '@elevenlabs/client';
 
 import { uuid } from './api';
-import { t, locale, getVoiceLanguage } from './i18n';
+import { LiveSession } from './geminiLive';
+import { t, locale } from './i18n';
 import { startLocationTracking, stopLocationTracking } from './location';
 import { requestMicrophone } from './permissions';
 import {
   agentAgenda,
   applyActions,
   generateImage,
-  openAgentSession,
+  openLiveSession,
   runAgentTool,
   parseCards,
   parseOffer,
@@ -46,16 +41,16 @@ import {
   type VoiceAction,
 } from './voice';
 
-// The conversation itself, live, with an ElevenLabs agent.
+// The conversation itself, live, with Gemini.
 //
-// ElevenLabs does the spoken loop end to end over one WebRTC connection: it
-// hears, decides when the user has finished, thinks, and talks — and the user
-// can talk over it. There is no record-upload-transcribe-answer-speak cycle on
-// this side any more; what is left here is the thread on screen, the tools
-// (each one forwarded to our server with this phone's data), and the changes
-// and cards those tools bring back.
+// Gemini Live does the spoken loop end to end over one WebSocket (see
+// geminiLive.ts): it hears, decides when the user has finished, thinks, and
+// talks — and the user can talk over it, which stops her on the spot. What is
+// left here is the thread on screen (both sides written down as they are
+// spoken), the tools (each one forwarded to our server with this phone's
+// data), and the changes and cards those tools bring back.
 //
-// Callbacks handed to the SDK live as long as the session does, so they read
+// Callbacks handed to the session live as long as it does, so they read
 // everything through refs: one that closed over a render would keep acting on
 // a thread the screen has already moved past.
 
@@ -161,12 +156,6 @@ export interface VoiceSession {
   end: () => void;
 }
 
-/** The orb's level from the SDK's 0–1 volume, which sits low for speech. */
-function toLevel(volume: number): number {
-  if (!Number.isFinite(volume)) return 0;
-  return Math.min(1, Math.max(0, volume * 2.2));
-}
-
 export function useVoiceSession(options: {
   userName?: string;
   /** Called after changes land, so the screen behind can refresh. */
@@ -190,12 +179,16 @@ export function useVoiceSession(options: {
   /** The tap handlers need the current lines, not a render's. */
   const linesRef = useRef<Line[]>([]);
   linesRef.current = lines;
-  const conversationRef = useRef<VoiceConversation | null>(null);
+  const sessionRef = useRef<LiveSession | null>(null);
   /** Set once the screen is going away or the session was ended on purpose. */
   const doneRef = useRef(false);
   const stateRef = useRef<VoiceState>('starting');
-  /** Her voice was turned down for the rest of a reply; back up when she stops. */
-  const mutedRef = useRef(false);
+  /**
+   * The lines being written down as they are spoken: utterance or reply
+   * number → the line on screen and its place in the saved history. A spoken
+   * line grows word by word, so it is updated in place rather than appended.
+   */
+  const liveLinesRef = useRef(new Map<string, { lineId: string; index: number }>());
   /** A line typed before the conversation was open, sent once it is. */
   const pendingRef = useRef<string | null>(null);
   const userNameRef = useRef(userName);
@@ -217,6 +210,28 @@ export function useVoiceSession(options: {
     void saveConversation(historyRef.current);
   }, []);
 
+  /**
+   * A spoken line, as far as it has been heard. The first words open it, the
+   * rest rewrite it; `final` saves the thread.
+   */
+  const spoken = useCallback((role: Line['role'], key: string, text: string, final: boolean) => {
+    if (!text) return;
+    const live = liveLinesRef.current.get(key);
+    if (!live) {
+      const lineId = uuid();
+      liveLinesRef.current.set(key, { lineId, index: historyRef.current.length });
+      setLines((prev) => [...prev, { id: lineId, role, text, at: Date.now() }]);
+      historyRef.current = [...historyRef.current, { role, content: text }];
+    } else {
+      setLines((prev) => prev.map((l) => (l.id === live.lineId ? { ...l, text } : l)));
+      const h = historyRef.current;
+      if (h[live.index]?.role === role) {
+        historyRef.current = [...h.slice(0, live.index), { role, content: text }, ...h.slice(live.index + 1)];
+      }
+    }
+    if (final) void saveConversation(historyRef.current);
+  }, []);
+
   /** A line for the screen only — a notice, not part of what was said. */
   const notice = useCallback((text: string) => {
     setLines((prev) => [...prev, { id: uuid(), role: 'assistant', text, at: Date.now() }]);
@@ -233,7 +248,7 @@ export function useVoiceSession(options: {
     void (async () => {
       try {
         const agenda = await agentAgenda(userNameRef.current);
-        conversationRef.current?.sendContextualUpdate(
+        sessionRef.current?.sendContext(
           `The user's data has just changed. This is the current agenda — use these ids from now on:\n${agenda}`,
         );
       } catch {
@@ -364,7 +379,7 @@ export function useVoiceSession(options: {
   useEffect(() => {
     let cancelled = false;
     doneRef.current = false;
-    mutedRef.current = false;
+    liveLinesRef.current = new Map();
 
     void startLocationTracking().catch(() => undefined);
 
@@ -389,95 +404,47 @@ export function useVoiceSession(options: {
 
       setPhase('starting');
       try {
-        const session = await openAgentSession(earlier, userNameRef.current);
-        if (cancelled) return;
-
-        const clientTools = Object.fromEntries(
-          session.tools.map((name) => [name, (params: unknown) => runToolRef.current(name, params)]),
-        );
-
-        const conversation = await VoiceConversation.startSession({
-          conversationToken: session.conversationToken,
-          connectionType: 'webrtc',
-          overrides: {
-            agent: {
-              prompt: { prompt: session.prompt },
-              language: getVoiceLanguage() as Language,
+        const session = await LiveSession.start(
+          // Each connection gets a fresh ticket. A reconnect after Google
+          // retires one carries the session on by its handle; failing that, the
+          // thread so far goes into the new prompt.
+          (resumeHandle) => openLiveSession(historyRef.current, userNameRef.current, resumeHandle),
+          {
+            onUserText: (n, text) => {
+              if (!doneRef.current) spoken('user', `u${runId}:${n}`, text, false);
+            },
+            onAgentText: (n, text, phase) => {
+              if (!doneRef.current) spoken('assistant', `a${runId}:${n}`, text, phase !== 'open');
+            },
+            onPhase: (phase) => {
+              if (!doneRef.current) setPhase(phase);
+            },
+            onToolCall: (name, args) => runToolRef.current(name, args),
+            onEnded: (error) => {
+              sessionRef.current = null;
+              if (doneRef.current) return;
+              if (error) {
+                fail(error);
+                return;
+              }
+              setPhase('stopped');
             },
           },
-          clientTools,
-          onMessage: ({ role, message }) => {
-            const text = message.trim();
-            if (!text || doneRef.current) return;
-            if (role === 'user') {
-              say('user', text);
-              setPhase('thinking');
-            } else {
-              say('assistant', text);
-            }
-          },
-          // Talked over, she stops mid-sentence; the line keeps only what was
-          // actually heard, so the thread does not claim she said the rest.
-          onAgentResponseCorrection: ({ original_agent_response, corrected_agent_response }) => {
-            const before = original_agent_response.trim();
-            const after = corrected_agent_response.trim();
-            setLines((prev) => {
-              const i = prev.map((l) => l.role === 'assistant' && l.text === before).lastIndexOf(true);
-              if (i < 0) return prev;
-              const next = [...prev];
-              next[i] = { ...next[i]!, text: after };
-              return next;
-            });
-            const h = historyRef.current;
-            const j = h.map((m) => m.role === 'assistant' && m.content === before).lastIndexOf(true);
-            if (j >= 0) {
-              historyRef.current = [...h.slice(0, j), { role: 'assistant', content: after }, ...h.slice(j + 1)];
-              void saveConversation(historyRef.current);
-            }
-          },
-          onModeChange: ({ mode }) => {
-            if (doneRef.current) return;
-            if (mode === 'speaking') {
-              if (!mutedRef.current) setPhase('speaking');
-              return;
-            }
-            if (mutedRef.current) {
-              mutedRef.current = false;
-              conversationRef.current?.setVolume({ volume: 1 });
-            }
-            setPhase('listening');
-          },
-          onError: (message) => {
-            console.warn('[voice] agent error:', message);
-          },
-          onDisconnect: (details) => {
-            conversationRef.current = null;
-            if (doneRef.current) return;
-            if (details.reason === 'error') {
-              fail(new Error(details.message));
-              return;
-            }
-            // She hung up (the conversation's time limit, or a goodbye): the
-            // thread stays, and the restart button opens a new one.
-            setPhase('stopped');
-          },
-        });
+        );
 
         if (cancelled) {
-          void conversation.endSession();
+          void session.close();
           return;
         }
-        conversationRef.current = conversation;
+        sessionRef.current = session;
         setPhase('listening');
 
         const typed = pendingRef.current;
         pendingRef.current = null;
         if (typed) {
-          conversation.sendUserMessage(typed);
-          setPhase('thinking');
+          session.sendText(typed);
         } else if (earlier.length === 0) {
-          conversation.sendUserMessage(SESSION_START);
-          setPhase('thinking');
+          session.sendText(SESSION_START);
         }
       } catch (e) {
         if (!cancelled) fail(e);
@@ -487,9 +454,9 @@ export function useVoiceSession(options: {
     return () => {
       cancelled = true;
       doneRef.current = true;
-      const conversation = conversationRef.current;
-      conversationRef.current = null;
-      void conversation?.endSession().catch(() => undefined);
+      const session = sessionRef.current;
+      sessionRef.current = null;
+      void session?.close().catch(() => undefined);
       stopLocationTracking();
     };
     // Keyed on `runId` and nothing else: the session owns its own lifecycle,
@@ -500,14 +467,9 @@ export function useVoiceSession(options: {
   // The orb follows whoever is talking.
   useEffect(() => {
     const timer = setInterval(() => {
-      const conversation = conversationRef.current;
-      if (!conversation) return;
-      try {
-        const speaking = stateRef.current === 'speaking';
-        setLevel(toLevel(speaking ? conversation.getOutputVolume() : conversation.getInputVolume()));
-      } catch {
-        /* between sessions */
-      }
+      const session = sessionRef.current;
+      if (!session) return;
+      setLevel(session.level(stateRef.current === 'speaking'));
     }, LEVEL_MS);
     return () => clearInterval(timer);
   }, []);
@@ -516,12 +478,9 @@ export function useVoiceSession(options: {
 
   /** Silences the rest of her reply. Talking over her interrupts her outright. */
   const hush = useCallback(() => {
-    const conversation = conversationRef.current;
-    if (!conversation || stateRef.current !== 'speaking') return;
-    mutedRef.current = true;
-    conversation.setVolume({ volume: 0 });
-    setPhase('listening');
-  }, [setPhase]);
+    if (stateRef.current !== 'speaking') return;
+    sessionRef.current?.hush();
+  }, []);
 
   const toggle = useCallback(() => {
     if (stateRef.current === 'speaking') hush();
@@ -546,9 +505,9 @@ export function useVoiceSession(options: {
 
   const end = useCallback(() => {
     doneRef.current = true;
-    const conversation = conversationRef.current;
-    conversationRef.current = null;
-    void conversation?.endSession().catch(() => undefined);
+    const session = sessionRef.current;
+    sessionRef.current = null;
+    void session?.close().catch(() => undefined);
     setPhase('stopped');
   }, [setPhase]);
 
@@ -577,9 +536,9 @@ export function useVoiceSession(options: {
       // Typing while she talks means the user is done listening.
       hush();
       say('user', said);
-      const conversation = conversationRef.current;
-      if (conversation) {
-        conversation.sendUserMessage(said);
+      const session = sessionRef.current;
+      if (session) {
+        session.sendText(said);
         setPhase('thinking');
         return;
       }
@@ -640,7 +599,7 @@ export function useVoiceSession(options: {
           { role: 'user', content: t('voice.offerPicked', { time: when }) },
         ];
         say('assistant', t('voice.offerDone', { time: when }));
-        conversationRef.current?.sendContextualUpdate(
+        sessionRef.current?.sendContext(
           `The user picked ${iso} from the times you offered; "${offer.title}" is now booked then.`,
         );
         changed(applied);
@@ -715,6 +674,7 @@ export function useVoiceSession(options: {
 
   const startOver = useCallback(() => {
     historyRef.current = [];
+    liveLinesRef.current = new Map();
     setLines([]);
     setUndoable([]);
     void clearConversation();

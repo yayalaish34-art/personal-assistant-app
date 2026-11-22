@@ -492,7 +492,14 @@ export default function SettingsScreen() {
         />
       </Entrance>
 
-      <ScrollView showsVerticalScrollIndicator={false} contentContainerStyle={styles.content}>
+      {/* Keyboard-aware on iOS, as on the entry form: room for the keys while
+          they're up, and back into place when they go. */}
+      <ScrollView
+        showsVerticalScrollIndicator={false}
+        contentContainerStyle={styles.content}
+        automaticallyAdjustKeyboardInsets
+        keyboardDismissMode="interactive"
+      >
         <Entrance delay={100} from={16}>
           <Text style={[styles.headline, alignStartStyle]}>
             {t('profile.headline.line1')} {t('profile.headline.line2')}

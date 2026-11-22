@@ -9,10 +9,6 @@ import {
   Easing,
   Image,
   ActivityIndicator,
-  Dimensions,
-  Keyboard,
-  LayoutAnimation,
-  Platform,
   useWindowDimensions,
   type StyleProp,
   type TextStyle,
@@ -29,6 +25,7 @@ import { X, Mic, Undo2, RotateCcw, Send, CheckCheck, Check, Clock, ArrowUpRight,
 import { Glow } from '../components/ui';
 import { api } from '../lib/api';
 import { useVoiceSession, type Line } from '../lib/useVoiceSession';
+import { useKeyboardLift } from '../lib/useKeyboardLift';
 import type { RootStackParamList } from '../navigation';
 import { colors, spacing, font, NIGHT, VOICE, themed } from '../theme';
 import { t, locale, alignStart, isRTL } from '../lib/i18n';
@@ -67,49 +64,6 @@ function whenLabel(iso: string): string {
   return days < 7
     ? d.toLocaleDateString(locale(), { weekday: 'long' })
     : d.toLocaleDateString(locale(), { weekday: 'short', day: 'numeric', month: 'short' });
-}
-
-/**
- * How far the keyboard reaches up into the page, in points; 0 while it is down.
- *
- * Not `KeyboardAvoidingView`: the page is an iOS sheet that starts below the
- * top of the screen, and KAV compares the sheet's own frame against the
- * keyboard's screen position, so it fell short by exactly that gap and the
- * composer stayed under the keys. It also overwrote the page's bottom padding,
- * which dropped the home-indicator inset. The sheet ends at the bottom of the
- * screen, so the overlap is simply how far the keyboard's top sits above it.
- * Android resizes the window itself (soft-input mode), so nothing is done there.
- */
-function useKeyboardLift(onShow?: () => void): number {
-  const [lift, setLift] = useState(0);
-  const onShowRef = useRef(onShow);
-  onShowRef.current = onShow;
-
-  useEffect(() => {
-    if (Platform.OS !== 'ios') return;
-    const follow = (next: number, duration: number) => {
-      // Move with the keyboard, on its own curve, rather than jumping after it.
-      if (duration > 0) {
-        LayoutAnimation.configureNext({
-          duration,
-          update: { type: LayoutAnimation.Types.keyboard },
-        });
-      }
-      setLift(next);
-    };
-    const change = Keyboard.addListener('keyboardWillChangeFrame', (e) => {
-      const overlap = Math.max(Dimensions.get('screen').height - e.endCoordinates.screenY, 0);
-      follow(overlap, e.duration);
-      if (overlap > 0) onShowRef.current?.();
-    });
-    const hide = Keyboard.addListener('keyboardWillHide', (e) => follow(0, e.duration));
-    return () => {
-      change.remove();
-      hide.remove();
-    };
-  }, []);
-
-  return lift;
 }
 
 /** The clock under a bubble. */

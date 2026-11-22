@@ -187,7 +187,7 @@ export const ACTION_TOOLS = [
     function: {
       name: 'create_image',
       description:
-        'Draw a picture, when the user asks for one — an image, a drawing, an illustration. Not for anything that belongs on the agenda.',
+        'Draw a picture, when the user asks for one — an image, a drawing, an illustration. Not for anything that belongs on the agenda. The picture takes up to a minute and appears on screen by itself: say you are drawing it, not that it is done, and never offer to send it.',
       parameters: {
         type: 'object',
         properties: {
@@ -255,7 +255,7 @@ export const ACTION_TOOLS = [
     type: 'function' as const,
     function: {
       name: 'complete_task',
-      description: 'Mark a task as done.',
+      description: 'Mark a task as done. This is the tool when the user says they did it ("I bought it", "done", "I called") — it keeps the record; delete_task does not.',
       parameters: {
         type: 'object',
         properties: {
@@ -270,7 +270,7 @@ export const ACTION_TOOLS = [
     type: 'function' as const,
     function: {
       name: 'delete_task',
-      description: 'Delete a task for good.',
+      description: 'Delete a task for good. Only when the user asks to remove, delete or cancel it — never because it was done; that is complete_task. Only when it is clear which task they mean; if more than one could fit, ask which first. More than two deletions in one request need the user\'s yes first; the app refuses them otherwise.',
       parameters: {
         type: 'object',
         properties: {
@@ -366,7 +366,7 @@ export const ACTION_TOOLS = [
     type: 'function' as const,
     function: {
       name: 'remove_shopping_item',
-      description: 'Take something off the shopping list because it is no longer needed.',
+      description: 'Take something off the shopping list because it is no longer needed. More than two deletions in one request need the user\'s yes first; the app refuses them otherwise.',
       parameters: {
         type: 'object',
         properties: {
@@ -382,7 +382,7 @@ export const ACTION_TOOLS = [
     function: {
       name: 'delete_money_entry',
       description:
-        'Remove an income or expense that was recorded by mistake. The id must come from the money list you were given.',
+        "Remove an income or expense that was recorded by mistake. The id must come from the money list you were given. More than two deletions in one request need the user's yes first; the app refuses them otherwise.",
       parameters: {
         type: 'object',
         properties: {
@@ -675,7 +675,7 @@ export const ACTION_TOOLS = [
     function: {
       name: 'present_weather',
       description:
-        'Show a weather forecast as a visual card. Use whenever the user asks about the weather.',
+        'Show a weather forecast as a visual card — only with the figures check_weather returned in this conversation. Call check_weather first; never fill this in from a guess.',
       parameters: {
         type: 'object',
         properties: {
@@ -825,7 +825,7 @@ export const ACTION_TOOLS = [
     function: {
       name: 'check_weather',
       description:
-        "Fetch the current weather and the next-24h forecast for the user's area. Call this when the user asks about the weather, when an outdoor errand is on the schedule and conditions could matter, or whenever a plan would read differently in rain. Returns temperature, precipitation chance by hour, and a short condition code. Prefer present_weather to show the forecast; use the fetched facts to decide whether to suggest moving an outdoor plan.",
+        "The only source for anything about the weather: never say a forecast, rain or a temperature without calling this first in the same turn — not from memory, not from an earlier day. Fetch the current weather and the next-24h forecast for the user's area. Call this when the user asks about the weather, when an outdoor errand is on the schedule and conditions could matter, or whenever a plan would read differently in rain. Returns temperature, precipitation chance by hour, and a short condition code. Prefer present_weather to show the forecast; use the fetched facts to decide whether to suggest moving an outdoor plan.",
       parameters: {
         type: 'object',
         properties: {
@@ -980,7 +980,8 @@ export const ACTION_TOOLS = [
         properties: {
           destination: {
             type: 'string',
-            description: 'The place to travel to — a city, a venue, an address.',
+            description:
+              'The place to travel to — a city, a venue, an address. For a calendar entry, its title or its address exactly as the agenda writes it, in the same language: do not translate it.',
           },
         },
         required: ['destination'],
@@ -1060,7 +1061,8 @@ export const ACTION_TOOLS = [
     type: 'function' as const,
     function: {
       name: 'delete_event',
-      description: 'Remove an event from the calendar.',
+      description:
+        'Remove an event from the calendar. Only when it is clear which event the user means — they named it by title, person, place or time. If they said only "the meeting" and more than one upcoming event could fit, ask which one instead of picking. More than two deletions in one request need the user\'s yes first; the app refuses them otherwise.',
       parameters: {
         type: 'object',
         properties: {
@@ -1546,8 +1548,15 @@ export function didNotCatchThat(language: string): string {
  * The agenda goes into the prompt rather than behind a lookup tool: the device
  * already has it, and one round trip is the difference between a conversation
  * and a wait.
+ *
+ * Each line carries what she needs to act on it without guessing: an event's
+ * end and place (check_travel is handed the address, not the title — "רופא
+ * שיניים" on its own geocoded to somewhere 118 km away), whether it is already
+ * over (with only a start time she greeted people with a meeting that had
+ * ended an hour before), and how often a task has slipped (the prompt's
+ * slipping-task rule reads postponeCount, which used to appear nowhere here).
  */
-export function describeSnapshot(snapshot: Snapshot, timezone: string): string {
+export function describeSnapshot(snapshot: Snapshot, timezone: string, now?: Date): string {
   const when = (iso: string | null | undefined) => {
     if (!iso) return 'no date';
     const d = new Date(iso);
@@ -1558,21 +1567,35 @@ export function describeSnapshot(snapshot: Snapshot, timezone: string): string {
       timeStyle: 'short',
     }).format(d);
   };
+  const clock = (iso: string) => {
+    const d = new Date(iso);
+    return Number.isNaN(d.getTime())
+      ? ''
+      : new Intl.DateTimeFormat('en-US', { timeZone: timezone, timeStyle: 'short' }).format(d);
+  };
+  const nowMs = now?.getTime();
 
   const tasks = snapshot.tasks.length
     ? snapshot.tasks
         .map(
           (t) =>
             `- [${t.id}] ${t.title} — due ${when(t.dueAt)}${t.isDone ? ' (done)' : ''}${
-              t.notes ? ` — ${t.notes}` : ''
-            }`,
+              t.postponeCount > 0 ? ` (postponed ${t.postponeCount}×)` : ''
+            }${t.notes ? ` — ${t.notes}` : ''}`,
         )
         .join('\n')
     : '- (none)';
 
   const events = snapshot.events.length
     ? snapshot.events
-        .map((e) => `- [${e.id}] ${e.title} — ${when(e.startsAt)}${e.note ? ` — ${e.note}` : ''}`)
+        .map((e) => {
+          const end = e.endsAt ? clock(e.endsAt) : '';
+          const endMs = Date.parse(e.endsAt ?? e.startsAt);
+          const over = nowMs !== undefined && Number.isFinite(endMs) && endMs <= nowMs;
+          return `- [${e.id}] ${e.title} — ${when(e.startsAt)}${end ? `–${end}` : ''}${
+            over ? ' (already over)' : ''
+          }${e.location ? ` — at ${e.location}` : ''}${e.note ? ` — ${e.note}` : ''}`;
+        })
         .join('\n')
     : '- (none)';
 
@@ -2032,10 +2055,17 @@ export function buildSystemPrompt(input: {
     '  present_weather: weather forecasts — always visual, not spoken.',
     '  present_summary: daily/weekly summaries with stats and highlights.',
     '  Keep speech concise without omitting the information the user asked to hear.',
-    '- If several entries match what they said, ask which one — briefly.',
+    '- If several entries match what they said, ask which one — briefly. This',
+    '  matters most before deleting or cancelling: "cancel the meeting" with two',
+    '  meetings on the calendar is a question, not a guess.',
+    '- Deleting or cancelling more than two entries in one request ("delete all',
+    '  my tasks") needs one yes first, even when told not to ask: say how many',
+    '  and ask once. A misheard sentence must not be able to empty a list.',
     '- If a request is missing a time you cannot reasonably guess, ask one short question.',
     '- After acting, say what you did in one sentence.',
-    '- For anything about their schedule, answer from the agenda below.',
+    '- For anything about their schedule, answer from the agenda below. Asked',
+    '  what is on a day ("what do I have tomorrow"), name that day\'s events AND',
+    '  the tasks due that day.',
     '- The turn "[SESSION START]" is not something they said: they have just',
     '  opened you. Be proactive and personal:',
     '  1. Greet them by name. Give a short, insightful daily briefing: what is',
@@ -2096,7 +2126,7 @@ export function buildSystemPrompt(input: {
       ? ['HOW THEIR WEEK IS SHAPED:', describeProfile(input.profile), '']
       : []),
     "THE USER'S CURRENT AGENDA:",
-    describeSnapshot(input.snapshot, input.timezone),
+    describeSnapshot(input.snapshot, input.timezone, input.now),
     '',
     describeHousehold(input.snapshot, input.timezone, input.now),
   ].join('\n');
@@ -2511,6 +2541,7 @@ async function answerFreeTime(
         from: clock.format(new Date(w.startsAt)),
         to: clock.format(new Date(w.endsAt)),
         minutes: w.minutes,
+        length: spokenDuration(w.minutes),
         endsBecause: w.endsBecause,
         ...(w.nextTitle ? { nextEvent: w.nextTitle } : {}),
         ...(w.nextPlace ? { nextPlace: w.nextPlace } : {}),
@@ -2628,10 +2659,41 @@ async function answerTravelCheck(
     return JSON.stringify({ ok: false, error: 'The user\'s location is not available. Ask them to enable location services.' });
   }
 
+  // "How long to the dentist?" arrives as the event's title. Geocoding the
+  // title itself finds whatever the map calls "רופא שיניים" — once, a place
+  // 118 km away — so a destination that names a calendar entry with an
+  // address goes to that address. The next one coming up wins over a past one.
+  const wanted = normalizeTitle(destination);
+  const nowMs = input.now.getTime();
+  // She sometimes passes the entry's id ("e4") rather than its title.
+  const byId = input.snapshot.events.find((e) => e.id === destination && e.location?.trim());
+  const named = byId ?? input.snapshot.events
+    .filter((e) => e.location && e.location.trim())
+    .filter((e) => {
+      const title = normalizeTitle(e.title);
+      return title === wanted || title.includes(wanted) || wanted.includes(title);
+    })
+    .sort((a, b) => {
+      const ahead = (iso: string) => (Date.parse(iso) >= nowMs ? 0 : 1);
+      return ahead(a.startsAt) - ahead(b.startsAt) || a.startsAt.localeCompare(b.startsAt);
+    })[0];
+  const place = named?.location?.trim() ?? destination;
+
   const from = { latitude: input.location.latitude, longitude: input.location.longitude };
-  const to = await geocode(destination);
+  // A calendar entry that already carries its coordinates is never geocoded
+  // again — that is the whole point of saving them.
+  let to = (named ? eventPoint(named) : null) ?? (await geocode(place));
+  // A street the map cannot place — often one she translated, "Bialik 20,
+  // Ramat Gan" for "ביאליק 20, רמת גן" — still ends in a city. An estimate
+  // to the city beats telling the user the dentist cannot be found.
+  let approximate: string | undefined;
+  const parts = place.split(',').map((p) => p.trim()).filter(Boolean);
+  for (let i = parts.length - 1; !to && i >= 1; i--) {
+    to = await geocode(parts[i]!);
+    if (to) approximate = parts[i];
+  }
   if (!to) {
-    return JSON.stringify({ ok: false, error: `Could not find "${destination}" on the map.` });
+    return JSON.stringify({ ok: false, error: `Could not find "${place}" on the map.` });
   }
 
   const km = distanceKm(from, to);
@@ -2644,12 +2706,14 @@ async function answerTravelCheck(
   return JSON.stringify({
     ok: true,
     from: input.location.city ?? `${from.latitude.toFixed(3)}, ${from.longitude.toFixed(3)}`,
-    to: destination,
+    to: named ? `${named.title} (${place})` : destination,
     distanceKm: Math.round(km),
     estimatedMinutes: live ?? floor,
     withTraffic: live !== null,
-    instruction:
-      live !== null
+    ...(approximate ? { approximateTo: approximate } : {}),
+    instruction: approximate
+      ? `The exact address was not on the map, so this is to ${approximate} in general. Say it as a rough estimate to ${approximate}, e.g. "about 20 minutes to Ramat Gan".`
+      : live !== null
         ? 'This is a real driving time with current traffic. Say it naturally, e.g. "about 40 minutes with traffic right now".'
         : 'This is a minimum estimate (straight-line distance + fixed overhead). Real driving may take longer in traffic. Say the estimate naturally, e.g. "about 40 minutes from where you are".',
   });
@@ -2772,7 +2836,7 @@ export async function answerSuggestOpportunity(
     minute: '2-digit',
     hour12: false,
   });
-  const windowText = `until ${clock.format(new Date(currentWindow.endsAt))}, about ${currentWindow.minutes} minutes`;
+  const windowText = `until ${clock.format(new Date(currentWindow.endsAt))}, about ${spokenDuration(currentWindow.minutes)}`;
 
   // ── Task-based errand opportunity (NEW) ────────────────────────────────
   // Walk the open tasks for errand patterns ("gift for Ronit", "pick up
@@ -3879,7 +3943,12 @@ export function answerWeeklySummary(
       return t >= nowMs && t <= nowMs + 7 * 24 * 60 * 60 * 1000;
     })
     .slice(0, 5)
-    .map((e) => ({ title: e.title, startsAt: e.startsAt, location: e.location ?? null }));
+    .map((e) => ({
+      title: e.title,
+      when: localWhen(e.startsAt, zone, nowMs),
+      startsAt: e.startsAt,
+      location: e.location ?? null,
+    }));
 
   // Auto-push the weekly summary card so the device always has numbers to
   // render — this used to depend on the model remembering a second call,
@@ -4390,10 +4459,22 @@ export function answerEndOfDay(
   const tomorrowFirst = tomorrowEvents[0]
     ? {
         title: tomorrowEvents[0].title,
+        when: localWhen(tomorrowEvents[0].startsAt, zone, nowMs),
         startsAt: tomorrowEvents[0].startsAt,
         location: tomorrowEvents[0].location ?? null,
       }
     : null;
+
+  // What is still to come tonight. "How does the rest of my day look?" asked
+  // at 16:30 was answered with tomorrow, past a workout at 19:00.
+  const aheadToday = todayEvents
+    .filter((e) => new Date(e.startsAt).getTime() > nowMs)
+    .sort((a, b) => a.startsAt.localeCompare(b.startsAt))
+    .map((e) => ({
+      title: e.title,
+      when: localWhen(e.startsAt, zone, nowMs),
+      location: e.location ?? null,
+    }));
 
   // Push the on-screen summary card directly so the device always has
   // something to render. The model's job is just to narrate; verbal-only
@@ -4436,6 +4517,7 @@ export function answerEndOfDay(
       tasksOpen: open.length,
       openTitles: open.slice(0, 3).map((t) => ({ id: t.id, title: t.title })),
       eventsHeld: eventsBehindNow.length,
+      stillAhead: aheadToday,
       spent: amt(spent),
       earned: amt(earned),
     },
@@ -4444,11 +4526,11 @@ export function answerEndOfDay(
       eventCount: tomorrowEvents.length,
     },
     instruction:
-      done.length === 0 && open.length === 0 && eventsBehindNow.length === 0
+      done.length === 0 && open.length === 0 && eventsBehindNow.length === 0 && aheadToday.length === 0
         ? 'The day was quiet — no scheduled items. Say that plainly, no shame. The summary card is ALREADY on screen; do NOT call present_summary.'
         : 'The summary card is ALREADY on screen (do NOT call present_summary again). Lead aloud with a win ("you shipped ' +
           String(done.length) +
-          ' today"), note what slipped in one phrase (not a list), and name tomorrow\'s first thing with a time. If anything slipped, offer replan_remainder in the SAME reply ("want me to find a spot for them tomorrow?"). Never read every slipped task aloud.',
+          ' today"), note what slipped in one phrase (not a list), say what is still ahead today (stillAhead) with its time if there is anything, and name tomorrow\'s first thing with a time. If anything slipped, offer replan_remainder in the SAME reply ("want me to find a spot for them tomorrow?"). Never read every slipped task aloud.',
   });
 }
 
@@ -4561,6 +4643,46 @@ async function reviewProposedTime(
 }
 
 /** Titles are compared as a person would hear them, not byte for byte. */
+/**
+ * "2 h 15 min" for 135. Tool results hand her a duration already in hours:
+ * given "about 135 minutes" she said "an hour and a quarter" out loud, and
+ * spoken arithmetic is not something to leave to the model.
+ */
+function spokenDuration(minutes: number): string {
+  const m = Math.max(0, Math.round(minutes));
+  const h = Math.floor(m / 60);
+  const r = m % 60;
+  if (h === 0) return `${r} min`;
+  return r === 0 ? `${h} h` : `${h} h ${r} min`;
+}
+
+/**
+ * "today 19:00", "tomorrow 18:00", "Friday, Nov 13, 09:30" — an instant the
+ * way she should say it. Results used to carry bare UTC ISO strings, and
+ * converting "2026-11-11T17:00:00.000Z" in her head she called tonight's
+ * workout tomorrow's.
+ */
+function localWhen(iso: string, zone: string, nowMs: number): string {
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return '';
+  const time = new Intl.DateTimeFormat('en-GB', {
+    timeZone: zone,
+    hour: '2-digit',
+    minute: '2-digit',
+    hour12: false,
+  }).format(d);
+  const on = today(zone, d.getTime());
+  if (on === today(zone, nowMs)) return `today ${time}`;
+  if (on === today(zone, nowMs + 24 * 60 * 60 * 1000)) return `tomorrow ${time}`;
+  const date = new Intl.DateTimeFormat('en-US', {
+    timeZone: zone,
+    weekday: 'long',
+    month: 'short',
+    day: 'numeric',
+  }).format(d);
+  return `${date}, ${time}`;
+}
+
 function normalizeTitle(title: string): string {
   return title.trim().replace(/\s+/g, ' ').toLocaleLowerCase();
 }
@@ -4615,7 +4737,13 @@ export function collectAction(
         }),
       };
     }
-    if (normalizeTitle(row.title) !== normalizeTitle(matchTitle)) {
+    // The agenda shows a shopping row as "ביצים (12)", so a title repeated
+    // from it can carry the quantity; that is still the same row.
+    const withoutQuantity = matchTitle.replace(/\s*\([^()]*\)\s*$/, '');
+    if (
+      normalizeTitle(row.title) !== normalizeTitle(matchTitle) &&
+      normalizeTitle(row.title) !== normalizeTitle(withoutQuantity)
+    ) {
       logger.warn({ name, id }, 'voice agent named an entry it did not identify');
       return {
         action: null,

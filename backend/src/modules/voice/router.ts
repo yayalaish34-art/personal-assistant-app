@@ -20,6 +20,15 @@ import {
 } from './agent.js';
 import { synthesizeStream, prewarmSpeech, servePrewarmed, isSpeechConfigured, MAX_SPEECH_CHARS } from './tts.js';
 import { AGENT_TOOL_NAMES, conversationToken } from './elevenlabs.js';
+import {
+  LIVE_INPUT_RATE,
+  LIVE_OUTPUT_RATE,
+  LIVE_RULES,
+  LIVE_SOCKET_URL,
+  isLiveConfigured,
+  liveSetup,
+  mintLiveToken,
+} from './gemini-live.js';
 
 /**
  * The voice assistant (stateless).
@@ -27,7 +36,7 @@ import { AGENT_TOOL_NAMES, conversationToken } from './elevenlabs.js';
  * Like /parse, these routes are unauthenticated because they own no data: the
  * device stores the tasks and events, sends what the model needs, and applies
  * whatever comes back. What lives here is the part that cannot ship to a
- * device — the OpenAI and ElevenLabs keys. Rate limiting is what protects the
+ * device — the OpenAI, Gemini and ElevenLabs keys. Rate limiting is what protects the
  * budget.
  */
 export const voiceRouter = Router();
@@ -185,12 +194,13 @@ voiceRouter.post(
   }),
 );
 
-// ── The ElevenLabs agent ────────────────────────────────────────────────────
+// ── The live agent ──────────────────────────────────────────────────────────
 //
-// The live conversation runs between the phone and ElevenLabs. These three
-// routes are what it needs from us: a token and a system prompt to open with,
-// a place to run each tool call, and a fresh agenda after the phone changes
-// something. /voice/turn above stays for builds that predate the agent.
+// The live conversation runs between the phone and Gemini Live (ElevenLabs on
+// builds 19 and earlier). These routes are what it needs from us: a token and
+// a system prompt to open with, a place to run each tool call, and a fresh
+// agenda after the phone changes something. /voice/turn above stays for
+// builds that predate the agent.
 
 /** What the phone sends about itself: the turn body without a sentence in it. */
 const contextBody = turnBody.omit({ text: true, history: true });
@@ -212,7 +222,7 @@ function turnInput(body: z.infer<typeof contextBody>) {
 /** The agenda and household she is told about, in the system prompt's words. */
 function describeData(input: ReturnType<typeof turnInput>): string {
   return [
-    describeSnapshot(input.snapshot, input.timezone),
+    describeSnapshot(input.snapshot, input.timezone, input.now),
     '',
     describeHousehold(input.snapshot, input.timezone, input.now),
   ].join('\n');
@@ -223,38 +233,94 @@ const sessionBody = contextBody.extend({
   history: turnBody.shape.history,
 });
 
+/**
+ * The system prompt for one live conversation, built from the phone's data
+ * exactly as a text turn builds it.
+ *
+ * A live session starts with no memory of the one before it, so a resumed
+ * thread rides along at the end — otherwise "move that one too" would point
+ * at nothing.
+ */
+function sessionPrompt(body: z.infer<typeof sessionBody>, extra: string[] = []): string {
+  const earlier = body.history
+    .slice(-24)
+    .map((m) => `${m.role === 'user' ? 'User' : 'You'}: ${m.content}`);
+  return [
+    buildSystemPrompt(turnInput(body)),
+    ...(extra.length > 0 ? ['', ...extra] : []),
+    ...(earlier.length > 0
+      ? [
+          '',
+          'EARLIER IN THIS CONVERSATION (already said — carry on from here,',
+          'do not greet again or repeat it):',
+          ...earlier,
+        ]
+      : []),
+  ].join('\n');
+}
+
+// The ElevenLabs session, for builds from before Gemini Live (build 19 and
+// earlier). Remove once those are off TestFlight.
 voiceRouter.post(
   '/voice/agent/session',
   voiceTurnLimiter,
   asyncHandler(async (req, res) => {
     const body = parseBody(sessionBody, req);
-    const input = turnInput(body);
-
-    // The prompt is built here, from the phone's data, exactly as a text turn
-    // builds it, and handed to the agent as a per-conversation override. An
-    // ElevenLabs session starts with no memory, so a resumed thread rides
-    // along at the end — otherwise "move that one too" would point at nothing.
-    const earlier = body.history
-      .slice(-24)
-      .map((m) => `${m.role === 'user' ? 'User' : 'You'}: ${m.content}`);
-    const prompt = [
-      buildSystemPrompt(input),
-      ...(earlier.length > 0
-        ? [
-            '',
-            'EARLIER IN THIS CONVERSATION (already said — carry on from here,',
-            'do not greet again or repeat it):',
-            ...earlier,
-          ]
-        : []),
-    ].join('\n');
-
+    const prompt = sessionPrompt(body);
     const token = await conversationToken();
     logger.info(
       { historyLen: body.history.length, promptChars: prompt.length },
       'voice agent session opened',
     );
     res.json({ conversationToken: token, prompt, tools: AGENT_TOOL_NAMES });
+  }),
+);
+
+// ── Gemini Live ─────────────────────────────────────────────────────────────
+//
+// One token per connection, with the whole setup locked inside it. The phone
+// opens `url?access_token=token`, sends `{ setup: { model } }`, and from then
+// on talks to Google directly. Tool calls come back through /voice/agent/tool
+// and agenda refreshes through /voice/agent/context, below — the same two
+// routes the ElevenLabs session used.
+
+const liveSessionBody = sessionBody.extend({
+  /**
+   * The handle from the last `sessionResumptionUpdate`, when Google retired
+   * the connection mid-conversation. The new connection then carries on the
+   * same session instead of starting a fresh one.
+   */
+  resumeHandle: z.string().min(1).max(512).optional(),
+});
+
+voiceRouter.post(
+  '/voice/live/session',
+  voiceTurnLimiter,
+  asyncHandler(async (req, res) => {
+    if (!isLiveConfigured()) {
+      throw new ValidationError('The voice agent is not configured on this server');
+    }
+    const body = parseBody(liveSessionBody, req);
+    const prompt = sessionPrompt(body, LIVE_RULES);
+    const setup = liveSetup({ prompt, language: body.language, resumeHandle: body.resumeHandle });
+    const { token, expiresAt } = await mintLiveToken(setup);
+    logger.info(
+      {
+        historyLen: body.history.length,
+        promptChars: prompt.length,
+        resumed: Boolean(body.resumeHandle),
+        model: config.GEMINI_LIVE_MODEL,
+      },
+      'voice live session opened',
+    );
+    res.json({
+      url: LIVE_SOCKET_URL,
+      token,
+      expiresAt,
+      model: setup.model,
+      inputRate: LIVE_INPUT_RATE,
+      outputRate: LIVE_OUTPUT_RATE,
+    });
   }),
 );
 

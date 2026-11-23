@@ -648,6 +648,17 @@ export default function CalendarScreen() {
                         </Text>
                         <Text style={styles.entryTime}>{ltr(to12h(item.time))}</Text>
                       </View>
+                      {item.kind === 'event' && !done && item.location?.trim() ? (
+                        <Pressable
+                          onPress={() => openNavigation(item)}
+                          hitSlop={10}
+                          accessibilityRole="button"
+                          accessibilityLabel={t('calendar.navigate')}
+                          style={({ pressed }) => [styles.navButton, pressed && styles.pressedDim]}
+                        >
+                          <Navigation color={aura.ink} size={19} strokeWidth={2} />
+                        </Pressable>
+                      ) : null}
                       <Icon
                         color={done ? colors.textMuted : aura.ink}
                         size={20}

@@ -110,7 +110,8 @@ export async function generateImage(
 
 export interface TimeOffer {
   /** Whether the hour was taken, or free but unreachable. */
-  reason: 'clash' | 'travel';
+  /** Taken, free but unreachable, or too close to an event with no place. */
+  reason: 'clash' | 'travel' | 'tight';
   title: string;
   durationMinutes: number;
   requestedAt: string;
@@ -157,7 +158,7 @@ export function parseOffer(args: Record<string, unknown>): TimeOffer | null {
   const travel = args.travel as TimeOffer['travel'] | undefined;
 
   return {
-    reason: args.reason === 'travel' ? 'travel' : 'clash',
+    reason: args.reason === 'travel' ? 'travel' : args.reason === 'tight' ? 'tight' : 'clash',
     title,
     requestedAt,
     durationMinutes: Number.isFinite(minutes) && minutes > 0 ? minutes : 60,
@@ -1047,6 +1048,9 @@ export async function applyActions(actions: VoiceAction[]): Promise<AppliedChang
             id,
             title,
             ...(asString(args.note) ? { note: asString(args.note)! } : {}),
+            // The place she heard. Without it every travel check, the "time
+            // to leave" buzz and the Navigate button have nothing to go on.
+            ...(asString(args.location)?.trim() ? { location: asString(args.location)!.trim() } : {}),
             startsAt,
             ...(isoOrUndefined(args.endsAt) ? { endsAt: isoOrUndefined(args.endsAt)! } : {}),
             reminderMinutesBefore: 15,
@@ -1064,6 +1068,8 @@ export async function applyActions(actions: VoiceAction[]): Promise<AppliedChang
           const patch: Record<string, unknown> = {};
           if (asString(args.title)) patch.title = asString(args.title);
           if (asString(args.note)) patch.note = asString(args.note);
+          // A new place; updateEvent drops the old coordinates when it differs.
+          if (asString(args.location)?.trim()) patch.location = asString(args.location)!.trim();
           const startsAt = isoOrUndefined(args.startsAt);
           const endsAt = isoOrUndefined(args.endsAt);
           if (startsAt) {

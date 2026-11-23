@@ -1050,6 +1050,16 @@ Explicit user requests, 2026-11-22/23, from testing on the phone:
    says so. Nearby now asks Google for `includedPrimaryTypes`, not
    `includedTypes`, which returned an observation deck as a supermarket.
    Google's own data still lists some oddities (near Azrieli).
+6. **"It just throws a place at me."** A vague need ("a gift for a friend") now
+   gets one question with options first (clothes / book / home / gadget / "not
+   sure yet"). The answer picks the category. "Don't know" or no clear answer
+   means a mall, with the reason given (everything in one place), and never a
+   second question. Specific needs ("a pharmacy") are searched at once. At most
+   two places, each with a reason. New `WHERE_TO_BUY_RULES` in the voice
+   prompt, which Gemini Live shares. The `find_nearby` description and result
+   instruction were aligned with it. Verified with real turns on the local
+   server: gift → question; "ספר" → Steimatzky and Tzomet Sfarim; "לא יודע" →
+   Seven Stars; "גאדג׳ט" → electronics; pharmacy → searched at once.
 4. Snapshot bug found on the way: same-name branches kept the first one in the
    file, not the nearest (`places-index.ts findInPlaces`).
 

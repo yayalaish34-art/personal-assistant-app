@@ -955,7 +955,7 @@ export const ACTION_TOOLS = [
     function: {
       name: 'find_nearby',
       description:
-        "Find real places near a point. Call this when the user asks what is nearby, where to shop, eat, get coffee, find a pharmacy, etc. Returns actual named places with distances. By default it searches around the phone's GPS — but whenever the user says where they are or will be (\"I'm in Herzliya\", \"I'm meeting him at the Wix building\", \"near my 3 o'clock\"), pass that place as `near`. The phone may be somewhere else entirely, and searching around it then sends them to the wrong city.",
+        "Find real places near a point. Call this when the user asks what is nearby, where to shop, eat, get coffee, find a pharmacy, etc. Returns actual named places with distances. By default it searches around the phone's GPS — but whenever the user says where they are or will be (\"I'm in Herzliya\", \"I'm meeting him at the Wix building\", \"near my 3 o'clock\"), pass that place as `near`. The phone may be somewhere else entirely, and searching around it then sends them to the wrong city. For a vague need (\"a gift\", \"something for the house\") ask the user ONE question about what kind of thing first; if they do not know, search mall.",
       parameters: {
         type: 'object',
         properties: {
@@ -1805,6 +1805,24 @@ function describeProfile(p: Profile): string {
   return lines.join('\n');
 }
 
+/**
+ * "Where can I buy …" — the difference between a secretary and a map. A
+ * specific need ("a pharmacy") is searched at once. A vague one ("a gift for
+ * a friend") gets ONE question first, because the nearest mall is a guess at
+ * what they want; "I don't know" is a real answer, and a mall — everything
+ * in one place — is exactly right for it. Never a second question.
+ */
+const WHERE_TO_BUY_RULES = [
+  'WHERE TO BUY SOMETHING:',
+  '- A specific kind of place ("a supermarket", "a pharmacy", "petrol", "a café", "a bookshop") → call find_nearby at once. Do not ask anything first.',
+  '- A vague need ("a gift for a friend", "something for the house", "I need to buy something on the way") → ask ONE short question first, with a few options, e.g. "יש לך כיוון? בגדים, ספר, משהו לבית, גאדג׳ט — או שעוד לא יודע?" Skip the question when the conversation or the task already says what it is ("he loves gadgets", task "לקנות ספר לדני").',
+  '- Their answer picks the category: clothes → clothes, a book → books, flowers → florist, a gadget/electronics → electronics, jewellery → jewelry, a phone accessory → mobile_phone.',
+  '- "I do not know", "you choose", "surprise me", or no clear answer → search mall, and say why: a mall has everything in one place, so they can decide there. You may add one or two quick ideas that suit who it is for. Never ask a second question.',
+  '- When you name places, give the reason for each in a few words — nearest, biggest choice, on the way to their next meeting — and offer two at most, not a list.',
+  '- If find_nearby says it could not find the place they named, ask for the street or offer to search the town in general. Never search somewhere else on your own.',
+  '',
+];
+
 export function buildSystemPrompt(input: {
   language: string;
   timezone: string;
@@ -2152,6 +2170,7 @@ export function buildSystemPrompt(input: {
           '',
         ]
       : []),
+    ...WHERE_TO_BUY_RULES,
     ...(input.profile
       ? ['HOW THEIR WEEK IS SHAPED:', describeProfile(input.profile), '']
       : []),
@@ -2788,9 +2807,12 @@ async function answerNearbySearch(
       ...(p.openNow !== undefined ? { openNow: p.openNow } : {}),
     })),
     instruction:
-      'List the closest 3–4 places naturally, in this order. Mention there are more if the list is longer. ' +
+      'Name the best two (usually the nearest), each with a few words on why — nearest, a short walk, bigger choice — and say there are more if there are. ' +
       'For each, say its howFar as given (you may shorten the wording, never change the numbers or swap walking for driving). ' +
       'Do not ask whether they are walking or driving.' +
+      (category === 'mall' || category === 'shopping'
+        ? ' If this search is for someone who has not decided what to buy, say a mall is suggested because it has everything in one place, and offer at most two.'
+        : '') +
       fromNote +
       (openNow && !found.openNowChecked
         ? ' Opening hours could not be checked — say so honestly and do not claim any of them is open.'

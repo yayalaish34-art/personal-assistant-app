@@ -255,3 +255,20 @@ describe('the town is named the way the map names it', () => {
     expect(r.error).toContain('near: "חולון"');
   });
 });
+
+describe('where to buy: ask once when the need is vague', () => {
+  it('the prompt tells her to search a specific place at once, ask one question for a vague one, and fall back to a mall', async () => {
+    const { buildSystemPrompt } = await import('../src/modules/voice/agent.js');
+    const p = buildSystemPrompt(input() as never);
+    expect(p).toContain('WHERE TO BUY SOMETHING:');
+    expect(p).toMatch(/specific kind of place[^\n]*call find_nearby at once/);
+    expect(p).toMatch(/vague need[^\n]*ask ONE short question/);
+    expect(p).toMatch(/do not know[^\n]*search mall[^\n]*Never ask a second question/);
+  });
+
+  it('still in the prompt with no GPS at all', async () => {
+    const { buildSystemPrompt } = await import('../src/modules/voice/agent.js');
+    const noGps = { ...input(), location: undefined };
+    expect(buildSystemPrompt(noGps as never)).toContain('WHERE TO BUY SOMETHING:');
+  });
+});

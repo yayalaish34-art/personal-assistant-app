@@ -1004,7 +1004,7 @@ review copy for background location (iOS `NSLocationAlwaysAndWhenInUse…`,
 Play Console background-location declaration).
 
 ### T13.1 — Maps follow-ups from device testing: tight slots, "near", learned places
-DONE (local, uncommitted) — branch `feature/google-maps`, not merged
+DONE (commits 95d8a3e, acdbda4) — branch `feature/google-maps`, not merged
 
 Explicit user requests, 2026-11-22/23, from testing on the phone:
 

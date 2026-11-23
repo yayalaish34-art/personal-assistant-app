@@ -119,9 +119,44 @@ export async function geocode(place: string): Promise<Point | null> {
   return null;
 }
 
+export interface PlaceMatch {
+  point: Point;
+  /** What Google says it matched ("יוניצמן 5, תל אביב-יפו, ישראל"); null from the free geocoders. */
+  address: string | null;
+}
+const placeMatchCache = new TtlCache<PlaceMatch | null>(5_000, GEOCODE_HIT_TTL_MS);
+
+/**
+ * `geocode`, plus the address the map actually matched — which is what shows
+ * that "בניין WIX הרצליה" landed on a street in Tel Aviv, or that "בניין
+ * וויקס הרצליה" landed on nothing but the town itself. Same caching rules.
+ */
+export async function geocodePlace(place: string): Promise<PlaceMatch | null> {
+  const key = normalizePlaceText(place);
+  if (!key) return null;
+  const hit = placeMatchCache.get(key);
+  if (hit !== undefined) {
+    if (hit) logMapsEvent({ kind: 'cache', sku: 'geocoding', label: `כתובת: ${place.trim()}` });
+    return hit;
+  }
+  if (isGoogleEnabled()) {
+    const g = await googleGeocode(place.trim());
+    if (g) {
+      const m = { point: { latitude: g.latitude, longitude: g.longitude }, address: g.formattedAddress };
+      placeMatchCache.set(key, m);
+      return m;
+    }
+  }
+  const point = await geocode(place);
+  const m = point ? { point, address: null } : null;
+  placeMatchCache.set(key, m, m ? GEOCODE_HIT_TTL_MS : GEOCODE_MISS_TTL_MS);
+  return m;
+}
+
 /** Test seam: forget every remembered geocode and route. */
 export function __clearTravelCachesForTest(): void {
   cache.clear();
+  placeMatchCache.clear();
   routeCache.clear();
   nearbyCache.clear();
 }

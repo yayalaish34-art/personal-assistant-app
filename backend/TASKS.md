@@ -1036,6 +1036,20 @@ Explicit user requests, 2026-11-22/23, from testing on the phone:
    nothing nearer is missing. A café search therefore never answers a
    supermarket question. Postgres via Prisma when `DATABASE_URL` is set,
    in-memory otherwise. Store errors fall through to Google.
+5. **"Big Fashion Glilot, under a kilometre" — a 2.4 km drive, from the wrong
+   place.** Two causes. (a) Distances were straight-line. The 4 nearest now get
+   a road distance (Routes Essentials, cached 7 days), are re-ordered by it,
+   and come with a `howFar` phrase built server-side: under 400 m walk, up to
+   1.5 km walk and car, beyond that car. Walking time is computed locally
+   (×1.3 detour, 12 min/km). `travelMode` exists only for "I'm on foot". (b)
+   "בניין WIX הרצליה" geocoded to יוניצמן 5, Tel Aviv, and "בניין וויקס הרצליה"
+   to the town alone. `geocodePlace` returns the matched address, and
+   `resolveSearchCenter` checks it against the named town (taken from the
+   map's own name for it). A different town more than 3 km away is refused
+   with an explanation. Town-only means the search runs from the centre and
+   says so. Nearby now asks Google for `includedPrimaryTypes`, not
+   `includedTypes`, which returned an observation deck as a supermarket.
+   Google's own data still lists some oddities (near Azrieli).
 4. Snapshot bug found on the way: same-name branches kept the first one in the
    file, not the nearest (`places-index.ts findInPlaces`).
 

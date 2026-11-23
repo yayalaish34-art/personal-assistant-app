@@ -276,7 +276,10 @@ export async function googleNearby(
       'X-Goog-FieldMask': opts.withOpenNow ? NEARBY_FIELDS_ENTERPRISE : NEARBY_FIELDS_PRO,
     },
     body: JSON.stringify({
-      includedTypes: types,
+      // Primary type only: with `includedTypes` any place that lists the type
+      // anywhere comes back — "supermarket" near Azrieli returned the
+      // observation deck and a petrol-station shop.
+      includedPrimaryTypes: types,
       maxResultCount: Math.min(20, Math.max(1, opts.limit)),
       rankPreference: 'DISTANCE',
       languageCode: opts.language ?? 'he',

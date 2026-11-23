@@ -14,7 +14,7 @@ import { __clearTravelCachesForTest } from '../src/modules/voice/travel.js';
 import { distanceKm } from '../src/modules/voice/travel-geo.js';
 import { __setPlaceStoreForTest } from '../src/modules/maps/place-store.js';
 import { __setPlacesForTest, type IndexedPlace } from '../src/modules/voice/places-index.js';
-import { executeToolCall, resolveSearchCenter, type VoiceTurnInput } from '../src/modules/voice/agent.js';
+import { describeHowFar, executeToolCall, resolveSearchCenter, type VoiceTurnInput } from '../src/modules/voice/agent.js';
 
 const HOLON = { latitude: 32.0158, longitude: 34.7874 };
 const WIX = { lat: 32.1624, lng: 34.8447 };
@@ -27,10 +27,24 @@ const PLACES: IndexedPlace[] = [
 
 let geocoded: string[] = [];
 /** Google knows the Wix building and the town; anything else is unknown. */
-function fakeGeocoder(known: Record<string, { lat: number; lng: number }>) {
+let routed = 0;
+/** Road distance the fake Routes API answers with: straight line × this. */
+let roadFactor = 3;
+function fakeGeocoder(known: Record<string, { lat: number; lng: number; address?: string }>) {
   __setGoogleForTest({
     key: 'test-key',
     fetch: async (url, init) => {
+      if (url.includes('routes.googleapis')) {
+        routed += 1;
+        const req = JSON.parse(String(init?.body ?? '{}'));
+        const a = req.origin.location.latLng;
+        const b = req.destination.location.latLng;
+        const km = distanceKm(a, b) * roadFactor;
+        return new Response(
+          JSON.stringify({ routes: [{ duration: `${Math.round(km * 90)}s`, distanceMeters: Math.round(km * 1000) }] }),
+          { status: 200 },
+        );
+      }
       if (!url.includes('/geocode/')) {
         // Nearby: the same malls, the ones within the requested circle.
         const req = JSON.parse(String(init?.body ?? '{}'));
@@ -44,7 +58,14 @@ function fakeGeocoder(known: Record<string, { lat: number; lng: number }>) {
       geocoded.push(address);
       const hit = known[address];
       const body = hit
-        ? { status: 'OK', results: [{ place_id: 'p1', formatted_address: address, geometry: { location: hit } }] }
+        ? {
+            status: 'OK',
+            results: [{
+              place_id: 'p1',
+              formatted_address: hit.address ?? `${address}, רחוב 1, ישראל`,
+              geometry: { location: { lat: hit.lat, lng: hit.lng } },
+            }],
+          }
         : { status: 'ZERO_RESULTS', results: [] };
       return new Response(JSON.stringify(body), { status: 200 });
     },
@@ -62,11 +83,19 @@ const input = (events: VoiceTurnInput['snapshot']['events'] = [], gps = HOLON) =
 
 async function nearby(args: Record<string, unknown>, i = input()) {
   const r = await executeToolCall('find_nearby', JSON.stringify(args), i, []);
-  return JSON.parse(r.content) as { ok: boolean; places?: { name: string }[]; searchedNear?: string; error?: string };
+  return JSON.parse(r.content) as {
+    ok: boolean;
+    places?: { name: string; howFar: string }[];
+    searchedNear?: string;
+    error?: string;
+    instruction?: string;
+  };
 }
 
 beforeEach(() => {
   geocoded = [];
+  routed = 0;
+  roadFactor = 3;
   __resetBudgetForTest();
   __clearTravelCachesForTest();
   __setPlaceStoreForTest(null);
@@ -135,5 +164,94 @@ describe('find_nearby with `near`', () => {
     expect(c?.point.latitude).toBeCloseTo(32.1663, 3);
     const r = await nearby({ category: 'mall', near: 'הרצליה' }, i);
     expect(r.ok).toBe(true);
+  });
+});
+
+describe('the wrong town, or only the town', () => {
+  const TOWN = { lat: 32.1663, lng: 34.8433, address: 'הרצליה, ישראל' };
+
+  it('refuses a place the map found in another town — "בניין WIX הרצליה" came back in Tel Aviv', async () => {
+    fakeGeocoder({
+      'בניין WIX הרצליה': { lat: 32.1423, lng: 34.8, address: 'יוניצמן 5, תל אביב-יפו, ישראל' },
+      'הרצליה': TOWN,
+    });
+    const r = await nearby({ category: 'mall', near: 'בניין WIX הרצליה' });
+    expect(r.ok).toBe(false);
+    expect(r.error).toContain('יוניצמן 5');
+    expect(r.error).toContain('Do not search there');
+  });
+
+  it('says so when the map knew only the town, not the building', async () => {
+    fakeGeocoder({ 'בניין וויקס הרצליה': TOWN, 'הרצליה': TOWN });
+    const r = await nearby({ category: 'mall', near: 'בניין וויקס הרצליה' });
+    expect(r.ok).toBe(true);
+    expect(r.instruction).toContain('centre of הרצליה');
+  });
+
+  it('trusts an address that is in the named town', async () => {
+    fakeGeocoder({
+      'הנדיב 71 הרצליה': { lat: 32.1624, lng: 34.8447, address: 'הנדיב 71, הרצליה, ישראל' },
+      'הרצליה': TOWN,
+    });
+    const c = await resolveSearchCenter('הנדיב 71 הרצליה', input());
+    expect(c?.mismatch).toBeUndefined();
+    expect(c?.approximate).toBeUndefined();
+  });
+});
+
+describe('how far, said like a person', () => {
+  it('a few hundred metres is a walk, with no route asked', () => {
+    expect(describeHowFar(0.3, null, null, 'he')).toBe('5 דקות הליכה');
+  });
+
+  it('under 1.5 km gives both', () => {
+    expect(describeHowFar(0.8, { km: 2.4, minutes: 7 }, null, 'he')).toBe('12 דקות הליכה, או 2.4 ק"מ, כ-7 דקות ברכב');
+  });
+
+  it('further is a drive, by road — never the straight line as if it were the drive', () => {
+    expect(describeHowFar(2, { km: 3.1, minutes: 9 }, null, 'he')).toBe('3.1 ק"מ, כ-9 דקות ברכב');
+  });
+
+  it('with no road distance it says the straight line out loud', () => {
+    expect(describeHowFar(2, null, null, 'he')).toBe('כ-2 ק"מ בקו אוויר');
+  });
+
+  it('on foot, a far place is flagged as a long walk', () => {
+    expect(describeHowFar(2.5, null, 'walk', 'he')).toBe('39 דקות הליכה — רחוק ללכת');
+  });
+
+  it('in English too', () => {
+    expect(describeHowFar(0.3, null, null, 'en')).toBe('5 min walk');
+  });
+});
+
+describe('road distance in the answer', () => {
+  it('asks for routes only beyond walking distance, and orders by road', async () => {
+    fakeGeocoder({ 'בניין וויקס הרצליה': WIX });
+    const r = await nearby({ category: 'mall', near: 'בניין וויקס הרצליה' });
+    expect(routed).toBeGreaterThan(0);
+    expect(r.places![0]!.howFar).toContain('ברכב');
+  });
+
+  it('a walking user gets no routes and walking times', async () => {
+    fakeGeocoder({ 'בניין וויקס הרצליה': WIX });
+    const r = await nearby({ category: 'mall', near: 'בניין וויקס הרצליה', travelMode: 'walk' });
+    expect(routed).toBe(0);
+    expect(r.places![0]!.howFar).toContain('הליכה');
+  });
+});
+
+describe('the town is named the way the map names it', () => {
+  it('"רחוב הרצל 50 חולון" found in Tel Aviv is reported against Holon, not "50 חולון"', async () => {
+    const HOLON_TOWN = { lat: 32.0158, lng: 34.7874, address: 'חולון, ישראל' };
+    fakeGeocoder({
+      'רחוב הרצל 50 חולון': { lat: 32.0617, lng: 34.7708, address: 'הרצל 50, תל אביב-יפו, ישראל' },
+      '50 חולון': HOLON_TOWN,
+      'חולון': HOLON_TOWN,
+    });
+    const r = await nearby({ category: 'pharmacy', near: 'רחוב הרצל 50 חולון' });
+    expect(r.ok).toBe(false);
+    expect(r.error).toContain('not in חולון.');
+    expect(r.error).toContain('near: "חולון"');
   });
 });

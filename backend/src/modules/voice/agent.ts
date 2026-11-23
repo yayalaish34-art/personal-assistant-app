@@ -8,6 +8,8 @@ import { reviewSchedule, type KnownEvent, type ProposedEvent } from './schedule.
 import { findTime, today, type AvailabilityEvent } from './availability.js';
 import {
   geocode,
+  geocodePlace,
+  drivingRoute,
   distanceKm,
   travelMinutes,
   searchNearby,
@@ -971,6 +973,12 @@ export const ACTION_TOOLS = [
             type: 'number',
             description: 'Search radius in meters. Default 3000 (3km). Use larger for sparse areas.',
           },
+          travelMode: {
+            type: 'string',
+            enum: ['walk', 'drive'],
+            description:
+              "Only when the user said how they are getting there: 'walk' (on foot, no car) or 'drive'. Omit otherwise — distances are then described sensibly on their own.",
+          },
           openNow: {
             type: 'boolean',
             description:
@@ -1338,6 +1346,7 @@ const ARG_SCHEMAS = {
   find_nearby: z.object({
     category: z.enum(NEARBY_CATEGORIES),
     near: z.string().max(200).optional(),
+    travelMode: z.enum(['walk', 'drive']).optional(),
     radiusMeters: z.number().positive().max(50_000).optional(),
     openNow: z.boolean().optional(),
   }),
@@ -2645,6 +2654,53 @@ async function answerFreeTime(
 /**
  * Answers "how far is X from here?" using the phone's GPS and the geocoder.
  */
+/** How many of the nearest get a real road distance. */
+const ROAD_CHECKED = 4;
+/** Straight-line distance under which a place is a walk, full stop. */
+const WALK_ONLY_KM = 0.4;
+/** Up to this far, both walking and driving times are given. */
+const WALK_OR_DRIVE_KM = 1.5;
+/** Streets are not straight: walking distance ≈ straight line × this. */
+const WALK_DETOUR = 1.3;
+/** About 5 km/h. */
+const WALK_MIN_PER_KM = 12;
+/** Past this, walking is not a sensible suggestion. */
+const LONG_WALK_MIN = 25;
+
+type TravelMode = 'walk' | 'drive';
+
+/**
+ * How far a place is, said the way a person would say it. Built here rather
+ * than left to the model, which once called a 2.4 km drive "under a
+ * kilometre" because all it had was the straight line.
+ */
+export function describeHowFar(
+  straightKm: number,
+  road: { km: number; minutes: number } | null,
+  mode: TravelMode | null,
+  language: string,
+): string {
+  const he = language === 'he';
+  const walkKm = road && road.km < straightKm * 2 ? Math.min(road.km, straightKm * WALK_DETOUR) : straightKm * WALK_DETOUR;
+  const walkMin = Math.max(1, Math.round(walkKm * WALK_MIN_PER_KM));
+  const walk = he ? `${walkMin} דקות הליכה` : `${walkMin} min walk`;
+  const drive = road
+    ? he
+      ? `${road.km} ק"מ, כ-${road.minutes} דקות ברכב`
+      : `${road.km} km, about ${road.minutes} min by car`
+    : he
+      ? `כ-${Math.round(straightKm * 10) / 10} ק"מ בקו אוויר`
+      : `about ${Math.round(straightKm * 10) / 10} km as the crow flies`;
+
+  if (mode === 'walk') {
+    return walkMin > LONG_WALK_MIN ? (he ? `${walk} — רחוק ללכת` : `${walk} — a long walk`) : walk;
+  }
+  if (mode === 'drive') return drive;
+  if (straightKm < WALK_ONLY_KM) return walk;
+  if (straightKm <= WALK_OR_DRIVE_KM) return he ? `${walk}, או ${drive}` : `${walk}, or ${drive}`;
+  return drive;
+}
+
 async function answerNearbySearch(
   args: Record<string, unknown>,
   input: VoiceTurnInput,
@@ -2666,6 +2722,16 @@ async function answerNearbySearch(
         error: `Could not find "${near}" on the map. Ask the user for the city or street, and do not fall back to their current location.`,
       });
     }
+    if (resolved.mismatch) {
+      return JSON.stringify({
+        ok: false,
+        error:
+          `The map knows "${near}" only at ${resolved.mismatch.foundAt} — not in ${resolved.mismatch.town}. ` +
+          `Do not search there. Tell the user you could not find that place in ${resolved.mismatch.town}, ` +
+          `and ask for the street, or offer to search around ${resolved.mismatch.town} in general ` +
+          `(then call again with near: "${resolved.mismatch.town}").`,
+      });
+    }
     center = resolved.point;
     searchedNear = resolved.label;
     approximateNear = resolved.approximate;
@@ -2681,14 +2747,28 @@ async function answerNearbySearch(
   const openNow = args.openNow === true;
 
   const found = await findNearbySmart(center, category, { radiusMeters: radius, openNow });
-  const places = found.places;
+  const mode: TravelMode | null =
+    args.travelMode === 'walk' || args.travelMode === 'drive' ? args.travelMode : null;
+  // Straight-line distance undersells the trip: 0.8 km across a motorway
+  // was a 2.4 km drive. The nearest few get a real road distance (Routes
+  // Essentials, cached a week) and are re-ordered by it. A walk-only place
+  // and a walking user need no route at all.
+  const needsRoad = (km: number) => mode === 'drive' || (mode !== 'walk' && km >= WALK_ONLY_KM);
+  const head = await Promise.all(
+    found.places.slice(0, ROAD_CHECKED).map(async (p) => {
+      const r = needsRoad(p.distanceKm) ? await drivingRoute(center, p) : null;
+      return { p, road: r ? { km: Math.round(r.distanceKm * 10) / 10, minutes: r.minutes } : null };
+    }),
+  );
+  head.sort((a, b) => (a.road?.km ?? a.p.distanceKm * WALK_DETOUR) - (b.road?.km ?? b.p.distanceKm * WALK_DETOUR));
+  const rows = [...head, ...found.places.slice(ROAD_CHECKED).map((p) => ({ p, road: null }))];
 
   const where = searchedNear ? `near ${searchedNear}` : 'near the user';
   const fromNote = searchedNear
-    ? ` Distances are from ${searchedNear}${approximateNear ? ` (the exact spot was not on the map, so from ${approximateNear} in general)` : ''} — say them that way, not "from where you are".`
+    ? ` Distances are from ${searchedNear}${approximateNear ? ` — the exact spot was not on the map, so from the centre of ${approximateNear}; say that once` : ''}, not "from where you are".`
     : '';
 
-  if (places.length === 0) {
+  if (rows.length === 0) {
     return JSON.stringify({
       ok: true,
       places: [],
@@ -2702,13 +2782,15 @@ async function answerNearbySearch(
   return JSON.stringify({
     ok: true,
     ...(searchedNear ? { searchedNear } : {}),
-    places: places.map((p) => ({
+    places: rows.map(({ p, road }) => ({
       name: p.name,
-      distanceKm: p.distanceKm,
+      howFar: describeHowFar(p.distanceKm, road, mode, input.language),
       ...(p.openNow !== undefined ? { openNow: p.openNow } : {}),
     })),
     instruction:
-      'List the closest 3–4 places naturally, with approximate distance. Mention there are more if the list is longer.' +
+      'List the closest 3–4 places naturally, in this order. Mention there are more if the list is longer. ' +
+      'For each, say its howFar as given (you may shorten the wording, never change the numbers or swap walking for driving). ' +
+      'Do not ask whether they are walking or driving.' +
       fromNote +
       (openNow && !found.openNowChecked
         ? ' Opening hours could not be checked — say so honestly and do not claim any of them is open.'
@@ -2726,7 +2808,13 @@ async function answerNearbySearch(
 export async function resolveSearchCenter(
   near: string,
   input: Pick<VoiceTurnInput, 'snapshot' | 'now'>,
-): Promise<{ point: Point; label: string; approximate?: string } | null> {
+): Promise<{
+  point: Point;
+  label: string;
+  approximate?: string;
+  /** Found by that name, but not in the town the user named. */
+  mismatch?: { foundAt: string; town: string };
+} | null> {
   const wanted = normalizeTitle(near);
   const nowMs = input.now.getTime();
   const event = input.snapshot.events
@@ -2751,21 +2839,64 @@ export async function resolveSearchCenter(
     if (point) return { point, label: `"${event.title}" (${place})` };
   }
 
-  const exact = await geocode(near);
-  if (exact) return { point: exact, label: near };
-
+  // The town the words end with, if they end with one ("…, Ramat Gan",
+  // "בניין וויקס הרצליה" → "הרצליה"). Known only when Google answers, since
+  // only Google says what kind of thing it matched.
   const commaParts = near.split(',').map((p) => p.trim()).filter(Boolean);
   const words = near.split(/\s+/).filter(Boolean);
-  const fallbacks = [
+  const townCandidates = [
     ...commaParts.slice(1).reverse(),
     ...(words.length > 2 ? [words.slice(-2).join(' ')] : []),
     ...(words.length > 1 ? [words[words.length - 1]!] : []),
   ];
-  for (const f of fallbacks) {
-    const point = await geocode(f);
-    if (point) return { point, label: near, approximate: f };
+
+  const exact = await geocodePlace(near);
+  let town: { name: string; point: Point } | null = null;
+  if (!exact || exact.address) {
+    for (const c of townCandidates) {
+      const m = await geocodePlace(c);
+      if (m && (m.address === null || isLocalityAddress(m.address))) {
+        // The town as the map names it — "50 חולון" and "וויקס הרצליה" both
+        // resolve to the town, and only its own name is safe to compare with.
+        town = { name: m.address ? m.address.split(',')[0]!.trim() || c : c, point: m.point };
+        break;
+      }
+    }
+  }
+
+  if (exact) {
+    if (exact.address && town) {
+      // The map knew only the town: the building itself was not found, and
+      // a search "near" it would be a search around the town centre.
+      if (isLocalityAddress(exact.address)) {
+        return { point: town.point, label: near, approximate: town.name };
+      }
+      // It found something by that name — in another town. "בניין WIX
+      // הרצליה" came back as a street in Tel Aviv: trust that and the user
+      // is sent to the wrong city's shops with a confident distance.
+      if (!addressInTown(exact.address, town.name) && distanceKm(exact.point, town.point) > 3) {
+        return { point: exact.point, label: near, mismatch: { foundAt: exact.address, town: town.name } };
+      }
+    }
+    return { point: exact.point, label: near };
+  }
+
+  if (town) return { point: town.point, label: near, approximate: town.name };
+  for (const c of townCandidates) {
+    const point = await geocode(c);
+    if (point) return { point, label: near, approximate: c };
   }
   return null;
+}
+
+/** "הרצליה, ישראל" — a town and its country, nothing more specific. */
+function isLocalityAddress(address: string): boolean {
+  return address.split(',').filter((p) => p.trim()).length <= 2;
+}
+
+function addressInTown(address: string, town: string): boolean {
+  const norm = (s: string) => s.toLowerCase().replace(/[-–'"׳״]/g, ' ').replace(/\s+/g, ' ').trim();
+  return norm(address).includes(norm(town));
 }
 
 async function answerTravelCheck(

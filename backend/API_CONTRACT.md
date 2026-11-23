@@ -799,6 +799,12 @@ Response `200`:
   Google first for every category except fuel and malls, and the answers are kept 30
   days in a shared learned store, so a repeat question about the same area is
   free. Still server-side only, and never in `actions`.
+  Each place comes back with a ready `howFar` phrase instead of a bare
+  straight-line km: a walk under 400 m, walk and car up to 1.5 km, car (road
+  distance and minutes from Routes Essentials) beyond. An optional
+  `travelMode` (`walk` | `drive`) is set only when the user said how they
+  travel. A `near` the map found in a different town than the one named is
+  refused with an explanation, never searched.
   `/maps/errand-fences` is unchanged and still free. Additive migration
   `20261123170000_learned_places` (tables `place_searches`,
   `learned_places`).

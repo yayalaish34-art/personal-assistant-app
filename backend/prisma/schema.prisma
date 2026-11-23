@@ -69,15 +69,15 @@ model User {
 // Stored as SHA-256 hashes; rotated on every /auth/refresh (T1.3).
 
 model RefreshToken {
-  id         String    @id @default(uuid()) @db.Uuid
-  userId     String    @map("user_id") @db.Uuid
-  tokenHash  String    @unique @map("token_hash")
-  expiresAt  DateTime  @map("expires_at") @db.Timestamptz(6)
-  revokedAt  DateTime? @map("revoked_at") @db.Timestamptz(6)
+  id        String    @id @default(uuid()) @db.Uuid
+  userId    String    @map("user_id") @db.Uuid
+  tokenHash String    @unique @map("token_hash")
+  expiresAt DateTime  @map("expires_at") @db.Timestamptz(6)
+  revokedAt DateTime? @map("revoked_at") @db.Timestamptz(6)
 
-  createdAt  DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
 
-  user       User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
 
   @@index([userId])
   @@index([expiresAt])
@@ -162,4 +162,40 @@ model Device {
   @@unique([platform, pushToken])
   @@index([userId])
   @@map("devices")
+}
+
+// ─── Learned places (Google Maps cache, shared by all users) ───────────────
+// Every Google "nearby" answer is kept, so the next person asking about the
+// same area is answered without a paid call. Two tables, because a list of
+// places cannot tell "there is no supermarket here" from "nobody asked about
+// supermarkets here": `place_searches` records what was asked and how far the
+// answer is complete. Google's terms allow coordinates for 30 days, so rows
+// older than that are ignored and purged.
+
+model PlaceSearch {
+  id            String   @id @default(uuid()) @db.Uuid
+  category      String
+  latitude      Float
+  longitude     Float
+  /// How far from the centre the answer is known to be complete, in metres.
+  coveredMeters Int      @map("covered_meters")
+  searchedAt    DateTime @default(now()) @map("searched_at") @db.Timestamptz(6)
+
+  @@index([category, latitude, longitude])
+  @@index([searchedAt])
+  @@map("place_searches")
+}
+
+model LearnedPlace {
+  placeId   String   @map("place_id")
+  category  String
+  name      String
+  latitude  Float
+  longitude Float
+  savedAt   DateTime @map("saved_at") @db.Timestamptz(6)
+
+  @@id([placeId, category])
+  @@index([category, latitude, longitude])
+  @@index([savedAt])
+  @@map("learned_places")
 }

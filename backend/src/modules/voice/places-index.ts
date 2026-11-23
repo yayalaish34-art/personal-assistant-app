@@ -108,23 +108,25 @@ export function findInPlaces(
   // One pass over the file — cheap even at ~50k places (sub-ms on a laptop
   // once per voice turn). A spatial index would help if this ever gets hot;
   // today it is called at most twice per turn.
-  const seen = new Set<string>();
-  const hits: NearbyHit[] = [];
+  // Same name twice is usually one place mapped twice, but it can be two
+  // branches of a chain ("שופרסל"). Either way only the nearest is kept —
+  // keeping the first in the file used to offer a branch across town.
+  const nearestByName = new Map<string, { p: IndexedPlace; km: number }>();
   for (const p of places) {
     if (!accept.has(p.t)) continue;
     const km = distanceKm(center, { latitude: p.lat, longitude: p.lon });
     if (km > radiusKm) continue;
     const key = p.n.toLowerCase();
-    if (seen.has(key)) continue;
-    seen.add(key);
-    hits.push({
-      name: p.n,
-      category,
-      distanceKm: Math.round(km * 10) / 10,
-      latitude: p.lat,
-      longitude: p.lon,
-    });
+    const prev = nearestByName.get(key);
+    if (!prev || km < prev.km) nearestByName.set(key, { p, km });
   }
+  const hits: NearbyHit[] = [...nearestByName.values()].map(({ p, km }) => ({
+    name: p.n,
+    category,
+    distanceKm: Math.round(km * 10) / 10,
+    latitude: p.lat,
+    longitude: p.lon,
+  }));
   hits.sort((a, b) => a.distanceKm - b.distanceKm);
   return hits.slice(0, limit);
 }

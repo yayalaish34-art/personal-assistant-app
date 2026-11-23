@@ -1002,3 +1002,65 @@ quotas); re-run `scripts/elevenlabs-agent.ts` so the live agent sees the new
 store geofence, the leave-time refinement and the Navigate sheet; store
 review copy for background location (iOS `NSLocationAlwaysAndWhenInUse…`,
 Play Console background-location declaration).
+
+### T13.1 — Maps follow-ups from device testing: tight slots, "near", learned places
+DONE (local, uncommitted) — branch `feature/google-maps`, not merged
+
+Explicit user requests, 2026-11-22/23, from testing on the phone:
+
+1. **Booked half an hour after a placeless event without asking.** "Shopping"
+   18:00–18:30 had no place, so the journey counted as 0 and 18:30 was offered
+   and booked. `availability.ts`: 30 min (`UNKNOWN_PLACE_MINUTES`, buffer counts
+   towards it) kept clear beside a placeless event, with `unknownPlace` /
+   `earliestStartsAt` / `latestEndsAt` on the window. `schedule.ts`: new verdict
+   `tight` (`findTightNeighbour`), skipped by `confirmedTight` on
+   `create_event` / `update_event` after the user agreed. Options offered are
+   never tight themselves.
+2. **"Nearest mall" from the phone, not from where the user said he'd be.**
+   `find_nearby` takes `near` (place text or event title). `resolveSearchCenter`:
+   calendar event first (saved coordinates, no geocode), then the text, then the
+   town it names. An unknown place is reported as such, never silently replaced
+   by GPS.
+3. **The OSM snapshot is not good enough to be first.** Measured against Google
+   in 10 Israeli cities × 6 categories (60 requests): share of Google's places
+   present in the snapshot — supermarket 6%, convenience 19%, mall 40%, pharmacy
+   45%, café 56%, fuel 80%. Its nearest was over 300 m further than the real
+   nearest in 6/10 cities for supermarkets. `findNearbySmart` now: fuel from the
+   snapshot (≥2 hits) — and malls, since Google's mall type ranks strip centres
+   and unrelated businesses first (seen live in Herzliya); everything else memory cache → learned store → Google
+   (full page of 20) → snapshot when Google is off/over budget/failing.
+   New `src/modules/maps/place-store.ts`. Google answers are kept for 30 days
+   (Google ToS for coordinates) and shared by all users, **with the search that
+   produced them** (`place_searches`: centre, category, `coveredMeters`). A repeat
+   question is served from the store only when a stored search guarantees
+   nothing nearer is missing. A café search therefore never answers a
+   supermarket question. Postgres via Prisma when `DATABASE_URL` is set,
+   in-memory otherwise. Store errors fall through to Google.
+4. Snapshot bug found on the way: same-name branches kept the first one in the
+   file, not the nearest (`places-index.ts findInPlaces`).
+
+Schema: additive migration `20261123170000_learned_places` (two new tables, no
+existing table touched). Rollback: `DROP TABLE place_searches, learned_places;`
+and remove the migration row. It was generated with `prisma migrate diff`
+because there is no local Postgres. It has not been applied anywhere yet:
+`prisma migrate deploy` on Railway applies it (`start:migrate`).
+
+Frontend: `voice.ts` passes `location` on create/update_event and accepts
+`reason: 'tight'`. Calendar day view gets the Navigate button too.
+
+Tests: new `tests/unknown-place-margin.test.ts` (9) and `tests/nearby-near.test.ts`
+(6). In `tests/google-maps.test.ts`, the 2 nearby tests were rewritten for the
+new policy and 6 learned-store tests were added (repeat → no request, café ≠
+supermarket, other area → request, full page covers only to its farthest,
+30-day expiry, broken store). `tests/nearby-live.test.ts` adds the
+nearest-branch regression. `tests/availability.test.ts`: 5 tests updated for
+the margin. Full suite: 318 passed. The only failures are 16 in the
+DB-dependent auth/chat/sync files (no local Postgres), the same pre-existing
+set as before. `npx tsc --noEmit` passes. Live checks against Google:
+"בניין וויקס הרצליה" resolves to Herzliya Pituach, and the nearest malls are
+Herzliya's.
+
+Remains: apply the migration on Railway; confirm the learned store with a
+real database; decide with the client whether Google-first nearby (outside
+the quote, see T13 scope note) is approved — cost is $0 inside 5,000
+requests/month and is capped by the daily ceiling.

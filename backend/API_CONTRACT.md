@@ -595,8 +595,12 @@ What it accounts for, none of which is derivable from `snapshot` alone:
   the clash checker, and charged to the **end of the earlier window** — which
   is where it is felt. Windows report `endsBecause: "travel"` plus the
   destination, so the reply can say *why* the free time stops early. A location
-  that cannot be geocoded, or an event without one, is charged nothing rather
-  than guessed at.
+  that cannot be geocoded is charged nothing rather than guessed at.
+- **Events with no place.** Next to an event without a `location` the
+  journey cannot be known, so 30 minutes are kept clear beside it (the
+  user's `bufferMinutes` counts towards the 30, not on top). The model is
+  told which event caused it and the earliest start if it is close by, and
+  says so rather than silently offering the later time.
 - **Evenings that are over.** Occasions flagged `closesEvening` mean the rest
   of that evening is not offered at all. With `eveningOnly: true` the search
   skips such a day entirely and moves to the next one, instead of returning a
@@ -604,6 +608,28 @@ What it accounts for, none of which is derivable from `snapshot` alone:
 
 Sleep hours and the buffer come from `profile` when the device sends one;
 without a profile the old fixed 08:00–22:00 window applies, unchanged.
+
+### `offer_times` with `reason: "tight"`
+
+`offer_times.arguments.reason` is `clash | travel | tight`. `tight` means the
+requested time is free, but it sits less than 30 minutes (or `bufferMinutes`,
+if larger) from an event where one of the two has no place, so the journey
+between them is unknown. The meeting is **not** booked; the model asks first.
+```json
+{ "tool": "offer_times",
+  "arguments": { "reason": "tight", "title": "פגישה עם דנה",
+                 "requestedAt": "2026-11-24T16:30:00.000Z", "durationMinutes": 60,
+                 "neighbour": { "title": "קניות בסופר", "side": "after",
+                                "gapMinutes": 0 },
+                 "options": ["2026-11-24T17:00:00.000Z", "…"] } }
+```
+- `neighbour.side`: `after` = the meeting would start soon after it ends;
+  `before` = it would end soon before it starts. `neighbour.place` is present
+  only when the neighbour has a place (then the new meeting has none).
+- `options` never contains a time that is itself tight.
+- When the user says to book it anyway, the model retries `create_event` /
+  `update_event` with `confirmedTight: true`, which skips this check only. A
+  real overlap (`clash`) or an impossible journey (`travel`) is still refused.
 
 ---
 
@@ -761,6 +787,21 @@ Response `200`:
 ---
 
 ## Change log
+
+- `2026-11-23` — Not breaking for a client that ignores unknown values.
+  `offer_times.arguments.reason` gains **`tight`** with a `neighbour` object
+  (see "`offer_times` with `reason: "tight"`"). A client that switches on
+  `reason` must handle it, at least as `clash`. Voice tools `create_event` and
+  `update_event` take an optional `confirmedTight` (model-only). Free windows
+  keep 30 minutes beside an event with no place. Voice tool `find_nearby`
+  takes an optional `near` ("בניין וויקס הרצליה", or an event title), and the
+  search is measured from there instead of the GPS. `find_nearby` now asks
+  Google first for every category except fuel and malls, and the answers are kept 30
+  days in a shared learned store, so a repeat question about the same area is
+  free. Still server-side only, and never in `actions`.
+  `/maps/errand-fences` is unchanged and still free. Additive migration
+  `20261123170000_learned_places` (tables `place_searches`,
+  `learned_places`).
 
 - `2026-11-16` — Google Maps layer, nothing breaking. New `/maps/resolve`,
   `/maps/eta` and `/maps/errand-fences`. `snapshot.events[]` gains optional

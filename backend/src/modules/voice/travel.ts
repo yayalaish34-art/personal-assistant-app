@@ -2,7 +2,8 @@ import { logger } from '../../lib/logger.js';
 import { distanceKm as geoDistanceKm, type Point as GeoPoint } from './travel-geo.js';
 import { findNearby } from './places-index.js';
 import { TtlCache, normalizePlaceText, roundCoord } from '../maps/cache.js';
-import { googleGeocode, googleNearby, googleRoute, isGoogleEnabled } from '../maps/google.js';
+import { CATEGORY_GOOGLE_TYPES, googleGeocode, googleNearby, googleRoute, isGoogleEnabled } from '../maps/google.js';
+import { GOOGLE_PAGE, learnedNearby, rememberNearby } from '../maps/place-store.js';
 import { logMapsEvent } from '../maps/budget.js';
 
 /**
@@ -453,30 +454,53 @@ export async function searchNearby(
   }
 }
 
-// ── Nearby, with Google as the exception rather than the rule ───────────────
+// ── Nearby: Google for accuracy, a learned store to keep it cheap ──────────
 
 export interface NearbyResult {
   places: (NearbyPlace & { openNow?: boolean })[];
-  /** Where the answer came from — `osm` costs nothing. */
-  source: 'osm' | 'google' | 'osm+google';
+  /**
+   * Where the answer came from. `osm` and `learned` cost nothing; `google`
+   * was a paid request.
+   */
+  source: 'osm' | 'learned' | 'google';
   /** True when "open now" was asked for and could actually be checked. */
   openNowChecked: boolean;
 }
 
-/** Below this many local hits, the snapshot is treated as having nothing. */
+/**
+ * The few categories where the OSM snapshot can be trusted to have the
+ * nearest one. Measured 2026-11-23 against Google in ten Israeli cities:
+ * fuel 80% of Google's places, everything else 6–56% (supermarkets 6%,
+ * and the snapshot's nearest was over 300 m further than the real nearest
+ * in 6 of 10 cities). Everything not listed here asks Google first.
+ *
+ * Malls scored 40%, but against a Google list that is the wrong yardstick:
+ * Google's `shopping_mall` ranked by distance puts strip centres and even a
+ * cleaning company ahead of the real malls (seen live beside Wix, Herzliya),
+ * while the snapshot holds the real ones. Someone after "a mall" for a gift
+ * wants Seven Stars, not a strip of three shops, so malls start there too.
+ */
+export const OSM_TRUSTED_CATEGORIES: ReadonlySet<string> = new Set(['gas_station', 'mall']);
+/** Below this many local hits, even a trusted category goes to Google. */
 const MIN_LOCAL_HITS = 2;
-/** Google nearby answers are kept an hour (by ~1 km cell and category). */
+/** Google nearby answers are kept an hour in memory (by ~1 km cell and category). */
 const NEARBY_TTL_MS = 60 * 60_000;
 const nearbyCache = new TtlCache<NearbyResult>(2_000, NEARBY_TTL_MS);
 
 /**
  * The agent's nearby lookup.
  *
- * The OSM snapshot answers first and alone whenever it has something — free,
- * instant, no network. Google is asked only when (a) the snapshot has fewer
- * than two places for this category here, or (b) the user asked what is open
- * right now, which only Google knows (and which is the pricier Enterprise
- * request, so it is never sent unasked).
+ * 1. A category the snapshot covers well (fuel) is answered from it when it
+ *    has at least two — free, instant.
+ * 2. Otherwise the learned store is asked: what Google already said about
+ *    this area in the last 30 days, for anyone. Used only when it can
+ *    guarantee nothing nearer is missing (see place-store.ts).
+ * 3. Otherwise Google — always a full page of 20, the same price as 8 — and
+ *    the answer is kept for the next person.
+ * 4. Google off, over budget or failing: the snapshot, as before.
+ *
+ * "Open now" skips the stores — hours change by the hour — but its answer is
+ * still learned, since the places themselves do not move.
  */
 export async function findNearbySmart(
   center: Point,
@@ -486,18 +510,15 @@ export async function findNearbySmart(
   const radiusMeters = opts.radiusMeters ?? 3000;
   const limit = opts.limit ?? 8;
   const openNow = opts.openNow === true;
+  const google = isGoogleEnabled() && Boolean(CATEGORY_GOOGLE_TYPES[category]);
 
   const local = await searchNearby(center, category, radiusMeters, limit);
-  const needGoogle = openNow || local.length < MIN_LOCAL_HITS;
-  if (!needGoogle || !isGoogleEnabled()) {
-    if (isGoogleEnabled()) {
-      logMapsEvent({
-        kind: 'free',
-        sku: 'nearby_pro',
-        label: `מקומות מהקובץ המקומי: ${category} (${local.length} תוצאות)`,
-      });
-    }
-    return { places: local, source: 'osm', openNowChecked: false };
+  const fromSnapshot = (): NearbyResult => ({ places: local, source: 'osm', openNowChecked: false });
+
+  if (!google) return fromSnapshot();
+  if (!openNow && OSM_TRUSTED_CATEGORIES.has(category) && local.length >= MIN_LOCAL_HITS) {
+    logMapsEvent({ kind: 'free', sku: 'nearby_pro', label: `מקומות מהקובץ המקומי: ${category} (${local.length})` });
+    return fromSnapshot();
   }
 
   const key = [
@@ -517,39 +538,58 @@ export async function findNearbySmart(
     return withDistances(hit, center, limit);
   }
 
+  if (!openNow) {
+    const learned = await learnedNearby(category, center, radiusMeters);
+    if (learned) {
+      logMapsEvent({ kind: 'cache', sku: 'nearby_pro', label: `מקומות מהמאגר הלומד: ${category} (${learned.length})` });
+      return withDistances(
+        {
+          places: learned.map((p) => ({
+            name: p.name,
+            category,
+            latitude: p.latitude,
+            longitude: p.longitude,
+            distanceKm: 0,
+          })),
+          source: 'learned',
+          openNowChecked: false,
+        },
+        center,
+        limit,
+      );
+    }
+  }
+
   const remote = await googleNearby(center, category, {
     radiusMeters,
-    limit,
+    limit: GOOGLE_PAGE,
     withOpenNow: openNow,
   });
-  if (!remote) return { places: local, source: 'osm', openNowChecked: false };
+  if (!remote) return fromSnapshot();
 
-  const fromGoogle = remote
-    .filter((p) => !openNow || p.openNow !== false)
-    .map((p) => ({
-      name: p.name,
-      category,
-      latitude: p.latitude,
-      longitude: p.longitude,
-      distanceKm: 0,
-      ...(p.openNow !== undefined ? { openNow: p.openNow } : {}),
-    }));
+  await rememberNearby(
+    category,
+    center,
+    radiusMeters,
+    remote.map((p) => ({ placeId: p.placeId, name: p.name, latitude: p.latitude, longitude: p.longitude })),
+  );
 
-  // "Open now" answers stand on Google alone: an OSM place with unknown hours
-  // mixed into an "open now" list would be a guess presented as a fact.
-  const merged = openNow ? fromGoogle : mergeByName(local, fromGoogle);
   const result: NearbyResult = {
-    places: merged,
-    source: openNow ? 'google' : local.length > 0 ? 'osm+google' : 'google',
+    places: remote
+      .filter((p) => !openNow || p.openNow !== false)
+      .map((p) => ({
+        name: p.name,
+        category,
+        latitude: p.latitude,
+        longitude: p.longitude,
+        distanceKm: 0,
+        ...(p.openNow !== undefined ? { openNow: p.openNow } : {}),
+      })),
+    source: 'google',
     openNowChecked: openNow,
   };
   nearbyCache.set(key, result);
   return withDistances(result, center, limit);
-}
-
-function mergeByName<T extends { name: string }>(a: T[], b: T[]): T[] {
-  const seen = new Set(a.map((p) => p.name.trim().toLowerCase()));
-  return [...a, ...b.filter((p) => !seen.has(p.name.trim().toLowerCase()))];
 }
 
 /** Distances are recomputed from the asking point, since the cache is per cell. */

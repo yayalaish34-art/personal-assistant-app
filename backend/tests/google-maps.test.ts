@@ -19,6 +19,7 @@ import {
   NEARBY_FIELDS_ENTERPRISE,
 } from '../src/modules/maps/google.js';
 import { __resetBudgetForTest, recentMapsEvents, spendReport } from '../src/modules/maps/budget.js';
+import { __setPlaceStoreForTest, learnedNearby, LEARNED_TTL_MS } from '../src/modules/maps/place-store.js';
 import {
   __clearTravelCachesForTest,
   drivingMinutes,
@@ -74,6 +75,7 @@ beforeEach(() => {
   reply = () => ({});
   __resetBudgetForTest();
   __clearTravelCachesForTest();
+  __setPlaceStoreForTest(null);
 });
 
 afterEach(() => {
@@ -274,7 +276,7 @@ describe('daily budget', () => {
   });
 });
 
-// ── Nearby: OSM first ───────────────────────────────────────────────────────
+// ── Nearby: Google first, learned, snapshot for fuel ────────────────────────
 
 describe('findNearbySmart', () => {
   const FIXTURE: IndexedPlace[] = [
@@ -294,26 +296,97 @@ describe('findNearbySmart', () => {
     __setPlacesForTest(FIXTURE);
   });
 
-  it('answers from the snapshot alone when it has enough, even with Google on', async () => {
+  it('trusts the snapshot only where it was measured to be good (fuel)', async () => {
     useFakeGoogle();
-    const r = await findNearbySmart(TLV, 'supermarket');
-    expect(r.source).toBe('osm');
-    expect(r.places.map((p) => p.name)).toEqual(['Super Yuda', 'Shufersal']);
+    __setPlacesForTest([
+      ...FIXTURE,
+      { n: 'Paz', lat: 32.0856, lon: 34.7821, t: 'amenity=fuel' },
+      { n: 'Delek', lat: 32.0861, lon: 34.7831, t: 'amenity=fuel' },
+    ]);
+    const fuel = await findNearbySmart(TLV, 'gas_station');
+    expect(fuel.source).toBe('osm');
     expect(sent).toHaveLength(0);
   });
 
-  it('tops up from Google (Pro fields) when the snapshot is thin, and caches it', async () => {
+  it('asks Google first for supermarkets even when the snapshot has some — it holds 6% of them', async () => {
+    useFakeGoogle();
+    reply = () => googlePlaces;
+    const r = await findNearbySmart(TLV, 'supermarket');
+    expect(sent).toHaveLength(1);
+    expect(r.source).toBe('google');
+    expect(r.places.map((p) => p.name)).not.toContain('Super Yuda');
+  });
+
+  it('asks for a full page with Pro fields, and the same question later is answered from the learned store', async () => {
     useFakeGoogle();
     reply = () => googlePlaces;
     const r = await findNearbySmart(TLV, 'pharmacy');
-    await findNearbySmart(TLV, 'pharmacy');
-    expect(sent).toHaveLength(1);
     expect(sent[0]!.headers['X-Goog-FieldMask']).toBe(NEARBY_FIELDS_PRO);
-    expect(r.source).toBe('osm+google');
-    expect(r.places.map((p) => p.name)).toContain('Lonely Pharmacy');
-    expect(r.places.map((p) => p.name)).toContain('Super-Pharm');
+    expect(sent[0]!.body!.maxResultCount).toBe(20);
+    expect(r.places.map((p) => p.name)).toEqual(['Super-Pharm', 'Night Pharmacy']);
+
+    __clearTravelCachesForTest(); // the hour-long memory cache is gone; the store is not
+    const again = await findNearbySmart(TLV, 'pharmacy');
+    expect(sent).toHaveLength(1);
+    expect(again.source).toBe('learned');
+    expect(again.places.map((p) => p.name)).toEqual(['Super-Pharm', 'Night Pharmacy']);
     expect(spendReport().dayCount.nearby_pro).toBe(1);
-    expect(spendReport().dayCount.nearby_enterprise).toBe(0);
+  });
+
+  it('a café search does not answer a supermarket question in the same street', async () => {
+    useFakeGoogle();
+    reply = () => googlePlaces;
+    await findNearbySmart(TLV, 'cafe');
+    __clearTravelCachesForTest();
+    await findNearbySmart(TLV, 'supermarket');
+    expect(sent).toHaveLength(2);
+  });
+
+  it('a stored search answers only near where it was made', async () => {
+    useFakeGoogle();
+    reply = () => googlePlaces;
+    await findNearbySmart(TLV, 'pharmacy');
+    __clearTravelCachesForTest();
+    const elsewhere = { latitude: TLV.latitude + 0.025, longitude: TLV.longitude }; // ~2.8 km north
+    await findNearbySmart(elsewhere, 'pharmacy');
+    expect(sent).toHaveLength(2);
+  });
+
+  it('a full page of 20 is complete only out to its farthest result', async () => {
+    useFakeGoogle();
+    // 20 pharmacies, all within ~250 m: there may well be more beyond them.
+    reply = () => ({
+      places: Array.from({ length: 20 }, (_, i) => ({
+        id: `p${i}`,
+        displayName: { text: `Pharmacy ${i}` },
+        location: { latitude: TLV.latitude + i * 0.0001, longitude: TLV.longitude },
+      })),
+    });
+    await findNearbySmart(TLV, 'pharmacy');
+    const covered = await learnedNearby('pharmacy', TLV, 3000);
+    expect(covered?.length).toBeGreaterThanOrEqual(2); // the nearest ones are certain
+    const oneKmAway = { latitude: TLV.latitude + 0.009, longitude: TLV.longitude };
+    expect(await learnedNearby('pharmacy', oneKmAway, 3000)).toBeNull();
+  });
+
+  it('forgets what Google said after 30 days, as its terms require', async () => {
+    useFakeGoogle();
+    reply = () => googlePlaces;
+    await findNearbySmart(TLV, 'pharmacy');
+    expect(await learnedNearby('pharmacy', TLV, 3000)).not.toBeNull();
+    expect(await learnedNearby('pharmacy', TLV, 3000, Date.now() + LEARNED_TTL_MS + 60_000)).toBeNull();
+  });
+
+  it('a broken store never fails the question — it just goes to Google', async () => {
+    useFakeGoogle();
+    reply = () => googlePlaces;
+    const boom = async () => {
+      throw new Error('db down');
+    };
+    __setPlaceStoreForTest({ searchesNear: boom, placesNear: boom, record: boom, purgeOlderThan: boom });
+    const r = await findNearbySmart(TLV, 'pharmacy');
+    expect(r.source).toBe('google');
+    expect(r.places).toHaveLength(2);
   });
 
   it('pays for opening hours only when "open now" was asked, and drops the closed ones', async () => {

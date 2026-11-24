@@ -490,6 +490,32 @@ export default function OnboardingScreen({ onDone }: { onDone: () => void }) {
   const patch = (p: Partial<Profile>) => setProfile((prev) => ({ ...prev, ...p }));
 
   /**
+   * The answers already given, for someone who has been through this before.
+   *
+   * The questionnaire opens on every launch, and both ways out of it save what
+   * is on screen — so it has to show what was saved, or skipping it would
+   * reset every answer to the defaults. Only the first time does it start
+   * from the guesses above.
+   */
+  useEffect(() => {
+    let active = true;
+    (async () => {
+      try {
+        if (!(await storage.isOnboarded())) return;
+        const [saved, settings] = await Promise.all([storage.getProfile(), storage.getSettings()]);
+        if (!active) return;
+        setProfile(saved);
+        if (settings.displayName) setName(settings.displayName);
+      } catch {
+        /* unreadable storage: the guesses stand */
+      }
+    })();
+    return () => {
+      active = false;
+    };
+  }, []);
+
+  /**
    * Reads what has already been granted when the permissions step opens.
    *
    * Someone reinstalling, or returning after granting these in the system
@@ -586,9 +612,10 @@ export default function OnboardingScreen({ onDone }: { onDone: () => void }) {
 
   const skip = async () => {
     // Skipping still keeps the language, which was applied the moment it was
-    // tapped, and still counts as onboarded — asking again next launch would
-    // read as the app not having listened. The profile can be changed later in
-    // Settings, and the permissions are asked again at first use.
+    // tapped, and saves what is on screen: the answers given on an earlier
+    // launch, unchanged, or the defaults the first time. The profile can be
+    // changed later in Settings, and the permissions are asked again at first
+    // use.
     await storage.saveProfile(profile);
     await storage.setOnboarded(true);
     onDone();

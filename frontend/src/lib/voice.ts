@@ -774,6 +774,35 @@ export interface AppliedChange {
   /** Title of the entry, for the undo prompt. */
   title: string;
   destructive: boolean;
+  /** Set when this change put something new in, for the breakdown card. */
+  added?: BreakdownItem;
+}
+
+/** Where in the app a new entry went. */
+export type BreakdownSection = 'events' | 'tasks' | 'shopping' | 'money' | 'debts';
+
+/**
+ * One thing she put in, as the breakdown card lists it.
+ *
+ * When the user runs several things together in one breath, the card sorts
+ * what landed into the parts of the app it went to — calendar, tasks,
+ * shopping, money, debts — so a long request reads back at a glance instead
+ * of as one long sentence.
+ */
+export interface BreakdownItem {
+  section: BreakdownSection;
+  title: string;
+  /** ISO: an event's start, a task's due time. */
+  at?: string;
+  /** Shopping: how much. */
+  quantity?: string;
+  /** Money and debts: the figure, always positive. */
+  amount?: number;
+  /**
+   * Money: `in` for income, `out` for an expense. Debts: `in` when someone
+   * owes the user, `out` when the user owes.
+   */
+  direction?: 'in' | 'out';
 }
 
 const asString = (v: unknown): string | undefined => (typeof v === 'string' ? v : undefined);
@@ -827,6 +856,7 @@ export async function applyActions(actions: VoiceAction[]): Promise<AppliedChang
             title,
             destructive: false,
             undo: () => api.deleteTask(id),
+            added: { section: 'tasks', title, at: isoOrUndefined(args.dueAt) },
           });
           break;
         }
@@ -915,6 +945,7 @@ export async function applyActions(actions: VoiceAction[]): Promise<AppliedChang
                   isBought: true,
                   quantity: existing.quantity,
                 }).then(() => undefined),
+              added: { section: 'shopping', title: name, quantity: asString(args.quantity) },
             });
             break;
           }
@@ -932,6 +963,7 @@ export async function applyActions(actions: VoiceAction[]): Promise<AppliedChang
             title: name,
             destructive: false,
             undo: () => api.deleteShoppingItem(id),
+            added: { section: 'shopping', title: name, quantity: asString(args.quantity) },
           });
           break;
         }
@@ -958,6 +990,12 @@ export async function applyActions(actions: VoiceAction[]): Promise<AppliedChang
             title: description,
             destructive: false,
             undo: () => api.deleteMoneyEntry(id),
+            added: {
+              section: 'money',
+              title: description,
+              amount,
+              direction: kind === 'income' ? 'in' : 'out',
+            },
           });
           break;
         }
@@ -1020,7 +1058,17 @@ export async function applyActions(actions: VoiceAction[]): Promise<AppliedChang
             date: localToday(),
             updatedAt: new Date().toISOString(),
           });
-          applied.push({ title: person, destructive: false, undo: () => api.deleteDebt(id) });
+          applied.push({
+            title: person,
+            destructive: false,
+            undo: () => api.deleteDebt(id),
+            added: {
+              section: 'debts',
+              title: person,
+              amount,
+              direction: args.direction === 'owe' ? 'out' : 'in',
+            },
+          });
           break;
         }
 
@@ -1056,7 +1104,12 @@ export async function applyActions(actions: VoiceAction[]): Promise<AppliedChang
             reminderMinutesBefore: 15,
             updatedAt: new Date().toISOString(),
           });
-          applied.push({ title, destructive: false, undo: () => api.deleteEvent(id) });
+          applied.push({
+            title,
+            destructive: false,
+            undo: () => api.deleteEvent(id),
+            added: { section: 'events', title, at: startsAt },
+          });
           break;
         }
 

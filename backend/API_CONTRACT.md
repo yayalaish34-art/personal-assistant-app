@@ -425,7 +425,9 @@ Request:
   "history": [{ "role": "user", "content": "…" }],
   "snapshot": {
     "tasks": [{ "id": "…", "title": "…", "notes": null, "dueAt": null, "isDone": false }],
-    "events": [{ "id": "…", "title": "…", "note": null, "startsAt": "…", "endsAt": "…" }],
+    "events": [{ "id": "…", "title": "…", "note": null, "startsAt": "…", "endsAt": "…",
+                 "location": "עזריאלי", "locationLat": 32.074, "locationLng": 34.792,
+                 "locationPlaceId": "ChIJ…" }],
     "shopping": [{ "id": "…", "name": "Milk", "quantity": "2", "isBought": false }],
     "money": [{ "id": "…", "kind": "expense", "description": "Lunch", "amount": 42,
                 "date": "2026-07-30", "category": "food" }],
@@ -469,6 +471,13 @@ Request:
   so an older client is unaffected. This is the whole of what she can see; ids
   come from here. Money totals are added up server-side and handed to the
   model, which is told never to sum entries itself.
+- `snapshot.events[].locationLat` / `locationLng` / `locationPlaceId` —
+  **optional**, where `location` was resolved to when the event was saved
+  (device geocoder, or `POST /maps/resolve`). `lat` is `-90…90`, `lng`
+  `-180…180`, else `400`. When both numbers are present the server uses them
+  and never geocodes the text; this is what keeps travel checks free. Send
+  them unchanged when only the time of an event changes; drop them when the
+  place changes.
 - `profile` — **optional**, the answers from the opening questionnaire. Existing
   fields have defaults and new preference fields are optional, so a partial object
   is valid and a missing one is fine (an install from before the questionnaire,
@@ -586,8 +595,12 @@ What it accounts for, none of which is derivable from `snapshot` alone:
   the clash checker, and charged to the **end of the earlier window** — which
   is where it is felt. Windows report `endsBecause: "travel"` plus the
   destination, so the reply can say *why* the free time stops early. A location
-  that cannot be geocoded, or an event without one, is charged nothing rather
-  than guessed at.
+  that cannot be geocoded is charged nothing rather than guessed at.
+- **Events with no place.** Next to an event without a `location` the
+  journey cannot be known, so 30 minutes are kept clear beside it (the
+  user's `bufferMinutes` counts towards the 30, not on top). The model is
+  told which event caused it and the earliest start if it is close by, and
+  says so rather than silently offering the later time.
 - **Evenings that are over.** Occasions flagged `closesEvening` mean the rest
   of that evening is not offered at all. With `eveningOnly: true` the search
   skips such a day entirely and moves to the next one, instead of returning a
@@ -595,6 +608,28 @@ What it accounts for, none of which is derivable from `snapshot` alone:
 
 Sleep hours and the buffer come from `profile` when the device sends one;
 without a profile the old fixed 08:00–22:00 window applies, unchanged.
+
+### `offer_times` with `reason: "tight"`
+
+`offer_times.arguments.reason` is `clash | travel | tight`. `tight` means the
+requested time is free, but it sits less than 30 minutes (or `bufferMinutes`,
+if larger) from an event where one of the two has no place, so the journey
+between them is unknown. The meeting is **not** booked; the model asks first.
+```json
+{ "tool": "offer_times",
+  "arguments": { "reason": "tight", "title": "פגישה עם דנה",
+                 "requestedAt": "2026-11-24T16:30:00.000Z", "durationMinutes": 60,
+                 "neighbour": { "title": "קניות בסופר", "side": "after",
+                                "gapMinutes": 0 },
+                 "options": ["2026-11-24T17:00:00.000Z", "…"] } }
+```
+- `neighbour.side`: `after` = the meeting would start soon after it ends;
+  `before` = it would end soon before it starts. `neighbour.place` is present
+  only when the neighbour has a place (then the new meeting has none).
+- `options` never contains a time that is itself tight.
+- When the user says to book it anyway, the model retries `create_event` /
+  `update_event` with `confirmedTight: true`, which skips this check only. A
+  real overlap (`clash`) or an impossible journey (`travel`) is still refused.
 
 ---
 
@@ -646,6 +681,83 @@ Unauthenticated and stateless: nothing is stored server-side.
 
 ---
 
+## Maps (stateless, no auth)
+
+Places and driving times for the device. Like `/voice/*` these own no data
+and need no account: the server holds the Google Maps key and a daily spend
+ceiling (`GOOGLE_MAPS_DAILY_BUDGET_USD`). Without a key, or past the ceiling,
+every route still answers `200` from the free path (OSM snapshot,
+straight-line estimate). It never errors because Google is unavailable.
+
+Rate limit (all `/maps/*` together): **20/min and 150/day per caller**.
+`429` in the usual error shape, with `Retry-After`.
+
+### `POST /maps/resolve`
+Text → coordinates, meant to be called **once per event**, and only after the
+device's own geocoder found nothing.
+```json
+{ "text": "עזריאלי תל אביב", "language": "he" }
+```
+Response `200`:
+```json
+{ "place": { "placeId": "ChIJ…", "latitude": 32.074, "longitude": 34.792,
+             "formattedAddress": "…" },
+  "source": "google" }
+```
+- `source`: `google` (found), `none` (Google had no match → `place: null`),
+  `disabled` (no key on the server → `place: null`).
+- `text` 1–200 chars after trimming, else `400`. `language` two-letter code,
+  default `he`.
+- Store the result on the event (`locationLat`, `locationLng`,
+  `locationPlaceId`) and send it in the voice snapshot from then on.
+
+### `POST /maps/eta`
+Driving time for the "time to leave" alert, with live traffic when available.
+Call it **once per event**, about an hour before leaving, and only when the
+device's own estimate is 15 minutes or more.
+```json
+{ "from": { "latitude": 32.08, "longitude": 34.78 },
+  "to":   { "latitude": 31.77, "longitude": 35.21 },
+  "arriveBy": "2026-11-17T09:00:00+02:00" }
+```
+Response `200`: `{ "minutes": 72, "withTraffic": true, "distanceKm": 54.3 }`
+- `minutes` is door to door (a few minutes of parking included).
+- `withTraffic: false` means the straight-line minimum instead. That happens
+  with no key, past the budget, under 1 km, or when `arriveBy` is more than
+  3 hours away (traffic that far ahead is noise).
+- `arriveBy` optional, ISO-8601 with offset.
+
+### `POST /maps/errand-fences`
+Stores worth a geofence for the open errand tasks. Always free: the server
+answers from its local OSM snapshot and never calls Google.
+```json
+{ "near": { "latitude": 32.075, "longitude": 34.773 },
+  "tasks": [{ "id": "t1", "title": "לקנות מתנה לרונית" }],
+  "max": 10, "radiusMeters": 5000 }
+```
+Response `200`:
+```json
+{ "fences": [{ "id": "32.07540,34.77350", "taskId": "t1",
+               "taskTitle": "לקנות מתנה לרונית", "placeName": "דיזנגוף סנטר",
+               "category": "mall", "latitude": 32.0754, "longitude": 34.7735,
+               "distanceKm": 0.1 }] }
+```
+- `tasks` up to 100. Tasks that do not name an errand (e.g. "call mom") are
+  skipped. Up to 3 stores per task, and a store shared by two tasks is
+  returned once.
+- `max` 1–15 (default 10). iOS allows 20 regions per app in total, and event
+  geofences share them. `radiusMeters` 500–20000 (default 5000).
+
+### `POST /voice/opportunity-nudge`
+Same body as before, except **`location` is now optional** (not breaking,
+only relaxed). With no GPS, a free window that opens right after a meeting
+whose event carries `locationLat`/`locationLng` is measured from that
+meeting, and the push `body` says so ("2.1 ק"מ מ"פגישה ברמת גן""). With
+neither GPS nor a placed meeting the answer is `shouldNudge: false`. Send the
+key only with an object, never `null`.
+
+---
+
 ## Devices
 
 ### `POST /devices`
@@ -675,6 +787,36 @@ Response `200`:
 ---
 
 ## Change log
+
+- `2026-11-23` — Not breaking for a client that ignores unknown values.
+  `offer_times.arguments.reason` gains **`tight`** with a `neighbour` object
+  (see "`offer_times` with `reason: "tight"`"). A client that switches on
+  `reason` must handle it, at least as `clash`. Voice tools `create_event` and
+  `update_event` take an optional `confirmedTight` (model-only). Free windows
+  keep 30 minutes beside an event with no place. Voice tool `find_nearby`
+  takes an optional `near` ("בניין וויקס הרצליה", or an event title), and the
+  search is measured from there instead of the GPS. `find_nearby` now asks
+  Google first for every category except fuel and malls, and the answers are kept 30
+  days in a shared learned store, so a repeat question about the same area is
+  free. Still server-side only, and never in `actions`.
+  Each place comes back with a ready `howFar` phrase instead of a bare
+  straight-line km: a walk under 400 m, walk and car up to 1.5 km, car (road
+  distance and minutes from Routes Essentials) beyond. An optional
+  `travelMode` (`walk` | `drive`) is set only when the user said how they
+  travel. A `near` the map found in a different town than the one named is
+  refused with an explanation, never searched.
+  `/maps/errand-fences` is unchanged and still free. Additive migration
+  `20261123170000_learned_places` (tables `place_searches`,
+  `learned_places`).
+
+- `2026-11-16` — Google Maps layer, nothing breaking. New `/maps/resolve`,
+  `/maps/eta` and `/maps/errand-fences`. `snapshot.events[]` gains optional
+  `locationLat`, `locationLng` and `locationPlaceId`. `/voice/opportunity-nudge`
+  `location` is now optional. Voice tool `find_nearby` takes any category the
+  local snapshot knows (was 12) plus an optional `openNow`. It is answered
+  server-side and never returned in `actions`. `check_travel` may now answer
+  with live traffic (`withTraffic: true`). Without `GOOGLE_MAPS_API_KEY`
+  everything behaves exactly as before.
 
 - `2026-10-19` — Added the five optional personalization fields above. Both
   transcription routes use `OPENAI_TRANSCRIBE_MODEL` (default

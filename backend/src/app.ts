@@ -23,6 +23,8 @@ import { parseRouter } from './modules/chat/parseRouter.js';
 import { speechRouter } from './modules/speech/router.js';
 import { voiceRouter } from './modules/voice/router.js';
 import { imageRouter } from './modules/image/router.js';
+import { mapsRouter } from './modules/maps/router.js';
+import { mapsDashboardRouter } from './modules/maps/dashboard.js';
 
 const require = createRequire(import.meta.url);
 const pkg = require('../package.json') as { version: string };
@@ -31,6 +33,8 @@ export function createApp(): Express {
   const app = express();
 
   app.disable('x-powered-by');
+  // The rate limits key on `req.ip`; see TRUST_PROXY_HOPS in config.ts.
+  app.set('trust proxy', config.TRUST_PROXY_HOPS);
   app.use(helmet());
 
   // CORS: allow all origins (temporary — permissive for now).
@@ -69,6 +73,14 @@ export function createApp(): Express {
   app.use('/', voiceRouter);
   // Also stateless: the device keeps the picture, the server keeps the key.
   app.use('/', imageRouter);
+  // Places and driving times: stateless too. The server keeps the Google key
+  // and the daily budget; the device keeps the coordinates it is given.
+  app.use('/', mapsRouter);
+  // Live Maps usage page, for the developer's own machine only (it also
+  // refuses anything but loopback). Never mounted outside development.
+  if (config.NODE_ENV === 'development') {
+    app.use('/', mapsDashboardRouter);
+  }
 
   app.use(notFoundHandler);
   app.use(errorHandler);

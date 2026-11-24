@@ -11,6 +11,8 @@ import { guessCategory, HISTORY_CAP, normalizeName, type ShoppingHistory } from 
 import { missingRecurring, type Budgets } from './finance';
 import { getVoiceLanguage } from './i18n';
 
+import { resolvePlacePoint } from './places';
+
 let geofenceRefresh: (() => void) | null = null;
 function triggerGeofenceRefresh() {
   if (!geofenceRefresh) {
@@ -120,6 +122,15 @@ export type Event = {
   note: string | null;
   /** Where it happens, as typed. Used to check a journey is possible. */
   location: string | null;
+  /**
+   * Where `location` was resolved to, once, right after it was saved (see
+   * `ensureEventCoords`). Every travel check, reminder, geofence and the
+   * server's own checks use these instead of geocoding the text again.
+   * Cleared whenever `location` changes. Absent on events from older builds.
+   */
+  locationLat?: number | null;
+  locationLng?: number | null;
+  locationPlaceId?: string | null;
   startsAt: string;
   endsAt: string;
   /** When the user marked the event as finished, if before the planned end. */
@@ -829,6 +840,44 @@ async function forgetPurchase(item: ShoppingItem): Promise<void> {
   await AsyncStorage.setItem(KEYS.shopHistory, JSON.stringify(history));
 }
 
+/**
+ * Resolve an event's place to coordinates, once, and keep them on the row.
+ *
+ * This is what makes every later travel check free: the reminder, the
+ * geofence, the server's "can you make it" check and the calendar-based
+ * nudge all read these numbers instead of geocoding the text again. Runs
+ * after the write, in the background, so saving never waits on a network.
+ * If the place was edited while the lookup was in flight, the stale answer
+ * is dropped.
+ */
+async function ensureEventCoords(id: string): Promise<void> {
+  try {
+    const before = (await readList<Event>(KEYS.events)).find((r) => r.id === id);
+    const text = before?.location?.trim();
+    if (!before || !text) return;
+    if (typeof before.locationLat === 'number' && typeof before.locationLng === 'number') return;
+
+    const point = await resolvePlacePoint(text, getVoiceLanguage());
+    if (!point) return;
+
+    const rows = await readList<Event>(KEYS.events);
+    const i = rows.findIndex((r) => r.id === id);
+    if (i === -1 || rows[i].location?.trim() !== text) return;
+    // Derived data, not an edit: `updatedAt` stays where the user left it.
+    rows[i] = {
+      ...rows[i],
+      locationLat: point.latitude,
+      locationLng: point.longitude,
+      locationPlaceId: point.placeId,
+    };
+    await writeList(KEYS.events, rows);
+    void scheduleEventReminder(rows[i]);
+    triggerGeofenceRefresh();
+  } catch {
+    /* best effort — the text is still there for every fallback */
+  }
+}
+
 export const api = {
   // ── Health: nothing to reach, so this always succeeds ──
   health: async () => ({ status: 'ok' }),
@@ -875,6 +924,8 @@ export const api = {
     // Reminders are scheduled here rather than in the screens, so a task the
     // assistant creates rings exactly like one typed into the form.
     void scheduleTaskReminder(task);
+    // An errand task ("לקנות מתנה") may want a store geofence.
+    triggerGeofenceRefresh();
     return task;
   },
 
@@ -907,6 +958,7 @@ export const api = {
     await writeList(KEYS.tasks, rows);
     // Moving the due date moves the reminder; completing it drops the reminder.
     void scheduleTaskReminder(rows[i]);
+    triggerGeofenceRefresh();
     return rows[i];
   },
 
@@ -918,6 +970,7 @@ export const api = {
       rows.filter((r) => r.id !== id),
     );
     void cancelReminder(id);
+    triggerGeofenceRefresh();
   },
 
   // ── Events ──
@@ -957,6 +1010,7 @@ export const api = {
     await writeList(KEYS.events, [event, ...rows]);
     void scheduleEventReminder(event);
     triggerGeofenceRefresh();
+    void ensureEventCoords(event.id);
     return event;
   },
 
@@ -969,10 +1023,21 @@ export const api = {
     const rows = await readList<Event>(KEYS.events);
     const i = rows.findIndex((r) => r.id === id);
     if (i === -1) throw new ApiError(404, 'NOT_FOUND', 'Event not found');
-    rows[i] = { ...rows[i], ...patch, updatedAt: patch.updatedAt ?? nowIso() };
+    // A new place means the old coordinates describe somewhere else. Moving
+    // only the time keeps them, so a re-time never costs a lookup.
+    const placeChanged =
+      patch.location !== undefined &&
+      (patch.location ?? '').trim().toLowerCase() !== (rows[i].location ?? '').trim().toLowerCase();
+    rows[i] = {
+      ...rows[i],
+      ...patch,
+      ...(placeChanged ? { locationLat: null, locationLng: null, locationPlaceId: null } : {}),
+      updatedAt: patch.updatedAt ?? nowIso(),
+    };
     await writeList(KEYS.events, rows);
     void scheduleEventReminder(rows[i]);
     triggerGeofenceRefresh();
+    if (placeChanged) void ensureEventCoords(id);
     return rows[i];
   },
 

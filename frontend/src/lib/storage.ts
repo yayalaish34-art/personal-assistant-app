@@ -15,12 +15,19 @@ export type Settings = {
   displayName: string;
   notifications: boolean;
   shoppingEstimates: boolean;
+  /**
+   * "You're near a store for an open errand" alerts. Opt-in: it needs the
+   * "Always" location permission, which stores review and users weigh
+   * differently from the rest. Off, the calendar-based offers still work.
+   */
+  errandAlerts: boolean;
 };
 
 export const defaultSettings: Settings = {
   displayName: '',
   notifications: true,
   shoppingEstimates: false,
+  errandAlerts: false,
 };
 
 /** The kinds of thing a diary is made of. Keys, not labels — they are translated. */

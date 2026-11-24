@@ -46,7 +46,27 @@ export interface FreeWindow {
   nextPlace?: string;
   /** Minutes of travel that had to be carved off the end. */
   travelMinutes?: number;
+  /** The event this window follows, when one does. */
+  previousTitle?: string;
+  previousPlace?: string;
+  /**
+   * Set when a neighbouring event has no place, so the journey to or from it
+   * could not be worked out and half an hour was kept clear instead. `after`
+   * names the event before the window, `before` the one after it. The agent
+   * must say so and ask, never quietly offer the unguarded edge.
+   */
+  unknownPlace?: { after?: string; before?: string; marginMinutes: number };
+  /** The window's edges before that margin — usable if the event is close by. */
+  earliestStartsAt?: string;
+  latestEndsAt?: string;
 }
+
+/**
+ * Minutes kept clear, in all, next to an event whose place is unknown. The
+ * questionnaire's buffer counts towards it. Shared with schedule.ts, which
+ * asks before booking inside the same distance.
+ */
+export const UNKNOWN_PLACE_MINUTES = 30;
 
 export interface DayAvailability {
   /** Local YYYY-MM-DD. */
@@ -308,6 +328,20 @@ export async function freeWindowsForDay(
 
   const windows: FreeWindow[] = [];
   let cursor = from;
+  /** The booking whose end set `cursor`, so a window knows what it follows. */
+  let prev: Booking | null = null;
+
+  /**
+   * How much of a window to keep clear next to an event with no place.
+   *
+   * With a place, the journey is worked out and charged. Without one there is
+   * nothing to work it out from — "shopping at six" could be downstairs or
+   * across town — and the old answer, zero, offered half past six as if
+   * leaving the supermarket took no time at all. Half an hour in all is the
+   * honest middle; the questionnaire's own buffer counts towards it, so a
+   * user who asked for 45 minutes between things still gets 45.
+   */
+  const unknownMargin = Math.max(0, UNKNOWN_PLACE_MINUTES * MINUTE - buffer);
 
   for (const booking of dayBookings) {
     // Time needed to get from wherever this window is spent to the booking.
@@ -332,30 +366,57 @@ export async function freeWindowsForDay(
       }
     }
 
-    const closesAt = booking.start - buffer - travel;
-    const minutes = Math.round((closesAt - cursor) / MINUTE);
+    const after = prev && !prev.place ? prev.title : undefined;
+    const before = !booking.place ? booking.title : undefined;
+    const opensAt = cursor + (after ? unknownMargin : 0);
+    const closesAt = booking.start - buffer - travel - (before ? unknownMargin : 0);
+    const minutes = Math.round((closesAt - opensAt) / MINUTE);
     if (minutes >= MIN_USEFUL_MINUTES) {
       windows.push({
-        startsAt: toZonedIso(cursor, timeZone),
+        startsAt: toZonedIso(opensAt, timeZone),
         endsAt: toZonedIso(closesAt, timeZone),
         minutes,
         endsBecause: travel > 0 ? 'travel' : 'event',
         nextTitle: booking.title,
         ...(booking.place ? { nextPlace: booking.place } : {}),
         ...(travel > 0 ? { travelMinutes: Math.round(travel / MINUTE) } : {}),
+        ...(prev ? { previousTitle: prev.title } : {}),
+        ...(prev?.place ? { previousPlace: prev.place } : {}),
+        ...(after || before
+          ? {
+              unknownPlace: {
+                ...(after ? { after } : {}),
+                ...(before ? { before } : {}),
+                marginMinutes: Math.round(unknownMargin / MINUTE),
+              },
+              earliestStartsAt: toZonedIso(cursor, timeZone),
+              latestEndsAt: toZonedIso(booking.start - buffer - travel, timeZone),
+            }
+          : {}),
       });
     }
     cursor = Math.max(cursor, booking.end + buffer);
+    prev = booking;
   }
 
   // Whatever is left between the last booking and bedtime.
-  const tailMinutes = Math.round((span.end - cursor) / MINUTE);
+  const tailAfter = prev && !prev.place ? prev.title : undefined;
+  const tailOpensAt = cursor + (tailAfter ? unknownMargin : 0);
+  const tailMinutes = Math.round((span.end - tailOpensAt) / MINUTE);
   if (tailMinutes >= MIN_USEFUL_MINUTES) {
     windows.push({
-      startsAt: toZonedIso(cursor, timeZone),
+      startsAt: toZonedIso(tailOpensAt, timeZone),
       endsAt: toZonedIso(span.end, timeZone),
       minutes: tailMinutes,
       endsBecause: prefs ? 'sleep' : 'dayEnd',
+      ...(prev ? { previousTitle: prev.title } : {}),
+      ...(prev?.place ? { previousPlace: prev.place } : {}),
+      ...(tailAfter
+        ? {
+            unknownPlace: { after: tailAfter, marginMinutes: Math.round(unknownMargin / MINUTE) },
+            earliestStartsAt: toZonedIso(cursor, timeZone),
+          }
+        : {}),
     });
   }
 

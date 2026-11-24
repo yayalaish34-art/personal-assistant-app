@@ -21,7 +21,6 @@ import IntroScreen from './src/screens/IntroScreen';
 import OnboardingScreen from './src/screens/OnboardingScreen';
 import { FeatureTour } from './src/components/FeatureTour';
 import { loadLanguage, isRTL, getLanguage, subscribeToLanguage } from './src/lib/i18n';
-import { storage } from './src/lib/storage';
 import { getAppearance, loadAppearance, subscribeToAppearance } from './src/lib/appearance';
 import { configureOnce as configureNotifications } from './src/lib/notifications';
 import { refreshGeofences } from './src/lib/geofencing';
@@ -93,7 +92,14 @@ export default function App() {
    * like walking in through a wall.
    */
   const [introDone, setIntroDone] = useState(false);
-  const [onboarded, setOnboarded] = useState<boolean | null>(null);
+  /**
+   * Whether the questionnaire is behind us on this launch.
+   *
+   * By explicit product choice it opens on every cold launch, like the tour.
+   * It comes up filled in with the answers already given, so going through it
+   * again — or skipping it — changes nothing unless something is changed.
+   */
+  const [onboarded, setOnboarded] = useState(false);
 
   /**
    * Whether the feature tour opens on this launch.
@@ -120,16 +126,6 @@ export default function App() {
     // the user has already granted foreground location. The voice session
     // calls the asking variant later; the module is idempotent.
     void startLocationTracking({ requireExistingPermission: true }).catch(() => undefined);
-    storage
-      .isOnboarded()
-      // In development the questionnaire opens every launch. It is the thing
-      // being worked on, and answering it once would otherwise hide it behind
-      // a stored flag that needs the app deleted to clear. A release build
-      // keeps the real behaviour: asked once, never again.
-      .then((seen) => setOnboarded(__DEV__ ? false : seen))
-      // Unreadable storage is not a reason to trap someone in onboarding
-      // forever; assume they have seen it and let them into the app.
-      .catch(() => setOnboarded(!__DEV__));
   }, []);
 
   const [fontsLoaded] = useFonts({
@@ -141,7 +137,7 @@ export default function App() {
 
   // Hold the first frame until Urbanist is ready, so text doesn't flash in the
   // system font and reflow once the real metrics land.
-  if (!fontsLoaded || !langReady || onboarded === null) {
+  if (!fontsLoaded || !langReady) {
     return <View style={{ flex: 1, backgroundColor: colors.bg }} />;
   }
 

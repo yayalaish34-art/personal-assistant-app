@@ -27,6 +27,7 @@ import {
   saveConversation,
   VoiceUnavailableError,
   type AppliedChange,
+  type BreakdownItem,
   type CardSet,
   type ChecklistData,
   type ConfirmationData,
@@ -64,6 +65,13 @@ const LEVEL_MS = 120;
  * It is sent as text, so it never shows up as something the user said.
  */
 const SESSION_START = '[SESSION START]';
+
+/**
+ * How many new entries one request has to add before they are shown sorted
+ * by section. One or two she simply says; from three on, a sentence is no
+ * longer the easy way to see what went where.
+ */
+const BREAKDOWN_MIN = 3;
 
 /** Tool results that are shown rather than applied. */
 const DISPLAY_TOOLS = new Set([
@@ -113,6 +121,8 @@ export type Line = {
   weather?: WeatherData;
   /** Summary with stats and highlights. */
   summary?: SummaryData;
+  /** What one request added, to be shown sorted by section. */
+  breakdown?: BreakdownItem[];
   /**
    * When it was said, for the clock under the bubble.
    *
@@ -191,6 +201,16 @@ export function useVoiceSession(options: {
   const liveLinesRef = useRef(new Map<string, { lineId: string; index: number }>());
   /** A line typed before the conversation was open, sent once it is. */
   const pendingRef = useRef<string | null>(null);
+  /**
+   * What the user's latest request has added so far, and the breakdown line
+   * showing it once there is one. Her calls for a single request arrive one
+   * after another, so the card opens on the third entry and grows in place.
+   */
+  const breakdownRef = useRef<{ turn: string; lineId: string | null; items: BreakdownItem[] }>({
+    turn: '',
+    lineId: null,
+    items: [],
+  });
   const userNameRef = useRef(userName);
   userNameRef.current = userName;
   const onChangedRef = useRef(onChanged);
@@ -230,6 +250,30 @@ export function useVoiceSession(options: {
       }
     }
     if (final) void saveConversation(historyRef.current);
+  }, []);
+
+  /** The user has asked for something new: its additions start a fresh count. */
+  const newRequest = useCallback((turn: string) => {
+    if (breakdownRef.current.turn === turn) return;
+    breakdownRef.current = { turn, lineId: null, items: [] };
+  }, []);
+
+  /** Counts what a tool just put in, and shows or grows the breakdown. */
+  const tally = useCallback((applied: AppliedChange[]) => {
+    const added = applied.flatMap((a) => (a.added ? [a.added] : []));
+    if (added.length === 0) return;
+    const b = breakdownRef.current;
+    b.items = [...b.items, ...added];
+    if (b.items.length < BREAKDOWN_MIN) return;
+    const items = b.items;
+    if (b.lineId) {
+      const lineId = b.lineId;
+      setLines((prev) => prev.map((l) => (l.id === lineId ? { ...l, breakdown: items } : l)));
+      return;
+    }
+    const lineId = uuid();
+    b.lineId = lineId;
+    setLines((prev) => [...prev, { id: lineId, role: 'assistant', text: '', at: Date.now(), breakdown: items }]);
   }, []);
 
   /** A line for the screen only — a notice, not part of what was said. */
@@ -316,7 +360,16 @@ export function useVoiceSession(options: {
         weather: pick('present_weather', parseWeather),
         summary: pick('present_summary', parseSummary),
       };
-      const shown = Object.fromEntries(Object.entries(visuals).filter(([, v]) => v));
+      // Once the breakdown is up for this request it already lists what
+      // landed; a checklist, confirmation or summary of the same entries
+      // would show them twice. She is told not to draw one, and once in a
+      // while does anyway.
+      const sorted = breakdownRef.current.lineId !== null;
+      const shown = Object.fromEntries(
+        Object.entries(visuals).filter(
+          ([key, v]) => v && !(sorted && (key === 'checklist' || key === 'confirmation' || key === 'summary')),
+        ),
+      );
       // Its own line, under whatever she is saying about it: the words arrive
       // separately, as she speaks them.
       if (Object.keys(shown).length > 0) {
@@ -324,9 +377,13 @@ export function useVoiceSession(options: {
       }
 
       const rest = actions.filter((a) => !DISPLAY_TOOLS.has(a.tool));
-      if (rest.length > 0) changed(await applyActions(rest));
+      if (rest.length > 0) {
+        const applied = await applyActions(rest);
+        if (!doneRef.current) tally(applied);
+        changed(applied);
+      }
     },
-    [changed],
+    [changed, tally],
   );
 
   /** One tool call from her: run it on the server, apply what it decided, answer. */
@@ -411,7 +468,9 @@ export function useVoiceSession(options: {
           (resumeHandle) => openLiveSession(historyRef.current, userNameRef.current, resumeHandle),
           {
             onUserText: (n, text) => {
-              if (!doneRef.current) spoken('user', `u${runId}:${n}`, text, false);
+              if (doneRef.current) return;
+              newRequest(`u${runId}:${n}`);
+              spoken('user', `u${runId}:${n}`, text, false);
             },
             onAgentText: (n, text, phase) => {
               if (!doneRef.current) spoken('assistant', `a${runId}:${n}`, text, phase !== 'open');
@@ -535,6 +594,7 @@ export function useVoiceSession(options: {
       if (!said) return;
       // Typing while she talks means the user is done listening.
       hush();
+      newRequest(`typed:${uuid()}`);
       say('user', said);
       const session = sessionRef.current;
       if (session) {
@@ -546,7 +606,7 @@ export function useVoiceSession(options: {
       pendingRef.current = said;
       if (stateRef.current === 'stopped') restart();
     },
-    [hush, restart, say, setPhase],
+    [hush, newRequest, restart, say, setPhase],
   );
 
   /**
@@ -675,6 +735,7 @@ export function useVoiceSession(options: {
   const startOver = useCallback(() => {
     historyRef.current = [];
     liveLinesRef.current = new Map();
+    breakdownRef.current = { turn: '', lineId: null, items: [] };
     setLines([]);
     setUndoable([]);
     void clearConversation();

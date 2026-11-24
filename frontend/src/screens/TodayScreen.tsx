@@ -907,6 +907,10 @@ export default function TodayScreen() {
     if (!current || current.kind !== 'event') return;
     Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
     await api.endEvent(current.id);
+    // The meeting now ends this very moment, but this screen's clock ticks
+    // once a minute: with the old "now" it still read as on until the next
+    // tick, and the button looked as if it did nothing.
+    setNow(new Date());
     await refresh();
   };
 

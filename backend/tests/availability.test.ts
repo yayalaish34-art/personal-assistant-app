@@ -46,14 +46,18 @@ describe('a meeting with no end time occupies an hour', () => {
 
     const after = day.windows.find((w) => w.startsAt >= at('11:00'));
     expect(after).toBeDefined();
-    expect(after!.startsAt).toBe(at('12:00'));
+    // The meeting holds the hour; the window's raw edge is 12:00. It has no
+    // place, so half an hour is kept clear beside it (unknown-place margin).
+    expect(after!.earliestStartsAt).toBe(at('12:00'));
+    expect(after!.startsAt).toBe(at('12:30'));
   });
 
   it('2. the window before it ends at 11:00, not later', async () => {
     const events: AvailabilityEvent[] = [{ title: 'Meeting', startsAt: at('11:00') }];
     const day = await freeWindowsForDay(DATE, events, TZ, NOW, PREFS, resolve);
 
-    expect(day.windows[0].endsAt).toBe(at('11:00'));
+    expect(day.windows[0].latestEndsAt).toBe(at('11:00'));
+    expect(day.windows[0].endsAt).toBe(at('10:30'));
     expect(day.windows[0].nextTitle).toBe('Meeting');
   });
 
@@ -64,7 +68,8 @@ describe('a meeting with no end time occupies an hour', () => {
     const day = await freeWindowsForDay(DATE, events, TZ, NOW, PREFS, resolve);
 
     const after = day.windows.find((w) => w.startsAt >= at('11:00'));
-    expect(after!.startsAt).toBe(at('11:30'));
+    expect(after!.earliestStartsAt).toBe(at('11:30'));
+    expect(after!.startsAt).toBe(at('12:00')); // + the unknown-place margin
   });
 });
 
@@ -122,9 +127,14 @@ describe('travel between two places shortens the free window', () => {
       { title: 'Client', startsAt: at('13:30'), location: 'Shoham' },
     ];
     const day = await freeWindowsForDay(DATE, partial, TZ, NOW, PREFS, resolve);
-    const gap = day.windows.find((w) => w.startsAt === at('12:00'))!;
+    const gap = day.windows.find((w) => w.earliestStartsAt === at('12:00'))!;
 
+    // No journey invented to Shoham from a standup with no place — the
+    // window still ends because of the event, not travel. What it gets
+    // instead is the honest half hour beside the unplaced standup.
     expect(gap.endsBecause).toBe('event');
+    expect(gap.travelMinutes).toBeUndefined();
+    expect(gap.unknownPlace?.after).toBe('Standup');
   });
 });
 
@@ -239,7 +249,9 @@ describe('inputs it must not fall over on', () => {
       { title: 'Meeting', startsAt: at('11:00') },
     ];
     const day = await freeWindowsForDay(DATE, events, TZ, NOW, PREFS, resolve);
-    expect(day.windows[0].endsAt).toBe(at('11:00'));
+    // The broken one is ignored: the first window runs to the real meeting.
+    expect(day.windows[0].latestEndsAt).toBe(at('11:00'));
+    expect(day.windows[0].nextTitle).toBe('Meeting');
   });
 
   it('18. a timezone that is not an IANA id falls back instead of throwing', async () => {

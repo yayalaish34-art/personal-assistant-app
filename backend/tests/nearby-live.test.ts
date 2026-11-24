@@ -142,3 +142,13 @@ describe('answerSuggestOpportunity (shopping detour)', () => {
     }
   });
 });
+
+describe('chain branches with the same name', () => {
+  it('keeps the nearest branch, not the first one in the file', () => {
+    const far = { n: 'שופרסל', lat: 32.1000, lon: 34.7730, t: 'shop=supermarket' };
+    const near = { n: 'שופרסל', lat: 32.0752, lon: 34.7731, t: 'shop=supermarket' };
+    const hits = findInPlaces([far, near], CENTER, 'supermarket', 5000, 5);
+    expect(hits).toHaveLength(1);
+    expect(hits[0]!.distanceKm).toBeLessThan(0.1);
+  });
+});

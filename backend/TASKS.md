@@ -944,3 +944,147 @@ purchase or mobile rebuild was needed. Physical-device layout/listening
 verification remains. Sources, cost estimates and release details are recorded
 in `../docs/hebrew-voice-qa.md`. Code is still uncommitted. UI language changes
 do not rewrite stored user data.
+
+### T13 — Google Maps: travel times, time to leave, places near you, cheaply
+DONE (commit 55c4d6d) — branch `feature/google-maps`, not merged
+
+Explicit user request, 2026-11-16: implement item 6 of the quote (travel time
+between events as a scheduling constraint, "time to leave", navigation), plus
+the client's ask that the assistant find nearby places to buy things, while
+spending as few paid Google requests as possible. Decisions taken with the
+user: "near a store" is detected **by the calendar by default** (free, no
+permission) **plus opt-in device geofences**; **live traffic only for
+"time to leave"** (and an explicit "how long from here" question).
+
+Scope note: nearby shopping via Google (opening hours, "open now") is not in
+the quote. The free OSM path already existed; the Google top-up is an
+estimated 6–8 h at ₪110/h, to be approved by the client separately.
+
+Backend: new `src/modules/maps/` (`google.ts` thin client with minimal field
+masks per SKU, `budget.ts` daily ceiling + per-SKU counters + `maps.spend` log,
+`cache.ts` TTL LRU, `router.ts` with `/maps/resolve`, `/maps/eta`,
+`/maps/errand-fences`). `travel.ts`: Google-first geocode with a 30-day cache,
+`drivingMinutes` (Essentials 7 days / Pro 20 min caches), `gateLeg`. The route
+is only asked when the straight-line floor cannot settle the question.
+`findNearbySmart`: OSM first, Google only below 2 hits or for `openNow`.
+`agent.ts`: snapshot events accept `locationLat/Lng/PlaceId`; `find_nearby`
+takes every snapshot category + `openNow`; `check_travel` uses live traffic;
+`windowOrigin` anchors opportunity offers/nudges to the meeting before a free
+window. `/voice/opportunity-nudge` `location` now optional. `config.ts`:
+`GOOGLE_MAPS_API_KEY`, `GOOGLE_MAPS_ENABLED`, `GOOGLE_MAPS_DAILY_BUDGET_USD`
+(empty values mean unset). `mapsLimiter` 20/min + 150/day.
+
+Frontend: `lib/places.ts` (OS geocoder first, then `/maps/resolve`; eta;
+errand fences; Waze/Google Maps deep links). Events store coordinates once
+after save (`ensureEventCoords`), cleared when the place changes. The voice
+snapshot carries them. The background job refines "time to leave" with one
+traffic check 40–150 min before a placed meeting (once per event+start).
+Geofencing registers store fences for errand tasks when
+`settings.errandAlerts` is on (opt-in switch in Settings, asks "Always"
+location). Calendar rows get a Navigate button.
+
+Deviation from plan: no Prisma migration. Events with locations live on the
+device (local-first). The DB `events` table has no location column at all and
+is not on this path, so coordinates travel in the snapshot instead.
+
+Validation: `npx tsc --noEmit` (backend) passes. New `tests/google-maps.test.ts`
+has 36 passing tests, asserting request counts against a fake transport.
+Full suite: 26 failed before and after with an identical failure list (237 → 273 passed; no local
+Postgres; unrelated pre-existing failures). Tests must run from an uppercase
+`C:` path. A lowercase `c:` cwd makes Vitest load twice and every file fails
+with "failed to find the runner". Frontend typecheck could not run cleanly:
+`node_modules` is missing `expo-location`, `expo-task-manager` and others.
+No live Google request was made.
+
+Remains: set `GOOGLE_MAPS_API_KEY` on Railway (restricted key + Cloud Console
+quotas); re-run `scripts/elevenlabs-agent.ts` so the live agent sees the new
+`find_nearby` schema; `npm install` in `frontend` and a device test of the
+store geofence, the leave-time refinement and the Navigate sheet; store
+review copy for background location (iOS `NSLocationAlwaysAndWhenInUse…`,
+Play Console background-location declaration).
+
+### T13.1 — Maps follow-ups from device testing: tight slots, "near", learned places
+DONE (commits 95d8a3e, acdbda4) — branch `feature/google-maps`, not merged
+
+Explicit user requests, 2026-11-22/23, from testing on the phone:
+
+1. **Booked half an hour after a placeless event without asking.** "Shopping"
+   18:00–18:30 had no place, so the journey counted as 0 and 18:30 was offered
+   and booked. `availability.ts`: 30 min (`UNKNOWN_PLACE_MINUTES`, buffer counts
+   towards it) kept clear beside a placeless event, with `unknownPlace` /
+   `earliestStartsAt` / `latestEndsAt` on the window. `schedule.ts`: new verdict
+   `tight` (`findTightNeighbour`), skipped by `confirmedTight` on
+   `create_event` / `update_event` after the user agreed. Options offered are
+   never tight themselves.
+2. **"Nearest mall" from the phone, not from where the user said he'd be.**
+   `find_nearby` takes `near` (place text or event title). `resolveSearchCenter`:
+   calendar event first (saved coordinates, no geocode), then the text, then the
+   town it names. An unknown place is reported as such, never silently replaced
+   by GPS.
+3. **The OSM snapshot is not good enough to be first.** Measured against Google
+   in 10 Israeli cities × 6 categories (60 requests): share of Google's places
+   present in the snapshot — supermarket 6%, convenience 19%, mall 40%, pharmacy
+   45%, café 56%, fuel 80%. Its nearest was over 300 m further than the real
+   nearest in 6/10 cities for supermarkets. `findNearbySmart` now: fuel from the
+   snapshot (≥2 hits) — and malls, since Google's mall type ranks strip centres
+   and unrelated businesses first (seen live in Herzliya); everything else memory cache → learned store → Google
+   (full page of 20) → snapshot when Google is off/over budget/failing.
+   New `src/modules/maps/place-store.ts`. Google answers are kept for 30 days
+   (Google ToS for coordinates) and shared by all users, **with the search that
+   produced them** (`place_searches`: centre, category, `coveredMeters`). A repeat
+   question is served from the store only when a stored search guarantees
+   nothing nearer is missing. A café search therefore never answers a
+   supermarket question. Postgres via Prisma when `DATABASE_URL` is set,
+   in-memory otherwise. Store errors fall through to Google.
+5. **"Big Fashion Glilot, under a kilometre" — a 2.4 km drive, from the wrong
+   place.** Two causes. (a) Distances were straight-line. The 4 nearest now get
+   a road distance (Routes Essentials, cached 7 days), are re-ordered by it,
+   and come with a `howFar` phrase built server-side: under 400 m walk, up to
+   1.5 km walk and car, beyond that car. Walking time is computed locally
+   (×1.3 detour, 12 min/km). `travelMode` exists only for "I'm on foot". (b)
+   "בניין WIX הרצליה" geocoded to יוניצמן 5, Tel Aviv, and "בניין וויקס הרצליה"
+   to the town alone. `geocodePlace` returns the matched address, and
+   `resolveSearchCenter` checks it against the named town (taken from the
+   map's own name for it). A different town more than 3 km away is refused
+   with an explanation. Town-only means the search runs from the centre and
+   says so. Nearby now asks Google for `includedPrimaryTypes`, not
+   `includedTypes`, which returned an observation deck as a supermarket.
+   Google's own data still lists some oddities (near Azrieli).
+6. **"It just throws a place at me."** A vague need ("a gift for a friend") now
+   gets one question with options first (clothes / book / home / gadget / "not
+   sure yet"). The answer picks the category. "Don't know" or no clear answer
+   means a mall, with the reason given (everything in one place), and never a
+   second question. Specific needs ("a pharmacy") are searched at once. At most
+   two places, each with a reason. New `WHERE_TO_BUY_RULES` in the voice
+   prompt, which Gemini Live shares. The `find_nearby` description and result
+   instruction were aligned with it. Verified with real turns on the local
+   server: gift → question; "ספר" → Steimatzky and Tzomet Sfarim; "לא יודע" →
+   Seven Stars; "גאדג׳ט" → electronics; pharmacy → searched at once.
+4. Snapshot bug found on the way: same-name branches kept the first one in the
+   file, not the nearest (`places-index.ts findInPlaces`).
+
+Schema: additive migration `20261123170000_learned_places` (two new tables, no
+existing table touched). Rollback: `DROP TABLE place_searches, learned_places;`
+and remove the migration row. It was generated with `prisma migrate diff`
+because there is no local Postgres. It has not been applied anywhere yet:
+`prisma migrate deploy` on Railway applies it (`start:migrate`).
+
+Frontend: `voice.ts` passes `location` on create/update_event and accepts
+`reason: 'tight'`. Calendar day view gets the Navigate button too.
+
+Tests: new `tests/unknown-place-margin.test.ts` (9) and `tests/nearby-near.test.ts`
+(6). In `tests/google-maps.test.ts`, the 2 nearby tests were rewritten for the
+new policy and 6 learned-store tests were added (repeat → no request, café ≠
+supermarket, other area → request, full page covers only to its farthest,
+30-day expiry, broken store). `tests/nearby-live.test.ts` adds the
+nearest-branch regression. `tests/availability.test.ts`: 5 tests updated for
+the margin. Full suite: 318 passed. The only failures are 16 in the
+DB-dependent auth/chat/sync files (no local Postgres), the same pre-existing
+set as before. `npx tsc --noEmit` passes. Live checks against Google:
+"בניין וויקס הרצליה" resolves to Herzliya Pituach, and the nearest malls are
+Herzliya's.
+
+Remains: apply the migration on Railway; confirm the learned store with a
+real database; decide with the client whether Google-first nearby (outside
+the quote, see T13 scope note) is approved — cost is $0 inside 5,000
+requests/month and is capped by the daily ceiling.

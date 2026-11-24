@@ -10,6 +10,7 @@ import {
   Image,
   ActivityIndicator,
   useWindowDimensions,
+  Platform,
   type StyleProp,
   type TextStyle,
 } from 'react-native';
@@ -20,11 +21,14 @@ import type { NativeStackNavigationProp } from '@react-navigation/native-stack';
 import * as Haptics from 'expo-haptics';
 import { LinearGradient } from 'expo-linear-gradient';
 import Svg, { Circle, Path } from 'react-native-svg';
-import { X, Mic, Undo2, RotateCcw, Send, CheckCheck, Check, Clock, ArrowUpRight, ArrowDownLeft, Sun, Cloud, CloudRain, CloudLightning, Snowflake, CloudSun, Wind, CloudFog, TrendingUp, TrendingDown, Minus, Star, CalendarDays, ListTodo, ShoppingCart, Wallet, MapPin, Navigation, CalendarClock } from 'lucide-react-native';
+import { X, Mic, Undo2, RotateCcw, Send, CheckCheck, Check, Clock, ArrowUpRight, ArrowDownLeft, Sun, Cloud, CloudRain, CloudLightning, Snowflake, CloudSun, Wind, CloudFog, TrendingUp, TrendingDown, Minus, Star, CalendarDays, ListTodo, ShoppingCart, Wallet, MapPin, Navigation, CalendarClock, HandCoins } from 'lucide-react-native';
 
 import { Glow } from '../components/ui';
 import { api } from '../lib/api';
+import { formatMoney } from '../lib/currency';
+import { storage } from '../lib/storage';
 import { useVoiceSession, type Line } from '../lib/useVoiceSession';
+import type { BreakdownItem, BreakdownSection } from '../lib/voice';
 import { useKeyboardLift } from '../lib/useKeyboardLift';
 import type { RootStackParamList } from '../navigation';
 import { colors, spacing, font, NIGHT, VOICE, themed } from '../theme';
@@ -64,6 +68,61 @@ function whenLabel(iso: string): string {
   return days < 7
     ? d.toLocaleDateString(locale(), { weekday: 'long' })
     : d.toLocaleDateString(locale(), { weekday: 'short', day: 'numeric', month: 'short' });
+}
+
+// ── What one request added, by section ──────────────────────────────────────
+
+/** The sections of the breakdown card, in the order they are listed. */
+const BREAKDOWN_SECTIONS: { key: BreakdownSection; Glyph: typeof CalendarDays }[] = [
+  { key: 'events', Glyph: CalendarDays },
+  { key: 'tasks', Glyph: ListTodo },
+  { key: 'shopping', Glyph: ShoppingCart },
+  { key: 'money', Glyph: Wallet },
+  { key: 'debts', Glyph: HandCoins },
+];
+
+/** "Today", "tomorrow", or the weekday — the day an entry lands on. */
+function dayLabel(iso: string): string {
+  const d = new Date(iso);
+  const days = Math.round(
+    (new Date(d).setHours(0, 0, 0, 0) - new Date().setHours(0, 0, 0, 0)) / 86_400_000,
+  );
+  if (days === 0) return t('voice.breakdown.today');
+  if (days === 1) return t('voice.breakdown.tomorrow');
+  return whenLabel(iso);
+}
+
+/**
+ * The quieter line under an entry: when it is, how much, which way the money
+ * went. A due time of midnight or one minute to it is a date with no hour,
+ * so only the day is shown.
+ */
+function breakdownDetail(item: BreakdownItem, money: (n: number) => string): string | null {
+  switch (item.section) {
+    case 'events':
+    case 'tasks': {
+      if (!item.at) return null;
+      const d = new Date(item.at);
+      const dateOnly =
+        item.section === 'tasks' &&
+        ((d.getHours() === 0 && d.getMinutes() === 0) || (d.getHours() === 23 && d.getMinutes() === 59));
+      if (dateOnly) return dayLabel(item.at);
+      const clock = new Intl.DateTimeFormat(locale(), { hour: '2-digit', minute: '2-digit' }).format(d);
+      return `${dayLabel(item.at)} · ⁦${clock}⁩`;
+    }
+    case 'shopping':
+      return item.quantity ?? null;
+    case 'money':
+      if (item.amount === undefined) return null;
+      return t(item.direction === 'in' ? 'voice.breakdown.income' : 'voice.breakdown.expense', {
+        amount: money(item.amount),
+      });
+    case 'debts':
+      if (item.amount === undefined) return null;
+      return t(item.direction === 'out' ? 'voice.breakdown.youOwe' : 'voice.breakdown.owedToYou', {
+        amount: money(item.amount),
+      });
+  }
 }
 
 /** The clock under a bubble. */
@@ -282,12 +341,38 @@ export default function AssistantScreen() {
     };
   }, []);
 
+  // Amounts on the breakdown card, in the currency the finance screen uses.
+  const [currency, setCurrency] = useState<string | null>(null);
+  useEffect(() => {
+    let active = true;
+    void storage
+      .getProfile()
+      .then((prof) => {
+        if (active) setCurrency(prof.currency);
+      })
+      .catch(() => undefined);
+    return () => {
+      active = false;
+    };
+  }, []);
+  const money = (n: number) => formatMoney(n, currency, locale());
+
   const {
     state, lines, level, error, undoable,
     toggle, send, chooseTime, chooseCard, checkItem, settleDebt, undoLast, startOver, restart, end,
   } =
     useVoiceSession({ userName: name || undefined });
   const [draft, setDraft] = useState('');
+  /**
+   * Typing: the keyboard is up. The orb and the words under it step aside so
+   * the thread and the line being typed have the room — with them in place a
+   * keyboard left the thread a sliver, and on a smaller phone pushed the line
+   * itself under the keys. They come back as the keyboard goes. On iOS this
+   * follows the keyboard itself, so both move in the keyboard's own animation;
+   * Android resizes the window on its own and only the focus is needed.
+   */
+  const [focused, setFocused] = useState(false);
+  const typing = Platform.OS === 'ios' ? keyboardLift > 0 : focused;
 
   const submitDraft = () => {
     const text = draft.trim();
@@ -511,7 +596,8 @@ export default function AssistantScreen() {
     const offer = line.offer;
     const showOffer = offer && offer.options.length > 0;
     const showCards = line.cards && line.cards.items.length > 0;
-    const hasVisual = showOffer || showCards || line.checklist || line.confirmation || line.budget || line.timeline || line.debtSummary || line.weather || line.summary;
+    const showBreakdown = line.breakdown && line.breakdown.length > 0;
+    const hasVisual = showOffer || showCards || line.checklist || line.confirmation || line.budget || line.timeline || line.debtSummary || line.weather || line.summary || showBreakdown;
 
     if (line.role === 'user') {
       return (
@@ -791,6 +877,52 @@ export default function AssistantScreen() {
             </View>
           ) : null}
 
+          {showBreakdown ? (
+            <View style={[styles.visualBlock, line.text ? styles.offerStackSpaced : null]}>
+              <Text style={[styles.cardTitle, start]}>
+                {t('voice.breakdown.title', { count: String(line.breakdown!.length) })}
+              </Text>
+              {BREAKDOWN_SECTIONS.map(({ key, Glyph }) => ({
+                key,
+                Glyph,
+                items: line.breakdown!.filter((item) => item.section === key),
+              }))
+                .filter((s) => s.items.length > 0)
+                .map((s, i) => (
+                  // Keyed by section, so a section that grows as her calls
+                  // land keeps its place and only the new rows rise in.
+                  <Entrance key={s.key} delay={120 + i * 60} from={8}>
+                    <View style={styles.breakdownSection}>
+                      <View style={styles.breakdownHeader}>
+                        <s.Glyph color={VOICE.accent} size={16} strokeWidth={2.2} />
+                        <Text style={[styles.breakdownHeading, start]}>
+                          {t(`voice.breakdown.${s.key}`)}
+                        </Text>
+                        <Text style={styles.breakdownCount}>{s.items.length}</Text>
+                      </View>
+                      {s.items.map((item, j) => {
+                        const detail = breakdownDetail(item, money);
+                        return (
+                          <Entrance key={`${item.title}-${j}`} from={6}>
+                            <View style={styles.breakdownRow}>
+                              <Text style={[styles.breakdownItem, start]} numberOfLines={2}>
+                                {item.title}
+                              </Text>
+                              {detail ? (
+                                <Text style={[styles.cardDetail, start]} numberOfLines={1}>
+                                  {detail}
+                                </Text>
+                              ) : null}
+                            </View>
+                          </Entrance>
+                        );
+                      })}
+                    </View>
+                  </Entrance>
+                ))}
+            </View>
+          ) : null}
+
           {line.summary ? (
             <View style={[styles.visualBlock, line.text ? styles.offerStackSpaced : null]}>
               <Text style={[styles.cardTitle, start]}>{line.summary.title}</Text>
@@ -902,6 +1034,10 @@ export default function AssistantScreen() {
         style={styles.transcript}
         contentContainerStyle={styles.transcriptContent}
         showsVerticalScrollIndicator={false}
+        // Dragging the thread puts the keyboard away, and the orb comes back.
+        // A tap on a card or a chip still lands with the keyboard up.
+        keyboardDismissMode="on-drag"
+        keyboardShouldPersistTaps="handled"
       >
         {lines.length === 0 ? (
           <Entrance delay={180} from={14}>
@@ -954,60 +1090,64 @@ export default function AssistantScreen() {
         </PopIn>
       ) : null}
 
-      {/* ── The orb, in its own weather ── */}
-      <Entrance delay={70} from={20} style={styles.stage}>
-        <Waveform near={nearWave} far={farWave} width={width} />
-        <Orbit spin={turn} />
+      {/* ── The orb, in its own weather ── (out of the way while typing) */}
+      {typing ? null : (
+        <>
+          <Entrance delay={70} from={20} style={styles.stage}>
+            <Waveform near={nearWave} far={farWave} width={width} />
+            <Orbit spin={turn} />
 
-        {VOICE.halo.map((tint, i) => (
-          <Animated.View
-            key={tint}
-            pointerEvents="none"
-            style={[
-              styles.halo,
-              {
-                width: 160 - i * 22,
-                height: 160 - i * 22,
-                borderRadius: (160 - i * 22) / 2,
-                backgroundColor: tint,
-                transform: [{ scale: haloScale }],
-              },
-            ]}
-          />
-        ))}
+            {VOICE.halo.map((tint, i) => (
+              <Animated.View
+                key={tint}
+                pointerEvents="none"
+                style={[
+                  styles.halo,
+                  {
+                    width: 160 - i * 22,
+                    height: 160 - i * 22,
+                    borderRadius: (160 - i * 22) / 2,
+                    backgroundColor: tint,
+                    transform: [{ scale: haloScale }],
+                  },
+                ]}
+              />
+            ))}
 
-        <Pressable
-          onPress={() => {
-            Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
-            toggle();
-          }}
-          disabled={state === 'unavailable'}
-          accessibilityRole="button"
-          accessibilityLabel={caption}
-        >
-          <Animated.View style={[styles.orbGlow, { transform: [{ scale: orbScale }] }]}>
-            {/* The mic button from the bar, grown: the same sweep at the same
-                angle, with the same dark ink on it. */}
-            <LinearGradient
-              colors={VOICE.accentGradient}
-              start={{ x: 0.1, y: 0.1 }}
-              end={{ x: 0.9, y: 0.95 }}
-              style={styles.orb}
+            <Pressable
+              onPress={() => {
+                Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+                toggle();
+              }}
+              disabled={state === 'unavailable'}
+              accessibilityRole="button"
+              accessibilityLabel={caption}
             >
-              <Mic color={NIGHT.glyph} size={32} strokeWidth={2.2} />
-            </LinearGradient>
-          </Animated.View>
-        </Pressable>
-      </Entrance>
+              <Animated.View style={[styles.orbGlow, { transform: [{ scale: orbScale }] }]}>
+                {/* The mic button from the bar, grown: the same sweep at the same
+                    angle, with the same dark ink on it. */}
+                <LinearGradient
+                  colors={VOICE.accentGradient}
+                  start={{ x: 0.1, y: 0.1 }}
+                  end={{ x: 0.9, y: 0.95 }}
+                  style={styles.orb}
+                >
+                  <Mic color={NIGHT.glyph} size={32} strokeWidth={2.2} />
+                </LinearGradient>
+              </Animated.View>
+            </Pressable>
+          </Entrance>
 
-      <Entrance delay={105} from={14}>
-        {/* Keyed by what it says, so a change of state rises in rather than
-            swapping in place: the words move when she does. */}
-        <Entrance key={caption} from={8}>
-          <Text style={styles.caption}>{caption}</Text>
-          {hint ? <Text style={styles.hint}>{hint}</Text> : null}
-        </Entrance>
-      </Entrance>
+          <Entrance delay={105} from={14}>
+            {/* Keyed by what it says, so a change of state rises in rather than
+                swapping in place: the words move when she does. */}
+            <Entrance key={caption} from={8}>
+              <Text style={styles.caption}>{caption}</Text>
+              {hint ? <Text style={styles.hint}>{hint}</Text> : null}
+            </Entrance>
+          </Entrance>
+        </>
+      )}
 
       {/* Talking is the point, but typing has to be there too — for a noisy
           room, a long title, or a name she keeps mishearing. Same thread. */}
@@ -1022,6 +1162,11 @@ export default function AssistantScreen() {
             style={[styles.composerInput, start]}
             returnKeyType="send"
             onSubmitEditing={submitDraft}
+            // Sending keeps the keyboard up, as a chat does: the next line can
+            // follow straight on. Dragging the thread is the way out.
+            submitBehavior="submit"
+            onFocus={() => setFocused(true)}
+            onBlur={() => setFocused(false)}
             editable={state !== 'unavailable' || error === 'microphone'}
           />
           <Pressable
@@ -1423,6 +1568,21 @@ const styles = themed(() =>
     statHeader: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' },
     statLabel: { fontSize: 12, ...font(500), color: VOICE.meta },
     statValue: { fontSize: 20, ...font(700), color: VOICE.ink, marginTop: 4 },
+    // ── What one request added, by section ──
+    breakdownSection: {
+      borderRadius: 16,
+      backgroundColor: VOICE.chrome,
+      paddingHorizontal: 14,
+      paddingVertical: 12,
+      gap: 8,
+      marginTop: 4,
+    },
+    breakdownHeader: { flexDirection: 'row', alignItems: 'center', gap: 8 },
+    breakdownHeading: { flex: 1, fontSize: 14, ...font(700), color: VOICE.ink },
+    breakdownCount: { fontSize: 13, ...font(700), color: VOICE.accent },
+    breakdownRow: { gap: 1, paddingStart: 24 },
+    breakdownItem: { fontSize: 15, ...font(600), color: VOICE.ink, lineHeight: 21 },
+
     highlightList: { marginTop: 10, gap: 6 },
     highlightRow: { flexDirection: 'row', alignItems: 'flex-start', gap: 8 },
     highlightText: { fontSize: 14, ...font(400), color: VOICE.ink, flex: 1 },

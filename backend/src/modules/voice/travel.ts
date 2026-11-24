@@ -1,6 +1,10 @@
 import { logger } from '../../lib/logger.js';
 import { distanceKm as geoDistanceKm, type Point as GeoPoint } from './travel-geo.js';
 import { findNearby } from './places-index.js';
+import { TtlCache, normalizePlaceText, roundCoord } from '../maps/cache.js';
+import { CATEGORY_GOOGLE_TYPES, googleGeocode, googleNearby, googleRoute, isGoogleEnabled } from '../maps/google.js';
+import { GOOGLE_PAGE, learnedNearby, rememberNearby } from '../maps/place-store.js';
+import { logMapsEvent } from '../maps/budget.js';
 
 /**
  * Can someone actually get from one meeting to the next?
@@ -39,8 +43,14 @@ const GEOCODE_TIMEOUT_MS = 2_000;
 /** Per-attempt budget when both geocoders are tried in sequence. */
 const PER_ATTEMPT_TIMEOUT_MS = 1_500;
 
-/** Names repeat constantly across a snapshot; each one is looked up once. */
-const cache = new Map<string, Point | null>();
+/**
+ * Names repeat constantly across a snapshot; each one is looked up once.
+ * A hit is kept 30 days (Google's limit on keeping coordinates); a miss for a
+ * day, so a typo is not retried every turn but a fixed one recovers.
+ */
+const GEOCODE_HIT_TTL_MS = 30 * 24 * 60 * 60_000;
+const GEOCODE_MISS_TTL_MS = 24 * 60 * 60_000;
+const cache = new TtlCache<Point | null>(5_000, GEOCODE_HIT_TTL_MS);
 
 export type Point = GeoPoint;
 
@@ -54,22 +64,41 @@ export interface TravelLeg {
   /** Minutes the journey needs at the very least. */
   neededMinutes: number;
   distanceKm: number;
+  /** `floor` = straight-line minimum; `route` = a real driving time. */
+  basis?: 'floor' | 'route';
 }
 
 export async function geocode(place: string): Promise<Point | null> {
-  const key = place.trim().toLowerCase();
+  const key = normalizePlaceText(place);
   if (!key) return null;
   const hit = cache.get(key);
-  if (hit !== undefined) return hit;
+  if (hit !== undefined) {
+    if (hit) logMapsEvent({ kind: 'cache', sku: 'geocoding', label: `כתובת: ${place.trim()}` });
+    return hit;
+  }
 
   const trimmed = place.trim();
 
-  // Open-Meteo first — fast, no User-Agent needed, no rate limit worries.
+  // Google first when it is on: it is the only one of the three that knows
+  // "עזריאלי" or "Sarona Market" as a venue rather than a word. Paid once per
+  // distinct name per 30 days, and the device usually sends coordinates for
+  // its events anyway, so this mostly runs for names typed mid-conversation.
+  if (isGoogleEnabled()) {
+    const g = await googleGeocode(trimmed);
+    if (g) {
+      const point = { latitude: g.latitude, longitude: g.longitude };
+      cache.set(key, point);
+      return point;
+    }
+  }
+
+  // Open-Meteo — fast, no User-Agent needed, no rate limit worries.
   // Latin-script names resolve here reliably ("Beer Sheva", "Tel Aviv",
   // "Krayon Mall") and we never pay the cost of a second lookup for them.
   const primary = await tryOpenMeteo(trimmed);
   if (primary) {
     cache.set(key, primary);
+    logMapsEvent({ kind: 'free', sku: 'geocoding', label: `כתובת (Open-Meteo): ${trimmed}` });
     return primary;
   }
 
@@ -81,12 +110,55 @@ export async function geocode(place: string): Promise<Point | null> {
     const fallback = await tryNominatim(trimmed);
     if (fallback) {
       cache.set(key, fallback);
+      logMapsEvent({ kind: 'free', sku: 'geocoding', label: `כתובת (Nominatim): ${trimmed}` });
       return fallback;
     }
   }
 
-  cache.set(key, null);
+  cache.set(key, null, GEOCODE_MISS_TTL_MS);
   return null;
+}
+
+export interface PlaceMatch {
+  point: Point;
+  /** What Google says it matched ("יוניצמן 5, תל אביב-יפו, ישראל"); null from the free geocoders. */
+  address: string | null;
+}
+const placeMatchCache = new TtlCache<PlaceMatch | null>(5_000, GEOCODE_HIT_TTL_MS);
+
+/**
+ * `geocode`, plus the address the map actually matched — which is what shows
+ * that "בניין WIX הרצליה" landed on a street in Tel Aviv, or that "בניין
+ * וויקס הרצליה" landed on nothing but the town itself. Same caching rules.
+ */
+export async function geocodePlace(place: string): Promise<PlaceMatch | null> {
+  const key = normalizePlaceText(place);
+  if (!key) return null;
+  const hit = placeMatchCache.get(key);
+  if (hit !== undefined) {
+    if (hit) logMapsEvent({ kind: 'cache', sku: 'geocoding', label: `כתובת: ${place.trim()}` });
+    return hit;
+  }
+  if (isGoogleEnabled()) {
+    const g = await googleGeocode(place.trim());
+    if (g) {
+      const m = { point: { latitude: g.latitude, longitude: g.longitude }, address: g.formattedAddress };
+      placeMatchCache.set(key, m);
+      return m;
+    }
+  }
+  const point = await geocode(place);
+  const m = point ? { point, address: null } : null;
+  placeMatchCache.set(key, m, m ? GEOCODE_HIT_TTL_MS : GEOCODE_MISS_TTL_MS);
+  return m;
+}
+
+/** Test seam: forget every remembered geocode and route. */
+export function __clearTravelCachesForTest(): void {
+  cache.clear();
+  placeMatchCache.clear();
+  routeCache.clear();
+  nearbyCache.clear();
 }
 
 /**
@@ -168,11 +240,132 @@ export function travelMinutes(km: number): number {
   return Math.round((km / kmh) * 60) + 8;
 }
 
+// ── Real driving time, paid for only when it changes the answer ─────────────
+
+/**
+ * Essentials (no traffic) answers do not depend on the clock, so a pair is
+ * asked once a week. Traffic answers go stale fast: 20 minutes, with the
+ * origin rounded to ~1 km so a phone drifting across the street still hits.
+ */
+const ROUTE_TTL_MS = 7 * 24 * 60 * 60_000;
+const TRAFFIC_ROUTE_TTL_MS = 20 * 60_000;
+const routeCache = new TtlCache<DrivingRoute | null>(5_000, ROUTE_TTL_MS);
+
+export interface DrivingRoute {
+  /** Door to door, parking included. */
+  minutes: number;
+  /** Along the road, not the straight line. */
+  distanceKm: number;
+}
+
+function routeKey(from: Point, to: Point, traffic: boolean): string {
+  const dp = traffic ? 2 : 3;
+  return [
+    traffic ? 'pro' : 'ess',
+    roundCoord(from.latitude, dp),
+    roundCoord(from.longitude, dp),
+    roundCoord(to.latitude, 3),
+    roundCoord(to.longitude, 3),
+  ].join(':');
+}
+
+/** The flat "leaving the room, finding the car, parking" no route includes. */
+const DOOR_TO_DOOR_MINUTES = 5;
+
+/**
+ * Minutes of driving between two points per Google, door to door, or null
+ * when Google is off, out of budget, or did not answer — callers then keep
+ * the straight-line floor.
+ */
+export async function drivingMinutes(
+  from: Point,
+  to: Point,
+  opts: { traffic?: boolean; departAt?: Date } = {},
+): Promise<number | null> {
+  return (await drivingRoute(from, to, opts))?.minutes ?? null;
+}
+
+/** Same lookup and cache as `drivingMinutes`, with the road distance too. */
+export async function drivingRoute(
+  from: Point,
+  to: Point,
+  opts: { traffic?: boolean; departAt?: Date } = {},
+): Promise<DrivingRoute | null> {
+  if (!isGoogleEnabled()) return null;
+  const traffic = opts.traffic === true;
+  const key = routeKey(from, to, traffic);
+  const hit = routeCache.get(key);
+  if (hit !== undefined) {
+    if (hit !== null) {
+      logMapsEvent({
+        kind: 'cache',
+        sku: traffic ? 'routes_pro' : 'routes_essentials',
+        label: `מסלול${traffic ? ' עם פקקים' : ''} מהזיכרון: ${hit.minutes} דק'`,
+      });
+    }
+    return hit;
+  }
+  const route = await googleRoute(from, to, { traffic, departAt: opts.departAt });
+  // A failure is remembered briefly so one bad pair cannot burn a request on
+  // every candidate the scheduler tries.
+  if (!route) {
+    routeCache.set(key, null, 5 * 60_000);
+    return null;
+  }
+  const result: DrivingRoute = {
+    minutes: route.minutes + DOOR_TO_DOOR_MINUTES,
+    distanceKm: route.distanceKm,
+  };
+  routeCache.set(key, result, traffic ? TRAFFIC_ROUTE_TTL_MS : ROUTE_TTL_MS);
+  return result;
+}
+
+export type LegGate = 'impossible' | 'fits' | 'tight';
+
+/**
+ * Whether the straight-line floor already settles a journey.
+ *
+ * The floor is optimistic by construction, so a floor that does not fit is
+ * certainly impossible, and a gap of at least twice the floor plus a quarter
+ * of an hour is, in practice, always enough. Only the band in between needs a
+ * real route — and that band is the only place Google is asked.
+ */
+export function gateLeg(floorMinutes: number, availableMinutes: number): LegGate {
+  if (floorMinutes > availableMinutes) return 'impossible';
+  if (availableMinutes >= floorMinutes * 2 + 15) return 'fits';
+  return 'tight';
+}
+
 interface Stop {
   title: string;
   place: string;
+  /** Coordinates the device already resolved, when it sent them. */
+  point: Point | null;
   startsAt: number;
   endsAt: number;
+}
+
+/** An event as travel checks see it. Coordinates are optional and preferred. */
+export interface TravelEvent {
+  title: string;
+  location?: string | null;
+  locationLat?: number | null;
+  locationLng?: number | null;
+  startsAt: string;
+  endsAt?: string | null;
+}
+
+/** The event's own coordinates, when the device sent valid ones. */
+export function eventPoint(e: {
+  locationLat?: number | null;
+  locationLng?: number | null;
+}): Point | null {
+  const lat = e.locationLat;
+  const lng = e.locationLng;
+  if (typeof lat !== 'number' || typeof lng !== 'number') return null;
+  if (!Number.isFinite(lat) || !Number.isFinite(lng)) return null;
+  if (Math.abs(lat) > 90 || Math.abs(lng) > 180) return null;
+  return { latitude: lat, longitude: lng };
 }
 
 /**
@@ -183,9 +376,11 @@ interface Stop {
  * produce warnings about journeys nobody is making.
  */
 export async function findImpossibleLeg(
-  events: { title: string; location?: string | null; startsAt: string; endsAt?: string | null }[],
+  events: TravelEvent[],
   /** Injected so the rules can be tested without a network between them. */
   resolve: (place: string) => Promise<Point | null> = geocode,
+  /** Injected likewise. Defaults to Google's driving time (null when off). */
+  drive: (from: Point, to: Point) => Promise<number | null> = (a, b) => drivingMinutes(a, b),
 ): Promise<TravelLeg | null> {
   const stops: Stop[] = [];
   for (const e of events) {
@@ -195,7 +390,7 @@ export async function findImpossibleLeg(
     if (Number.isNaN(startsAt)) continue;
     const rawEnd = e.endsAt ? new Date(e.endsAt).getTime() : NaN;
     const endsAt = Number.isNaN(rawEnd) || rawEnd <= startsAt ? startsAt + 60 * 60_000 : rawEnd;
-    stops.push({ title: e.title, place, startsAt, endsAt });
+    stops.push({ title: e.title, place, point: eventPoint(e), startsAt, endsAt });
   }
 
   if (stops.length < 2) return null;
@@ -211,12 +406,38 @@ export async function findImpossibleLeg(
     // this one's, and reporting it here would say the wrong thing about why.
     if (availableMinutes < 0) continue;
 
-    const [a, b] = await Promise.all([resolve(from.place), resolve(to.place)]);
+    const [a, b] = await Promise.all([
+      from.point ?? resolve(from.place),
+      to.point ?? resolve(to.place),
+    ]);
     if (!a || !b) continue; // an unknown name is not evidence of anything
 
     const km = distanceKm(a, b);
-    const neededMinutes = travelMinutes(km);
-    if (neededMinutes <= availableMinutes) continue;
+    const floor = travelMinutes(km);
+    const gate = gateLeg(floor, availableMinutes);
+    // A route Google would have been asked for, had the floor not settled it.
+    if (gate !== 'tight' && isGoogleEnabled()) {
+      logMapsEvent({
+        kind: 'gate',
+        sku: 'routes_essentials',
+        label:
+          gate === 'fits'
+            ? `${from.place} → ${to.place}: ${availableMinutes} דק' פנויות, מספיק בבירור`
+            : `${from.place} → ${to.place}: ${availableMinutes} דק' פנויות, בלתי אפשרי גם בקו אוויר`,
+      });
+    }
+    if (gate === 'fits') continue;
+
+    let neededMinutes = floor;
+    let basis: 'floor' | 'route' = 'floor';
+    if (gate === 'tight') {
+      const real = await drive(a, b);
+      // No real answer means the floor stands, and a floor that fits is not a
+      // warning — exactly the behaviour before Google was wired in.
+      if (real === null || real <= availableMinutes) continue;
+      neededMinutes = real;
+      basis = 'route';
+    }
 
     return {
       fromTitle: from.title,
@@ -226,6 +447,7 @@ export async function findImpossibleLeg(
       availableMinutes,
       neededMinutes,
       distanceKm: Math.round(km),
+      basis,
     };
   }
 
@@ -265,4 +487,154 @@ export async function searchNearby(
     logger.warn({ err: String(err), category }, 'nearby search failed');
     return [];
   }
+}
+
+// ── Nearby: Google for accuracy, a learned store to keep it cheap ──────────
+
+export interface NearbyResult {
+  places: (NearbyPlace & { openNow?: boolean })[];
+  /**
+   * Where the answer came from. `osm` and `learned` cost nothing; `google`
+   * was a paid request.
+   */
+  source: 'osm' | 'learned' | 'google';
+  /** True when "open now" was asked for and could actually be checked. */
+  openNowChecked: boolean;
+}
+
+/**
+ * The few categories where the OSM snapshot can be trusted to have the
+ * nearest one. Measured 2026-11-23 against Google in ten Israeli cities:
+ * fuel 80% of Google's places, everything else 6–56% (supermarkets 6%,
+ * and the snapshot's nearest was over 300 m further than the real nearest
+ * in 6 of 10 cities). Everything not listed here asks Google first.
+ *
+ * Malls scored 40%, but against a Google list that is the wrong yardstick:
+ * Google's `shopping_mall` ranked by distance puts strip centres and even a
+ * cleaning company ahead of the real malls (seen live beside Wix, Herzliya),
+ * while the snapshot holds the real ones. Someone after "a mall" for a gift
+ * wants Seven Stars, not a strip of three shops, so malls start there too.
+ */
+export const OSM_TRUSTED_CATEGORIES: ReadonlySet<string> = new Set(['gas_station', 'mall']);
+/** Below this many local hits, even a trusted category goes to Google. */
+const MIN_LOCAL_HITS = 2;
+/** Google nearby answers are kept an hour in memory (by ~1 km cell and category). */
+const NEARBY_TTL_MS = 60 * 60_000;
+const nearbyCache = new TtlCache<NearbyResult>(2_000, NEARBY_TTL_MS);
+
+/**
+ * The agent's nearby lookup.
+ *
+ * 1. A category the snapshot covers well (fuel) is answered from it when it
+ *    has at least two — free, instant.
+ * 2. Otherwise the learned store is asked: what Google already said about
+ *    this area in the last 30 days, for anyone. Used only when it can
+ *    guarantee nothing nearer is missing (see place-store.ts).
+ * 3. Otherwise Google — always a full page of 20, the same price as 8 — and
+ *    the answer is kept for the next person.
+ * 4. Google off, over budget or failing: the snapshot, as before.
+ *
+ * "Open now" skips the stores — hours change by the hour — but its answer is
+ * still learned, since the places themselves do not move.
+ */
+export async function findNearbySmart(
+  center: Point,
+  category: string,
+  opts: { radiusMeters?: number; limit?: number; openNow?: boolean } = {},
+): Promise<NearbyResult> {
+  const radiusMeters = opts.radiusMeters ?? 3000;
+  const limit = opts.limit ?? 8;
+  const openNow = opts.openNow === true;
+  const google = isGoogleEnabled() && Boolean(CATEGORY_GOOGLE_TYPES[category]);
+
+  const local = await searchNearby(center, category, radiusMeters, limit);
+  const fromSnapshot = (): NearbyResult => ({ places: local, source: 'osm', openNowChecked: false });
+
+  if (!google) return fromSnapshot();
+  if (!openNow && OSM_TRUSTED_CATEGORIES.has(category) && local.length >= MIN_LOCAL_HITS) {
+    logMapsEvent({ kind: 'free', sku: 'nearby_pro', label: `מקומות מהקובץ המקומי: ${category} (${local.length})` });
+    return fromSnapshot();
+  }
+
+  const key = [
+    openNow ? 'open' : 'any',
+    category,
+    roundCoord(center.latitude, 2),
+    roundCoord(center.longitude, 2),
+    Math.round(radiusMeters / 500),
+  ].join(':');
+  const hit = nearbyCache.get(key);
+  if (hit) {
+    logMapsEvent({
+      kind: 'cache',
+      sku: openNow ? 'nearby_enterprise' : 'nearby_pro',
+      label: `מקומות מהזיכרון: ${category}`,
+    });
+    return withDistances(hit, center, limit);
+  }
+
+  if (!openNow) {
+    const learned = await learnedNearby(category, center, radiusMeters);
+    if (learned) {
+      logMapsEvent({ kind: 'cache', sku: 'nearby_pro', label: `מקומות מהמאגר הלומד: ${category} (${learned.length})` });
+      return withDistances(
+        {
+          places: learned.map((p) => ({
+            name: p.name,
+            category,
+            latitude: p.latitude,
+            longitude: p.longitude,
+            distanceKm: 0,
+          })),
+          source: 'learned',
+          openNowChecked: false,
+        },
+        center,
+        limit,
+      );
+    }
+  }
+
+  const remote = await googleNearby(center, category, {
+    radiusMeters,
+    limit: GOOGLE_PAGE,
+    withOpenNow: openNow,
+  });
+  if (!remote) return fromSnapshot();
+
+  await rememberNearby(
+    category,
+    center,
+    radiusMeters,
+    remote.map((p) => ({ placeId: p.placeId, name: p.name, latitude: p.latitude, longitude: p.longitude })),
+  );
+
+  const result: NearbyResult = {
+    places: remote
+      .filter((p) => !openNow || p.openNow !== false)
+      .map((p) => ({
+        name: p.name,
+        category,
+        latitude: p.latitude,
+        longitude: p.longitude,
+        distanceKm: 0,
+        ...(p.openNow !== undefined ? { openNow: p.openNow } : {}),
+      })),
+    source: 'google',
+    openNowChecked: openNow,
+  };
+  nearbyCache.set(key, result);
+  return withDistances(result, center, limit);
+}
+
+/** Distances are recomputed from the asking point, since the cache is per cell. */
+function withDistances(r: NearbyResult, center: Point, limit: number): NearbyResult {
+  const places = r.places
+    .map((p) => ({
+      ...p,
+      distanceKm: Math.round(distanceKm(center, p) * 10) / 10,
+    }))
+    .sort((x, y) => x.distanceKm - y.distanceKm)
+    .slice(0, limit);
+  return { ...r, places };
 }

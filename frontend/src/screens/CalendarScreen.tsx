@@ -6,6 +6,7 @@ import {
   Text,
   StyleSheet,
   Alert,
+  Linking,
   type StyleProp,
   type ViewStyle,
 } from 'react-native';
@@ -21,6 +22,7 @@ import {
   FileText,
   Smile,
   ChartPie,
+  Navigation,
 } from 'lucide-react-native';
 
 import { Screen, GreetingHeader } from '../components/ui';
@@ -33,6 +35,7 @@ import {
   useReducedMotion,
 } from '../components/motion';
 import { api } from '../lib/api';
+import { navigationUrls } from '../lib/places';
 import { storage } from '../lib/storage';
 import {
   statusOf,
@@ -253,9 +256,36 @@ function EntryRow({
           </Text>
         ) : null}
       </View>
+      {item.kind === 'event' && !done && item.location?.trim() ? (
+        <Pressable
+          onPress={() => openNavigation(item)}
+          hitSlop={10}
+          accessibilityRole="button"
+          accessibilityLabel={t('calendar.navigate')}
+          style={({ pressed }) => [styles.navButton, pressed && styles.pressedDim]}
+        >
+          <Navigation color={NIGHT.blue[1]} size={19} strokeWidth={2} />
+        </Pressable>
+      ) : null}
       <Icon color={colors.textMuted} size={21} strokeWidth={1.7} />
     </Pressable>
   );
+}
+
+/**
+ * Hand the trip to the user's own navigation app. A link, not an API call:
+ * free, keyless, and Waze/Google Maps bring their own live traffic.
+ */
+function openNavigation(item: AgendaItem): void {
+  const urls = navigationUrls(item);
+  if (!urls) return;
+  Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+  const open = (url: string) => void Linking.openURL(url).catch(() => {});
+  Alert.alert(t('calendar.navigate'), item.location ?? undefined, [
+    { text: t('calendar.navigateWaze'), onPress: () => open(urls.waze) },
+    { text: t('calendar.navigateGoogle'), onPress: () => open(urls.google) },
+    { text: t('common.cancel'), style: 'cancel' },
+  ]);
 }
 
 export default function CalendarScreen() {
@@ -618,6 +648,17 @@ export default function CalendarScreen() {
                         </Text>
                         <Text style={styles.entryTime}>{ltr(to12h(item.time))}</Text>
                       </View>
+                      {item.kind === 'event' && !done && item.location?.trim() ? (
+                        <Pressable
+                          onPress={() => openNavigation(item)}
+                          hitSlop={10}
+                          accessibilityRole="button"
+                          accessibilityLabel={t('calendar.navigate')}
+                          style={({ pressed }) => [styles.navButton, pressed && styles.pressedDim]}
+                        >
+                          <Navigation color={aura.ink} size={19} strokeWidth={2} />
+                        </Pressable>
+                      ) : null}
                       <Icon
                         color={done ? colors.textMuted : aura.ink}
                         size={20}
@@ -839,6 +880,7 @@ const styles = themed(() =>
     rowBody: { flex: 1, gap: 2 },
     rowTitle: { fontSize: 16, ...font(600), color: colors.text },
     rowMeta: { fontSize: 14, ...font(500), color: colors.textMuted },
+    navButton: { paddingHorizontal: 6, paddingVertical: 4 },
     sectionLabel: {
       fontSize: 21,
       ...font(700),

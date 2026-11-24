@@ -110,7 +110,8 @@ export async function generateImage(
 
 export interface TimeOffer {
   /** Whether the hour was taken, or free but unreachable. */
-  reason: 'clash' | 'travel';
+  /** Taken, free but unreachable, or too close to an event with no place. */
+  reason: 'clash' | 'travel' | 'tight';
   title: string;
   durationMinutes: number;
   requestedAt: string;
@@ -157,7 +158,7 @@ export function parseOffer(args: Record<string, unknown>): TimeOffer | null {
   const travel = args.travel as TimeOffer['travel'] | undefined;
 
   return {
-    reason: args.reason === 'travel' ? 'travel' : 'clash',
+    reason: args.reason === 'travel' ? 'travel' : args.reason === 'tight' ? 'tight' : 'clash',
     title,
     requestedAt,
     durationMinutes: Number.isFinite(minutes) && minutes > 0 ? minutes : 60,
@@ -578,6 +579,15 @@ export async function buildSnapshot() {
         // Without this the server cannot tell Jerusalem from Haifa, and every
         // journey looks possible.
         location: e.location ?? null,
+        // Resolved once when the event was saved. With these the server never
+        // geocodes the text — and the calendar can stand in for GPS.
+        ...(typeof e.locationLat === 'number' && typeof e.locationLng === 'number'
+          ? {
+              locationLat: e.locationLat,
+              locationLng: e.locationLng,
+              locationPlaceId: e.locationPlaceId ?? null,
+            }
+          : {}),
         startsAt: e.startsAt,
         endsAt: e.endsAt,
       })),
@@ -726,8 +736,14 @@ export interface OpportunityNudgeResult {
  */
 export async function fetchOpportunityNudge(): Promise<OpportunityNudgeResult | null> {
   const location = getLocation();
-  if (!location) return null; // no GPS → nothing to say about "near you"
   const { snapshot, profile } = await buildSnapshotWithProfile();
+  // No GPS is fine when a meeting with a saved place can stand in for it —
+  // "after Ramat Gan you have an hour, the mall is next to it". Neither means
+  // there is nowhere to measure from.
+  const calendarKnowsWhere = snapshot.events.some(
+    (e) => 'locationLat' in e && typeof (e as { locationLat?: unknown }).locationLat === 'number',
+  );
+  if (!location && !calendarKnowsWhere) return null;
   try {
     const res = await fetch(OPPORTUNITY_NUDGE_URL, {
       method: 'POST',
@@ -738,7 +754,8 @@ export async function fetchOpportunityNudge(): Promise<OpportunityNudgeResult | 
         now: new Date().toISOString(),
         snapshot,
         profile,
-        location,
+        // Omitted rather than null: the server takes an absent position.
+        ...(location ? { location } : {}),
       }),
     });
     if (!res.ok) return null;
@@ -757,6 +774,35 @@ export interface AppliedChange {
   /** Title of the entry, for the undo prompt. */
   title: string;
   destructive: boolean;
+  /** Set when this change put something new in, for the breakdown card. */
+  added?: BreakdownItem;
+}
+
+/** Where in the app a new entry went. */
+export type BreakdownSection = 'events' | 'tasks' | 'shopping' | 'money' | 'debts';
+
+/**
+ * One thing she put in, as the breakdown card lists it.
+ *
+ * When the user runs several things together in one breath, the card sorts
+ * what landed into the parts of the app it went to — calendar, tasks,
+ * shopping, money, debts — so a long request reads back at a glance instead
+ * of as one long sentence.
+ */
+export interface BreakdownItem {
+  section: BreakdownSection;
+  title: string;
+  /** ISO: an event's start, a task's due time. */
+  at?: string;
+  /** Shopping: how much. */
+  quantity?: string;
+  /** Money and debts: the figure, always positive. */
+  amount?: number;
+  /**
+   * Money: `in` for income, `out` for an expense. Debts: `in` when someone
+   * owes the user, `out` when the user owes.
+   */
+  direction?: 'in' | 'out';
 }
 
 const asString = (v: unknown): string | undefined => (typeof v === 'string' ? v : undefined);
@@ -810,6 +856,7 @@ export async function applyActions(actions: VoiceAction[]): Promise<AppliedChang
             title,
             destructive: false,
             undo: () => api.deleteTask(id),
+            added: { section: 'tasks', title, at: isoOrUndefined(args.dueAt) },
           });
           break;
         }
@@ -898,6 +945,7 @@ export async function applyActions(actions: VoiceAction[]): Promise<AppliedChang
                   isBought: true,
                   quantity: existing.quantity,
                 }).then(() => undefined),
+              added: { section: 'shopping', title: name, quantity: asString(args.quantity) },
             });
             break;
           }
@@ -915,6 +963,7 @@ export async function applyActions(actions: VoiceAction[]): Promise<AppliedChang
             title: name,
             destructive: false,
             undo: () => api.deleteShoppingItem(id),
+            added: { section: 'shopping', title: name, quantity: asString(args.quantity) },
           });
           break;
         }
@@ -941,6 +990,12 @@ export async function applyActions(actions: VoiceAction[]): Promise<AppliedChang
             title: description,
             destructive: false,
             undo: () => api.deleteMoneyEntry(id),
+            added: {
+              section: 'money',
+              title: description,
+              amount,
+              direction: kind === 'income' ? 'in' : 'out',
+            },
           });
           break;
         }
@@ -1003,7 +1058,17 @@ export async function applyActions(actions: VoiceAction[]): Promise<AppliedChang
             date: localToday(),
             updatedAt: new Date().toISOString(),
           });
-          applied.push({ title: person, destructive: false, undo: () => api.deleteDebt(id) });
+          applied.push({
+            title: person,
+            destructive: false,
+            undo: () => api.deleteDebt(id),
+            added: {
+              section: 'debts',
+              title: person,
+              amount,
+              direction: args.direction === 'owe' ? 'out' : 'in',
+            },
+          });
           break;
         }
 
@@ -1031,12 +1096,20 @@ export async function applyActions(actions: VoiceAction[]): Promise<AppliedChang
             id,
             title,
             ...(asString(args.note) ? { note: asString(args.note)! } : {}),
+            // The place she heard. Without it every travel check, the "time
+            // to leave" buzz and the Navigate button have nothing to go on.
+            ...(asString(args.location)?.trim() ? { location: asString(args.location)!.trim() } : {}),
             startsAt,
             ...(isoOrUndefined(args.endsAt) ? { endsAt: isoOrUndefined(args.endsAt)! } : {}),
             reminderMinutesBefore: 15,
             updatedAt: new Date().toISOString(),
           });
-          applied.push({ title, destructive: false, undo: () => api.deleteEvent(id) });
+          applied.push({
+            title,
+            destructive: false,
+            undo: () => api.deleteEvent(id),
+            added: { section: 'events', title, at: startsAt },
+          });
           break;
         }
 
@@ -1048,6 +1121,8 @@ export async function applyActions(actions: VoiceAction[]): Promise<AppliedChang
           const patch: Record<string, unknown> = {};
           if (asString(args.title)) patch.title = asString(args.title);
           if (asString(args.note)) patch.note = asString(args.note);
+          // A new place; updateEvent drops the old coordinates when it differs.
+          if (asString(args.location)?.trim()) patch.location = asString(args.location)!.trim();
           const startsAt = isoOrUndefined(args.startsAt);
           const endsAt = isoOrUndefined(args.endsAt);
           if (startsAt) {

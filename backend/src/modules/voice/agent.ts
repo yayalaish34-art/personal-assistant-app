@@ -25,6 +25,9 @@ import { CATEGORY_OSM_TAGS } from './places-index.js';
  * The one way past the "too close to an event with no place" check. Only
  * after the user, told about that event, said to book it anyway.
  */
+const CONFIRMED_CLASH_HELP =
+  'Set true ONLY when you already told the user another task or event is at that time and they explicitly said to put it there anyway. Never set it on a first attempt.';
+
 const CONFIRMED_TIGHT_HELP =
   'Set true ONLY when you already told the user this time is close to another event whose place is unknown and they explicitly said to book it anyway. Never set it on a first attempt.';
 
@@ -220,7 +223,7 @@ export const ACTION_TOOLS = [
     function: {
       name: 'create_task',
       description:
-        'Add a new task (something to do, with an optional due date). Pass locationHint when the user tied the task to a place rather than a time ("כשאהיה בחיפה", "when I\'m near the office") — the device uses it to fire the reminder on geofence enter instead of a clock minute.',
+        'Add a new task (something to do, with an optional due date). A task given a time that another open task or an event already holds is not added: you are told what is there, and you ask the user before trying again. Pass locationHint when the user tied the task to a place rather than a time ("כשאהיה בחיפה", "when I\'m near the office") — the device uses it to fire the reminder on geofence enter instead of a clock minute.',
       parameters: {
         type: 'object',
         properties: {
@@ -236,6 +239,7 @@ export const ACTION_TOOLS = [
             description:
               'Place that triggers the reminder (city, neighbourhood, or landmark). Set only when the user said something like "when I\'m near X" / "כשאהיה ב-X". Not for an event location.',
           },
+          confirmedClash: { type: 'boolean', description: CONFIRMED_CLASH_HELP },
         },
         required: ['title'],
       },
@@ -255,6 +259,7 @@ export const ACTION_TOOLS = [
           title: { type: 'string', description: 'The new title, if it is changing.' },
           dueAt: { type: ['string', 'null'], description: 'ISO-8601 with offset, or null to clear.' },
           notes: { type: 'string' },
+          confirmedClash: { type: 'boolean', description: CONFIRMED_CLASH_HELP },
         },
         required: ['id', 'matchTitle'],
       },
@@ -1115,6 +1120,7 @@ const ARG_SCHEMAS = {
     notes: z.string().optional(),
     priority: z.enum(['Low', 'Medium', 'High']).optional(),
     locationHint: z.string().min(1).max(120).optional(),
+    confirmedClash: z.boolean().optional(),
   }),
   update_task: z.object({
     id: z.string().min(1),
@@ -1122,6 +1128,7 @@ const ARG_SCHEMAS = {
     title: z.string().min(1).optional(),
     dueAt: z.union([isoString, z.null()]).optional(),
     notes: z.string().optional(),
+    confirmedClash: z.boolean().optional(),
   }),
   complete_task: z.object({ id: z.string().min(1), matchTitle: z.string().min(1) }),
   delete_task: z.object({ id: z.string().min(1), matchTitle: z.string().min(1) }),
@@ -1966,12 +1973,13 @@ export function buildSystemPrompt(input: {
     '  anything with a set time to create_event, money that moved to',
     '  add_money_entry, debts to add_debt. A recurring goal like "three',
     '  workouts this week" is three create_task calls or three create_event',
-    '  calls at times that fit, not a single vague note. After the calls,',
-    '  summarise what landed where in one sentence, e.g. "I\'ve put the doctor',
-    '  call, the car booking and the package pickup on tomorrow, dog food on',
-    '  the shopping list, the deck as a task, and three workout slots across',
-    '  the week." Use present_summary when the user clearly wants a',
-    '  side-by-side.',
+    '  calls at times that fit, not a single vague note. From three new',
+    '  entries on, the app shows them itself on a card sorted into calendar,',
+    '  tasks, shopping, money and debts — do not call present_summary,',
+    '  present_checklist or present_confirmation for them. Aloud, sum it up',
+    '  by section in one short sentence, counts rather than a read-out, e.g.',
+    '  "Done — three things for tomorrow, dog food on the shopping list, the',
+    '  deck as a task and three workouts in the calendar."',
     '- Touch only what was asked for. Never rewrite an entry the user did not',
     '  mention, and never "tidy up" times or titles on your own.',
     '- Answering a question about the schedule needs no tool: the agenda is',
@@ -2492,6 +2500,13 @@ export async function executeToolCall(
       logger.info({ args }, 'voice agent asked for free time');
       return { content: await answerFreeTime(args, input, actions), consultedFreeTime: true };
   }
+
+  // Two tasks at one time, or a task in the middle of a meeting: asked about,
+  // not added. Events get the same from reviewProposedTime below.
+  const taskClash = outcome.action
+    ? reviewTaskTime(outcome.action, input.snapshot, input.timezone)
+    : null;
+  if (taskClash) return answered(taskClash);
 
   // A time that survives the gate still has to be a time the person can keep.
   // That check reaches a geocoder, so it cannot live inside `collectAction`,
@@ -4806,6 +4821,71 @@ export function answerEndOfDay(
         : 'The summary card is ALREADY on screen (do NOT call present_summary again). Lead aloud with a win ("you shipped ' +
           String(done.length) +
           ' today"), note what slipped in one phrase (not a list), say what is still ahead today (stillAhead) with its time if there is anything, and name tomorrow\'s first thing with a time. If anything slipped, offer replan_remainder in the SAME reply ("want me to find a spot for them tomorrow?"). Never read every slipped task aloud.',
+  });
+}
+
+/** How close two timed entries may be before they count as the same time. */
+const TASK_CLASH_MINUTES = 30;
+
+/** "HH:MM" on the user's clock. */
+function clockIn(zone: string, ms: number): string {
+  return new Intl.DateTimeFormat('en-GB', {
+    timeZone: zone,
+    hour: '2-digit',
+    minute: '2-digit',
+    hourCycle: 'h23',
+  }).format(new Date(ms));
+}
+
+/**
+ * Stops a task from landing on a time that is already taken.
+ *
+ * A task with a time rings at that time, the way a meeting does, so two at
+ * once — or one in the middle of a meeting — is the same double booking the
+ * calendar refuses for events. Nothing is added: she is told what is there and
+ * asks whether to put it there anyway (`confirmedClash`) or somewhere else.
+ *
+ * Only a real clock time counts. Midnight and 23:59 are how a date with no
+ * hour is written, and a task with no date clashes with nothing.
+ */
+function reviewTaskTime(action: VoiceAction, snapshot: Snapshot, zone: string): string | null {
+  if (action.tool !== 'create_task' && action.tool !== 'update_task') return null;
+  const args = action.arguments;
+  if (args.confirmedClash === true || typeof args.dueAt !== 'string') return null;
+  const due = Date.parse(args.dueAt);
+  if (!Number.isFinite(due)) return null;
+  const clock = clockIn(zone, due);
+  if (clock === '00:00' || clock === '23:59') return null;
+
+  const self = action.tool === 'update_task' && typeof args.id === 'string' ? args.id : undefined;
+  const window = TASK_CLASH_MINUTES * 60_000;
+  const task = snapshot.tasks.find((t) => {
+    if (t.id === self || t.isDone || !t.dueAt) return false;
+    const at = Date.parse(t.dueAt);
+    if (!Number.isFinite(at) || Math.abs(at - due) >= window) return false;
+    const c = clockIn(zone, at);
+    return c !== '00:00' && c !== '23:59';
+  });
+  const event = task
+    ? undefined
+    : snapshot.events.find((e) => {
+        const start = Date.parse(e.startsAt);
+        if (!Number.isFinite(start)) return false;
+        const end = e.endsAt ? Date.parse(e.endsAt) : Number.NaN;
+        return due >= start && due < (Number.isFinite(end) ? end : start + 60 * 60_000);
+      });
+  if (!task && !event) return null;
+
+  const title = task ? task.title : event!.title;
+  const at = clockIn(zone, Date.parse(task ? task.dueAt! : event!.startsAt));
+  const what = task ? `the task "${title}" at ${at}` : `the event "${title}" (from ${at})`;
+  return JSON.stringify({
+    ok: false,
+    needsConfirmation: true,
+    error: `Not added yet: ${what} already holds ${clock}.`,
+    instruction:
+      `Do not add it on your own. Tell the user in one short sentence that "${title}" is already at that time, and ask: put it at ${clock} anyway, or at another time? ` +
+      'If they name another time, use that time. Only if they clearly say to keep this time, call the same tool again with the same arguments plus confirmedClash: true.',
   });
 }
 

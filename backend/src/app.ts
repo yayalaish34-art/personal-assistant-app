@@ -33,6 +33,8 @@ export function createApp(): Express {
   const app = express();
 
   app.disable('x-powered-by');
+  // The rate limits key on `req.ip`; see TRUST_PROXY_HOPS in config.ts.
+  app.set('trust proxy', config.TRUST_PROXY_HOPS);
   app.use(helmet());
 
   // CORS: allow all origins (temporary — permissive for now).

@@ -101,6 +101,13 @@ export const configSchema = z.object({
   // minimal | low | medium | high, for the 3.1 model (it defaults to minimal,
   // the fastest). Unset sends nothing: 3.8 refuses the setting outright.
   GEMINI_LIVE_THINKING: z.enum(['minimal', 'low', 'medium', 'high']).optional(),
+  // How many proxies stand between the user and this server, so `req.ip` is the
+  // user's address rather than the last proxy's. On Railway that is two: its
+  // edge, which appends the caller to X-Forwarded-For, and the internal proxy
+  // that opens the connection (a 100.64.x.x address). Without it every user
+  // reaching the same proxy shared one rate-limit bucket. Addresses a client
+  // writes into the header itself sit further left and are never reached.
+  TRUST_PROXY_HOPS: z.coerce.number().int().min(0).max(5).default(2),
   EXPO_ACCESS_TOKEN: z.string().optional(),
   CORS_ORIGINS: z
     .string()

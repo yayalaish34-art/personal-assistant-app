@@ -1,4 +1,7 @@
 import AsyncStorage from '@react-native-async-storage/async-storage';
+import * as Location from 'expo-location';
+
+import { getLocation } from './location';
 
 // Today's weather, for the line under the greeting.
 //
@@ -7,10 +10,11 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
 // null and the screen simply shows the date without it. Nothing here is ever
 // allowed to throw into a render.
 //
-// No location permission is asked for. An IANA timezone is already a city
-// name — `Asia/Jerusalem`, `Europe/Madrid` — which is accurate enough for "is
-// it raining", and costs the user no prompt. Somebody travelling with their
-// phone on home time gets home's weather; that is the trade.
+// Where: the phone's own position when location was already granted (the
+// assistant asks for it), the same place the assistant's weather is for.
+// Never a prompt from here. Without it, the city in the timezone — but that
+// is only a guess: every phone in Israel says `Asia/Jerusalem`, and Jerusalem
+// sits 800 m up, often several degrees colder and wetter than the coast.
 
 const FORECAST_URL = 'https://api.open-meteo.com/v1/forecast';
 const GEOCODE_URL = 'https://geocoding-api.open-meteo.com/v1/search';
@@ -20,8 +24,14 @@ const GEOCODE_URL = 'https://geocoding-api.open-meteo.com/v1/search';
 const PLACE_KEY = '@pa/weatherPlace2';
 // Bumped with the shape: a reading cached before the week existed would
 // deserialise with `days` missing and the strip would render empty for half an
-// hour after an update.
-const READING_KEY = '@pa/weatherReading4';
+// hour after an update. 5: readings now remember where they are for, so a
+// Jerusalem one from before is not served to a phone in Tel Aviv.
+const READING_KEY = '@pa/weatherReading5';
+
+/** A reading further than this from where the phone is now is someone else's weather. */
+const SAME_PLACE_KM = 5;
+/** A last-known fix older than this says little about where the phone is. */
+const LAST_FIX_MAX_AGE_MS = 6 * 60 * 60 * 1000;
 
 /** How much of the week ahead the strip shows. */
 const FORECAST_DAYS = 7;
@@ -75,7 +85,24 @@ export interface HourForecast {
 }
 
 type Place = { at: number; latitude: number; longitude: number; name: string | null };
-type Reading = { at: number; value: Weather };
+type Reading = { at: number; latitude: number; longitude: number; value: Weather };
+
+/** Straight-line distance, km. Plenty for "is this the same town". */
+function kmBetween(a: { latitude: number; longitude: number }, b: { latitude: number; longitude: number }) {
+  const rad = Math.PI / 180;
+  const dLat = (b.latitude - a.latitude) * rad;
+  const dLng = (b.longitude - a.longitude) * rad;
+  const h =
+    Math.sin(dLat / 2) ** 2 +
+    Math.cos(a.latitude * rad) * Math.cos(b.latitude * rad) * Math.sin(dLng / 2) ** 2;
+  return 2 * 6371 * Math.asin(Math.sqrt(h));
+}
+
+/** Today as the phone's clock reads it — not UTC, which is yesterday until 02:00 in Israel. */
+function localDate(d = new Date()): string {
+  const p = (n: number) => String(n).padStart(2, '0');
+  return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}`;
+}
 
 /** https://open-meteo.com/en/docs — WMO 4677, grouped to what an icon can say. */
 function skyOf(code: number): Sky {
@@ -120,7 +147,41 @@ function cityFromTimezone(): string | null {
   }
 }
 
+/**
+ * Where the phone actually is, if location was already granted.
+ *
+ * The tracker's live fix first (running whenever the app has the permission),
+ * then the system's last known one — instant, and it never shows a prompt.
+ */
+async function phonePlace(): Promise<Place | null> {
+  try {
+    let fix = getLocation();
+    if (!fix) {
+      const perm = await Location.getForegroundPermissionsAsync();
+      if (perm.status !== 'granted') return null;
+      const last = await Location.getLastKnownPositionAsync({ maxAge: LAST_FIX_MAX_AGE_MS });
+      if (!last) return null;
+      fix = { latitude: last.coords.latitude, longitude: last.coords.longitude };
+    }
+    let name = fix.city ?? null;
+    if (!name) {
+      try {
+        const [hit] = await Location.reverseGeocodeAsync({ latitude: fix.latitude, longitude: fix.longitude });
+        name = hit?.city ?? hit?.subregion ?? null;
+      } catch {
+        /* the weather is still right without the name */
+      }
+    }
+    return { at: Date.now(), latitude: fix.latitude, longitude: fix.longitude, name };
+  } catch {
+    return null;
+  }
+}
+
 async function resolvePlace(): Promise<Place | null> {
+  const here = await phonePlace();
+  if (here) return here;
+
   const cached = await readCache<Place>(PLACE_KEY, PLACE_TTL_MS);
   if (cached) return cached;
 
@@ -161,11 +222,12 @@ async function resolvePlace(): Promise<Place | null> {
  * the screen asks again every time it comes into focus anyway.
  */
 export async function getWeather(): Promise<Weather | null> {
-  const cached = await readCache<Reading>(READING_KEY, READING_TTL_MS);
-  if (cached) return cached.value;
-
   const place = await resolvePlace();
   if (!place) return null;
+
+  // Fresh and for this same place, or asked for again.
+  const cached = await readCache<Reading>(READING_KEY, READING_TTL_MS);
+  if (cached && kmBetween(cached, place) <= SAME_PLACE_KM) return cached.value;
 
   try {
     const res = await fetch(
@@ -219,7 +281,7 @@ export async function getWeather(): Promise<Weather | null> {
 
     const h = body.hourly;
     const nowHour = new Date().getHours();
-    const todayDate = new Date().toISOString().slice(0, 10);
+    const todayDate = localDate();
     const hours: HourForecast[] = [];
     if (h?.time) {
       const startIdx = h.time.findIndex((t) => {
@@ -254,7 +316,12 @@ export async function getWeather(): Promise<Weather | null> {
     };
     await AsyncStorage.setItem(
       READING_KEY,
-      JSON.stringify({ at: Date.now(), value } satisfies Reading),
+      JSON.stringify({
+        at: Date.now(),
+        latitude: place.latitude,
+        longitude: place.longitude,
+        value,
+      } satisfies Reading),
     ).catch(() => undefined);
     return value;
   } catch {
